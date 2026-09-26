@@ -117,3 +117,39 @@ export async function purgeUserData(deps: PurgeDeps, uid: string): Promise<void>
   });
   log.info('user purged', { uid });
 }
+
+export interface Status {
+  registered: boolean;
+  deleting: boolean;
+  /** Providers whose link has been used at least once ("Set up"). */
+  setUp: Record<string, boolean>;
+  /** When the most recent data became queryable by the AI (ms), or null. */
+  lastVisibleAt: number | null;
+  /** Earliest date the AI can see for types whose full history is synced (ms), or null. */
+  historySyncedBackTo: number | null;
+  /** Number of data types with queryable data. */
+  typesWithData: number;
+}
+
+/** What the app shows on its home screen. Everything comes from server-side published state. */
+export async function getStatus(db: Firestore, uid: string): Promise<Status> {
+  const ref = db.collection('users').doc(uid);
+  const [snap, types] = await Promise.all([ref.get(), ref.collection('types').select('coverage').get()]);
+  if (!snap.exists) return { registered: false, deleting: false, setUp: {}, lastVisibleAt: null, historySyncedBackTo: null, typesWithData: 0 };
+  const user = snap.data() as UserDoc;
+  let earliest: number | null = null;
+  let withData = 0;
+  for (const t of types.docs) {
+    const cov = t.get('coverage') as { caughtUp?: boolean; earliest?: number | null } | undefined;
+    if (cov?.earliest != null) withData++;
+    if (cov?.caughtUp && cov.earliest != null) earliest = earliest === null ? cov.earliest : Math.min(earliest, cov.earliest);
+  }
+  return {
+    registered: true,
+    deleting: user.deleting,
+    setUp: Object.fromEntries(PROVIDERS.map((p) => [p, !!user.connections?.[p]])),
+    lastVisibleAt: user.lastVisibleAt ?? null,
+    historySyncedBackTo: earliest,
+    typesWithData: withData,
+  };
+}

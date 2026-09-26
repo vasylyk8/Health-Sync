@@ -107,6 +107,8 @@ export const createConnectorLink = onCall(callableOpts, wrap(async (req) => {
   return account.createConnectorLink(deps().db, uid, provider, PUBLIC_BASE_URL.value());
 }));
 
+export const getStatus = onCall(callableOpts, wrap((req) => account.getStatus(deps().db, uidOf(req))));
+
 export const disconnectProvider = onCall(callableOpts, wrap(async (req) => {
   await account.disconnect(deps().db, uidOf(req), parseProvider((req.data as { provider?: unknown })?.provider));
   return { ok: true };

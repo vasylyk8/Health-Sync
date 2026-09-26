@@ -82,3 +82,15 @@ describe('accounts', () => {
     expect(deleted).toEqual(['u5']);
   });
 });
+
+describe('getStatus', () => {
+  it('reports set-up providers and synced history from server state', async () => {
+    const { getStatus } = await import('../../src/account.js');
+    expect((await getStatus(db, 'nobody')).registered).toBe(false);
+    await registerDevice(db, 'u7', 'UTC');
+    await db.doc('users/u7').update({ 'connections.claude': { setUpAt: 1, lastUsedAt: 1 }, lastVisibleAt: 5 });
+    await db.doc('users/u7/types/HR').set({ coverage: { caughtUp: true, earliest: 100 } });
+    await db.doc('users/u7/types/Steps').set({ coverage: { caughtUp: false, earliest: 50 } });
+    expect(await getStatus(db, 'u7')).toEqual({ registered: true, deleting: false, setUp: { claude: true, chatgpt: false }, lastVisibleAt: 5, historySyncedBackTo: 100, typesWithData: 2 });
+  });
+});

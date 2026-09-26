@@ -4,7 +4,8 @@
   "HKWorkoutRoute": "v1: routes excluded (size, location privacy)",
   "HKClinicalType*": "clinical records excluded in v1",
   "HKVisionPrescriptionType": "requires per-object authorization",
-  "HKMedicationDoseEvent": "requires per-object authorization; revisit"
+  "HKMedicationDoseEvent": "requires per-object authorization; revisit",
+  "HKScoredAssessment (GAD-7, PHQ-9)": "v1: not read yet"
  },
  "types": [
   {
@@ -1541,18 +1542,6 @@
    "id": "HKDataTypeIdentifierAudiogram",
    "kind": "audiogram",
    "group": "hearing",
-   "record": "s"
-  },
-  {
-   "id": "HKScoredAssessmentTypeIdentifierGAD7",
-   "kind": "scoredAssessment",
-   "group": "mindfulness",
-   "record": "s"
-  },
-  {
-   "id": "HKScoredAssessmentTypeIdentifierPHQ9",
-   "kind": "scoredAssessment",
-   "group": "mindfulness",
    "record": "s"
   },
   {
