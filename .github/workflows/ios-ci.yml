@@ -1,0 +1,55 @@
+name: ios-ci
+on:
+  push:
+    paths: ['ios/**', 'shared/**', '.github/workflows/ios-ci.yml']
+  pull_request:
+    paths: ['ios/**', 'shared/**', '.github/workflows/ios-ci.yml']
+permissions:
+  contents: read
+concurrency:
+  group: ios-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: ios
+    env:
+      BUNDLE_ID: app.healthsync.dev
+      APPLE_TEAM_ID: ''
+      PUBLIC_BASE_URL: https://health-sync.web.app
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          brew install xcodegen
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+      - name: Pick a simulator
+        run: |
+          DEVICE=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['name'] for k in sorted(d, reverse=True) if 'iOS' in k for x in d[k] if x['name'].startswith('iPhone')))")
+          echo "SIM_DEVICE=$DEVICE" >> "$GITHUB_ENV"
+          echo "Using $DEVICE"
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: ios
+      - name: Build and test
+        run: bundle exec fastlane test
+      - name: Export screenshots
+        if: always()
+        run: |
+          mkdir -p screenshots
+          RESULT=$(ls -d fastlane/test_output/*.xcresult | head -1)
+          xcrun xcresulttool export attachments --path "$RESULT" --output-path screenshots || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-test-results
+          path: |
+            ios/screenshots
+            ios/fastlane/test_output
+          retention-days: 14
