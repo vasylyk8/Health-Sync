@@ -1,0 +1,60 @@
+# Lets automation run any task script from any branch on demand (workflow_dispatch
+# only works for workflows that exist on the default branch).
+name: bootstrap
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or commit to run from
+        required: true
+        default: main
+      task:
+        description: Script under scripts/tasks/ to run (e.g. preflight, provision, deploy)
+        required: true
+      runner:
+        description: Machine to run on
+        type: choice
+        options: [ubuntu-latest, macos-latest]
+        default: ubuntu-latest
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  run:
+    runs-on: ${{ inputs.runner }}
+    env:
+      TASK: ${{ inputs.task }}
+      HAS_WIF: ${{ secrets.GCP_WIF_PROVIDER != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Validate task name
+        run: |
+          [[ "$TASK" =~ ^[a-z0-9-]+$ ]] || { echo "invalid task"; exit 1; }
+          test -x "scripts/tasks/$TASK.sh"
+      - name: Authenticate to Google Cloud
+        if: env.HAS_WIF == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - if: env.HAS_WIF == 'true'
+        uses: google-github-actions/setup-gcloud@v2
+      - name: Run task
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_WIF_PROVIDER: ${{ secrets.GCP_WIF_PROVIDER }}
+          GCP_DEPLOY_SA: ${{ secrets.GCP_DEPLOY_SA }}
+          GCP_RUNTIME_SA: ${{ secrets.GCP_RUNTIME_SA }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
+          ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          TESTER_EMAILS: ${{ secrets.TESTER_EMAILS }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: scripts/tasks/"$TASK".sh
