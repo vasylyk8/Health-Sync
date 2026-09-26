@@ -1,0 +1,7 @@
+ios/HealthSync.xcodeproj/
+ios/build/
+ios/fastlane/test_output/
+ios/fastlane/report.xml
+ios/HealthSync/GoogleService-Info.plist
+ios/Gemfile.lock
+.DS_Store

@@ -30,9 +30,9 @@ export async function finishReconcile(deps: Deps, uid: string, type: string, rec
     }));
     const out = join(dir, 'tomb.parquet');
     await c.run(`COPY (
-        SELECT id FROM read_parquet([${local.map(lit).join(',')}], union_by_name=true)
+        SELECT split_part(id, '#', 1) AS id FROM read_parquet([${local.map(lit).join(',')}], union_by_name=true)
         WHERE k NOT IN ('h', 'p') AND id IS NOT NULL
-        GROUP BY id
+        GROUP BY 1
         HAVING max(seq) < ${startSeq} AND count(*) FILTER (WHERE rid = ${lit(reconcileId)}) = 0
       ) TO ${lit(out)} (FORMAT parquet)`);
     const n = Number((await c.runAndReadAll(`SELECT count(*) FROM ${lit(out)}`)).getRows()[0]![0]);
@@ -72,7 +72,7 @@ export async function compactType(deps: Deps, uid: string, type: string): Promis
       const tombFiles = local.slice(files.length).map(lit).join(',');
       const out = join(dir, 'merged.parquet');
       const dedupe = isStats ? 'PARTITION BY s, agg' : 'PARTITION BY id';
-      const dropDeleted = !isStats && tombFiles ? `AND id NOT IN (SELECT id FROM read_parquet([${tombFiles}]))` : '';
+      const dropDeleted = !isStats && tombFiles ? `AND split_part(id, '#', 1) NOT IN (SELECT id FROM read_parquet([${tombFiles}]))` : '';
       await c.run(`COPY (
           SELECT * FROM read_parquet([${dataFiles}], union_by_name=true) WHERE true ${dropDeleted}
           QUALIFY row_number() OVER (${dedupe} ORDER BY seq DESC, batch DESC) = 1

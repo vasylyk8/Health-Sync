@@ -152,7 +152,7 @@ export async function loadType(
   if (opts.what === 'raw') {
     const tombSql = tombFiles.length ? `SELECT id FROM read_parquet(${list(tombFiles)})` : 'SELECT NULL::VARCHAR id WHERE false';
     await c.run(`CREATE OR REPLACE TEMP TABLE ${alias} AS
-      SELECT * FROM (${src}) r WHERE k NOT IN ('h', 'p') AND id NOT IN (${tombSql})
+      SELECT * FROM (${src}) r WHERE k NOT IN ('h', 'p') AND split_part(id, '#', 1) NOT IN (${tombSql})
       QUALIFY row_number() OVER (PARTITION BY id ORDER BY seq DESC, batch DESC) = 1`);
   } else if (opts.what === 'stats') {
     await c.run(`CREATE OR REPLACE TEMP TABLE ${alias} AS

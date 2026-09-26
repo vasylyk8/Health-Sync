@@ -166,3 +166,17 @@ describe('getWorkouts / profile / list', () => {
     expect(r.types).toMatchObject([{ name: 'StepCount', group: 'activity', unit: 'count', aggregation: 'cumulative' }]);
   });
 });
+
+describe('series samples', () => {
+  it('deleting a series sample removes all of its expanded readings', async () => {
+    const env = makeEnv();
+    await upload(env, { type: HR, mode: 'recent', window: { start: day(1), end: env.now } }, [
+      { k: 's', id: 'S1#0', s: day(1, 8), e: day(1, 8), v: 100, u: 'count/min' },
+      { k: 's', id: 'S1#1', s: day(1, 8) + 5000, e: day(1, 8) + 5000, v: 110, u: 'count/min' },
+      { k: 's', id: 'S2', s: day(1, 9), e: day(1, 9), v: 60, u: 'count/min' },
+    ]);
+    await upload(env, { type: HR }, [{ k: 'd', id: 'S1' }]);
+    const r = await summarize(deps(env), { type: 'HeartRate', start_date: '2024-06-01', end_date: '2024-06-01', period: 'none', stat: 'count' });
+    expect((r.rows as { value: number }[])[0]!.value).toBe(1);
+  });
+});

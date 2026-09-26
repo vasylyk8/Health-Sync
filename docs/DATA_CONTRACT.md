@@ -48,6 +48,8 @@ All times are **UTC epoch milliseconds**. `tz` is the sample's original timezone
 
 Unknown fields are kept (stored in `extra` JSON). Unknown category values are stored as numbers, never dropped.
 
+**Series samples:** a quantity sample holding many readings (e.g. workout heart rate) is expanded into one `s` record per reading, with ids `<uuid>#<index>`. The parent itself is not sent. A tombstone for `<uuid>` removes all `<uuid>#…` readings.
+
 ## 2. What the phone sends, and when
 
 1. **Profile** (`p`) once and on change.
