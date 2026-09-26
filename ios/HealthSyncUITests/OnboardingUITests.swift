@@ -43,7 +43,9 @@ final class OnboardingUITests: XCTestCase {
         app.buttons["copyLink"].tap()
         XCTAssertTrue(app.buttons["Copied"].waitForExistence(timeout: 2))
         // The fake backend reports Claude as set up shortly after; the sheet closes itself.
-        XCTAssertTrue(app.descendants(matching: .any)["setUp.claude"].waitForExistence(timeout: 15))
+        let setUp = NSPredicate(format: "value == 'Set up'")
+        expectation(for: setUp, evaluatedWith: app.buttons["provider.claude"])
+        waitForExpectations(timeout: 20)
         snapshot("04-Connected")
 
         // Re-opening shows the connected state with Disconnect.

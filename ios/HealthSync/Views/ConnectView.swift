@@ -12,6 +12,7 @@ struct ConnectView: View {
                     ForEach(model.providers) { provider in
                         Button { selected = provider } label: { ProviderRow(provider: provider, setUp: model.isSetUp(provider)) }
                             .accessibilityIdentifier("provider.\(provider.id)")
+                            .accessibilityValue(model.isSetUp(provider) ? "Set up" : "Not set up")
                     }
                 } header: {
                     Text("Connect an assistant")

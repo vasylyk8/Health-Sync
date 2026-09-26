@@ -21,22 +21,23 @@ enum Gzip {
     }
 
     private static func deflate(_ data: Data) -> Data {
-        process(data, operation: COMPRESSION_STREAM_ENCODE)
+        process(data, operation: COMPRESSION_STREAM_ENCODE) ?? Data()
     }
 
     private static func inflate(_ data: Data) -> Data? {
-        let result = process(data, operation: COMPRESSION_STREAM_DECODE)
-        return result.isEmpty && !data.isEmpty ? nil : result
+        process(data, operation: COMPRESSION_STREAM_DECODE)
     }
 
-    private static func process(_ input: Data, operation: compression_stream_operation) -> Data {
+    /// Returns nil if the stream reports an error; empty output is a valid result.
+    private static func process(_ input: Data, operation: compression_stream_operation) -> Data? {
         let bufferSize = 64 * 1024
         let dst = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
         defer { dst.deallocate() }
         var stream = compression_stream(dst_ptr: dst, dst_size: bufferSize, src_ptr: dst, src_size: 0, state: nil)
-        guard compression_stream_init(&stream, operation, COMPRESSION_ZLIB) == COMPRESSION_STATUS_OK else { return Data() }
+        guard compression_stream_init(&stream, operation, COMPRESSION_ZLIB) == COMPRESSION_STATUS_OK else { return nil }
         defer { compression_stream_destroy(&stream) }
         var output = Data()
+        var failed = false
         input.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
                 stream.src_size = 0
@@ -49,16 +50,20 @@ enum Gzip {
                 stream.dst_size = bufferSize
                 let status = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
                 output.append(dst, count: bufferSize - stream.dst_size)
-                if status != COMPRESSION_STATUS_OK { break }
+                if status == COMPRESSION_STATUS_END { break }
+                if status != COMPRESSION_STATUS_OK {
+                    failed = true
+                    break
+                }
             }
         }
         if input.isEmpty {
             stream.dst_ptr = dst
             stream.dst_size = bufferSize
-            _ = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
+            if compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue)) == COMPRESSION_STATUS_ERROR { failed = true }
             output.append(dst, count: bufferSize - stream.dst_size)
         }
-        return output
+        return failed ? nil : output
     }
 }
 

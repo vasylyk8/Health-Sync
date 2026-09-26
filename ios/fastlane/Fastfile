@@ -29,7 +29,8 @@ platform :ios do
       device: ENV.fetch("SIM_DEVICE", "iPhone 16 Pro"),
       result_bundle: true,
       output_directory: "fastlane/test_output",
-      xcargs: "CODE_SIGNING_ALLOWED=NO",
+      # Ad-hoc simulator signing keeps entitlements (HealthKit) without an Apple account.
+      xcargs: "CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=",
       fail_build: true
     )
   end
