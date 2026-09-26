@@ -47,7 +47,8 @@ const deps = () => (cached ??= makeDeps());
 // ---- Ingestion ------------------------------------------------------------------------------
 
 export const ingest = onObjectFinalized(
-  { bucket: INCOMING_BUCKET, memory: '2GiB', cpu: 1, timeoutSeconds: 300, retry: true, maxInstances: 40, concurrency: 1 },
+  // Most uploads are small background syncs: several share one instance to cut cost (see docs/COSTS.md).
+  { bucket: INCOMING_BUCKET, memory: '2GiB', cpu: 1, timeoutSeconds: 300, retry: true, maxInstances: 40, concurrency: 4 },
   async (event) => {
     const d = deps();
     await ingestObject(event.data.name, {

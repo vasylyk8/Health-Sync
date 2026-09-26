@@ -67,6 +67,7 @@ export async function ingestObject(objectPath: string, deps: IngestDeps, opts: {
   const type = header.type;
   const written: Record<string, FileRef> = {};
 
+  // Up to 4 ingestions share an instance (2 GiB), so each gets a bounded DuckDB memory budget.
   await withDuck(async (c, dir) => {
     let i = 0;
     for (const [partition, rows] of parsed.partitions) {
@@ -81,7 +82,7 @@ export async function ingestObject(objectPath: string, deps: IngestDeps, opts: {
       await data.write(path, await readFile(local));
       written._tombstones = { path, bytes: (await stat(local)).size };
     }
-  });
+  }, { memoryLimit: '384MB' });
 
   const t = now();
   const result = await meta.publish({
