@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Idempotent Firebase/Google Cloud setup. Safe to run on every deploy.
+source "$(dirname "$0")/lib.sh"
+
+FB="https://firebase.googleapis.com/v1beta1/projects/$P"
+
+step "Firebase project"
+if ! api GET "$FB" | grep -q '"projectId"'; then
+  api POST "$FB:addFirebase" '{}' >/dev/null
+  echo "Added Firebase to $P (waiting 30s)"; sleep 30
+fi
+
+step "Firestore (eur3)"
+gcloud firestore databases describe --database='(default)' >/dev/null 2>&1 || \
+  gcloud firestore databases create --database='(default)' --location=eur3 --type=firestore-native --quiet
+
+step "Buckets (EU, no soft delete so deletions are final)"
+for B in "$INCOMING" "$DATA" "$SIGNING"; do
+  gcloud storage buckets describe "gs://$B" >/dev/null 2>&1 || \
+    gcloud storage buckets create "gs://$B" --location="$REGION" --uniform-bucket-level-access --public-access-prevention --soft-delete-duration=0
+done
+cat > /tmp/lifecycle.json <<'JSON'
+{"rule":[{"action":{"type":"Delete"},"condition":{"age":7}}]}
+JSON
+gcloud storage buckets update "gs://$INCOMING" --lifecycle-file=/tmp/lifecycle.json --soft-delete-duration=0 >/dev/null
+gcloud storage buckets update "gs://$DATA" --soft-delete-duration=0 >/dev/null
+# Uploads bucket is served by Firebase Storage (security rules); the data bucket never is.
+api POST "https://firebasestorage.googleapis.com/v1beta/projects/$P/buckets/$INCOMING:addFirebase" '{}' >/dev/null || true
+# The Storage trigger needs the Cloud Storage service agent to publish events.
+GCS_SA="$(gcloud storage service-agent --project="$P")"
+gcloud projects add-iam-policy-binding "$P" --member="serviceAccount:$GCS_SA" --role=roles/pubsub.publisher --condition=None --quiet >/dev/null
+
+step "Anonymous sign-in"
+cfg=$(api PATCH "https://identitytoolkit.googleapis.com/admin/v2/projects/$P/config?updateMask=signIn.anonymous.enabled" '{"signIn":{"anonymous":{"enabled":true}}}')
+if ! echo "$cfg" | grep -q '"anonymous"'; then
+  echo "Initializing Firebase Authentication"
+  api POST "https://identitytoolkit.googleapis.com/v2/projects/$P/identityPlatform:initializeAuth" '{}' >/dev/null || true
+  cfg=$(api PATCH "https://identitytoolkit.googleapis.com/admin/v2/projects/$P/config?updateMask=signIn.anonymous.enabled" '{"signIn":{"anonymous":{"enabled":true}}}')
+  echo "$cfg" | grep -q '"anonymous"' || fail "Could not enable anonymous sign-in: $cfg"
+fi
+
+step "iOS app registration"
+: "${BUNDLE_ID:?BUNDLE_ID secret missing}"
+APP_ID=$(api GET "$FB/iosApps" | python3 -c "import json,sys; d=json.load(sys.stdin); print(next((a['appId'] for a in d.get('apps',[]) if a.get('bundleId')==sys.argv[1]),''))" "$BUNDLE_ID")
+if [[ -z "$APP_ID" ]]; then
+  api POST "$FB/iosApps" "{\"bundleId\":\"$BUNDLE_ID\",\"displayName\":\"Health Sync\",\"teamId\":\"${APPLE_TEAM_ID:-}\"}" >/dev/null
+  sleep 20
+  APP_ID=$(api GET "$FB/iosApps" | python3 -c "import json,sys; d=json.load(sys.stdin); print(next((a['appId'] for a in d.get('apps',[]) if a.get('bundleId')==sys.argv[1]),''))" "$BUNDLE_ID")
+fi
+[[ -n "$APP_ID" ]] || fail "iOS app registration failed"
+echo "iOS app: $APP_ID"
+[[ -n "${APPLE_TEAM_ID:-}" ]] && api PATCH "$FB/iosApps/$APP_ID?updateMask=teamId" "{\"teamId\":\"$APPLE_TEAM_ID\"}" >/dev/null
+
+step "App Check (App Attest; enforcement stays off until the soak test passes)"
+api PATCH "https://firebaseappcheck.googleapis.com/v1/projects/$P/apps/$APP_ID/appAttestConfig?updateMask=tokenTtl" '{"tokenTtl":"3600s"}' >/dev/null || true
+
+step "Secrets"
+if ! gcloud secrets describe match-password >/dev/null 2>&1; then
+  openssl rand -base64 32 | gcloud secrets create match-password --data-file=- --replication-policy=user-managed --locations="$REGION" >/dev/null
+fi
+
+step "Keep secret links out of request logs"
+FILTER='resource.type="cloud_run_revision" AND httpRequest.requestUrl:"/mcp/"'
+gcloud logging sinks update _Default --remove-exclusions=mcp-links --quiet >/dev/null 2>&1 || true
+gcloud logging sinks update _Default --add-exclusion=name=mcp-links,filter="$FILTER" --quiet >/dev/null
+
+step "Alert email channel"
+: "${ALERT_EMAIL:?ALERT_EMAIL secret missing}"
+CHANNEL=$(gcloud beta monitoring channels list --filter="labels.email_address=\"$ALERT_EMAIL\"" --format='value(name)' | head -1)
+if [[ -z "$CHANNEL" ]]; then
+  CHANNEL=$(gcloud beta monitoring channels create --display-name="Health Sync alerts" --type=email --channel-labels=email_address="$ALERT_EMAIL" --format='value(name)')
+fi
+echo "$CHANNEL" > /tmp/alert-channel
+
+echo; echo "Provisioning complete for $P"

@@ -16,7 +16,7 @@ export interface IngestDeps {
 
 export type IngestOutcome = 'published' | 'duplicate' | 'discarded' | 'rejected' | 'ignored';
 
-const INCOMING_RE = /^incoming\/([A-Za-z0-9]{1,128})\/([0-9a-f-]{36})\.ndjson\.gz$/;
+const INCOMING_RE = /^incoming\/([A-Za-z0-9_-]{1,128})\/([0-9a-f-]{36})\.ndjson\.gz$/;
 
 export const dataPath = (uid: string, type: string, partition: string, batchId: string) =>
   `data/${uid}/${type}/${partition}/${batchId}.parquet`;
