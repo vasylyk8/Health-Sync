@@ -52,6 +52,7 @@ export class MemoryMeta implements MetaStore {
     if (!removed.every((p) => list.some((f) => f.path === p))) return false;
     man.files[partition] = [...list.filter((f) => !removed.includes(f.path)), ...(added ? [added] : [])];
     man.version++;
+    man.fragmented = Object.entries(man.files).some(([k, f]) => k !== '_tombstones' && f.length > 8);
     return true;
   }
 }

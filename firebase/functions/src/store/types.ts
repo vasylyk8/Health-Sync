@@ -38,8 +38,11 @@ export interface TypeManifest {
   files: Record<string, FileRef[]>;
   coverage: Coverage;
   records: number;
-  /** Active reconcile pass, if any. */
+  /** Active reconcile pass, if any, and the upload sequence number it started at. */
   reconcileId?: string | null;
+  reconcileStartSeq?: number | null;
+  /** Set when some partition has accumulated enough files to be worth compacting. */
+  fragmented?: boolean;
 }
 
 export interface UserDoc {
@@ -89,6 +92,8 @@ export function emptyManifest(type: string): TypeManifest {
     coverage: { intervals: [], statsIntervals: [], caughtUp: false, earliest: null, latest: null, checkedAt: null, visibleAt: null },
     records: 0,
     reconcileId: null,
+    reconcileStartSeq: null,
+    fragmented: false,
   };
 }
 

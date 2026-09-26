@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { BatchError, parseBatch, type ParsedBatch } from './batch.js';
 import { idsToParquet, rowsToParquet, withDuck } from '../query/duck.js';
@@ -24,7 +25,7 @@ export const dataPath = (uid: string, type: string, partition: string, batchId: 
  * Processes one uploaded batch: validate → write Parquet partitions → publish the manifest
  * atomically. Safe to run more than once for the same object (event retries).
  */
-export async function ingestObject(objectPath: string, deps: IngestDeps): Promise<IngestOutcome> {
+export async function ingestObject(objectPath: string, deps: IngestDeps, opts: { sha256?: string } = {}): Promise<IngestOutcome> {
   const m = INCOMING_RE.exec(objectPath);
   if (!m) return 'ignored';
   const [, uid, batchId] = m as unknown as [string, string, string];
@@ -46,7 +47,11 @@ export async function ingestObject(objectPath: string, deps: IngestDeps): Promis
 
   let parsed: ParsedBatch;
   try {
-    parsed = parseBatch(await incoming.read(objectPath));
+    const bytes = await incoming.read(objectPath);
+    if (opts.sha256 !== undefined && createHash('sha256').update(bytes).digest('hex') !== opts.sha256) {
+      throw new BatchError('checksum mismatch');
+    }
+    parsed = parseBatch(bytes);
     if (parsed.header.batchId !== batchId) throw new BatchError('batchId does not match file name');
   } catch (err) {
     if (err instanceof BatchError) {
@@ -127,12 +132,21 @@ export function applyBatch(man: TypeManifest, parsed: ParsedBatch, written: Reco
   }
   if (header.checkedAt) cov.checkedAt = Math.max(cov.checkedAt ?? 0, header.checkedAt);
   cov.visibleAt = now;
+  const startingReconcile = !!header.reconcileId && man.reconcileId !== header.reconcileId;
+  const reconcileActive = header.reconcileId && !header.reconcileDone;
   return {
     ...man,
     version: man.version + 1,
     files,
     coverage: cov,
     records: man.records + parsed.recordCount,
-    reconcileId: header.reconcileId && !header.reconcileDone ? header.reconcileId : header.reconcileDone ? null : man.reconcileId ?? null,
+    reconcileId: header.reconcileId ? (reconcileActive ? header.reconcileId : null) : man.reconcileId ?? null,
+    reconcileStartSeq: header.reconcileId
+      ? startingReconcile ? header.seq : man.reconcileStartSeq ?? header.seq
+      : man.reconcileStartSeq ?? null,
+    fragmented: Object.entries(files).some(([k, f]) => k !== '_tombstones' && f.length > COMPACT_THRESHOLD),
   };
 }
+
+/** Partitions with more files than this get merged by the daily compaction job. */
+export const COMPACT_THRESHOLD = 8;

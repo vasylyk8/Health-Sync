@@ -1,0 +1,21 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "lastVisibleAt", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    { "collectionGroup": "types", "fieldPath": "fragmented", "indexes": [{ "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }] },
+    { "collectionGroup": "types", "fieldPath": "files", "indexes": [] },
+    { "collectionGroup": "types", "fieldPath": "coverage", "indexes": [] },
+    { "collectionGroup": "rateLimits", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
+    { "collectionGroup": "accessLog", "fieldPath": "expireAt", "ttl": true, "indexes": [{ "order": "ASCENDING", "queryScope": "COLLECTION" }] },
+    { "collectionGroup": "batches", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
+    { "collectionGroup": "orphanBatches", "fieldPath": "expireAt", "ttl": true, "indexes": [] }
+  ]
+}

@@ -79,3 +79,13 @@ describe('ingestObject', () => {
     expect(cov.intervals).toEqual([[0, env.now]]);
   });
 });
+
+describe('checksums', () => {
+  it('rejects batches whose checksum does not match', async () => {
+    const env = makeEnv();
+    const b = makeBatch(env, { type: HR }, [hr('a', S)]);
+    await env.incoming.write(b.path, b.gz);
+    const r = await ingestObject(b.path, { incoming: env.incoming, data: env.data, meta: env.meta }, { sha256: 'f'.repeat(64) });
+    expect(r).toBe('rejected');
+  });
+});

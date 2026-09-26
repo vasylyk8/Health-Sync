@@ -1,5 +1,5 @@
 import { FieldPath, type Firestore } from 'firebase-admin/firestore';
-import type { Bucket } from '@google-cloud/storage';
+import { COMPACT_THRESHOLD } from '../ingest/ingest.js';
 import { emptyManifest, type BatchState, type BlobStore, type FileRef, type MetaStore, type TypeManifest, type UserDoc } from './types.js';
 
 /** Firestore document ids cannot contain '/'; HealthKit ids never do, but guard anyway. */
@@ -70,14 +70,26 @@ export class FirestoreMeta implements MetaStore {
       const drop = new Set(removed);
       const next = list.filter((f) => !drop.has(f.path));
       if (added) next.push(added);
-      tx.update(manRef, new FieldPath('files', partition), next, 'version', man.version + 1);
+      const files = { ...man.files, [partition]: next };
+      const fragmented = Object.entries(files).some(([k, f]) => k !== '_tombstones' && f.length > COMPACT_THRESHOLD);
+      tx.update(manRef, new FieldPath('files', partition), next, 'version', man.version + 1, 'fragmented', fragmented);
       return true;
     });
   }
 }
 
+/** The subset of a Cloud Storage bucket we use (structural, to avoid CJS/ESM type clashes). */
+interface BucketLike {
+  file(path: string): {
+    download(opts?: { destination?: string }): Promise<[Buffer]>;
+    save(data: Buffer, opts: { resumable: boolean; contentType: string }): Promise<unknown>;
+    delete(opts: { ignoreNotFound: boolean }): Promise<unknown>;
+  };
+  deleteFiles(opts: { prefix: string; force: boolean }): Promise<unknown>;
+}
+
 export class GcsBlobs implements BlobStore {
-  constructor(private readonly bucket: Bucket) {}
+  constructor(private readonly bucket: BucketLike) {}
   async read(path: string) {
     const [buf] = await this.bucket.file(path).download();
     return buf;

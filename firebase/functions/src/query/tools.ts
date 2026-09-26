@@ -391,6 +391,9 @@ export async function getOverview(deps: QueryDeps, args: { days?: number; timezo
     return { count: w.length, totalMinutes: Math.round(w.reduce((a, x) => a + (x.duration_min ?? 0), 0)) };
   });
   const env = envelope(deps, [], complete);
+  if (coverage.some((cv) => cv.stale)) {
+    env.notes.unshift('Some of this data was last synced more than a day ago. Suggest the user opens the Health Sync app on their iPhone to refresh.');
+  }
   return { ...env, coverage: dedupeCoverage(coverage), period: `${start}..${today}`, timezone: tz, metrics };
 }
 
