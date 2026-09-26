@@ -16,7 +16,7 @@ enum Gzip {
 
     /// Decompresses gzip produced by `compress` (used by tests).
     static func decompress(_ gz: Data) -> Data? {
-        guard gz.count > 18, gz[0] == 0x1f, gz[1] == 0x8b else { return nil }
+        guard gz.count >= 18, gz[0] == 0x1f, gz[1] == 0x8b else { return nil }
         return inflate(gz.subdata(in: 10..<(gz.count - 8)))
     }
 
@@ -38,6 +38,7 @@ enum Gzip {
         defer { compression_stream_destroy(&stream) }
         var output = Data()
         var failed = false
+        var ran = false
         input.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
                 stream.src_size = 0
@@ -45,6 +46,7 @@ enum Gzip {
             }
             stream.src_ptr = base
             stream.src_size = input.count
+            ran = true
             while true {
                 stream.dst_ptr = dst
                 stream.dst_size = bufferSize
@@ -57,7 +59,8 @@ enum Gzip {
                 }
             }
         }
-        if input.isEmpty {
+        // Empty Data may have no base address; then the stream still needs finalizing once.
+        if !ran {
             stream.dst_ptr = dst
             stream.dst_size = bufferSize
             if compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue)) == COMPRESSION_STATUS_ERROR { failed = true }
