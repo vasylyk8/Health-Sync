@@ -27,16 +27,17 @@ gcloud storage buckets update "gs://$DATA" --soft-delete-duration=0 >/dev/null
 # Uploads bucket is served by Firebase Storage (security rules); the data bucket never is.
 api POST "https://firebasestorage.googleapis.com/v1beta/projects/$P/buckets/$INCOMING:addFirebase" '{}' >/dev/null || true
 # The Storage trigger needs the Cloud Storage service agent to publish events.
-# Google creates this service agent lazily; asking for it creates it, but it takes a moment to exist.
-api GET "https://storage.googleapis.com/storage/v1/projects/$P/serviceAccount" >/dev/null
-GCS_SA="$(gcloud storage service-agent --project="$P")"
-for attempt in 1 2 3 4 5 6 7 8; do
-  if gcloud projects add-iam-policy-binding "$P" --member="serviceAccount:$GCS_SA" --role=roles/pubsub.publisher --condition=None --quiet >/dev/null 2>/tmp/iam.err; then
-    break
-  fi
-  if [[ $attempt == 8 ]]; then cat /tmp/iam.err >&2; fail "Could not grant the Cloud Storage service agent Pub/Sub access"; fi
-  echo "Waiting for the Cloud Storage service agent to exist (attempt $attempt)..."; sleep 20
-done
+# The Storage trigger needs the Cloud Storage service agent to publish events. Google creates it
+# lazily; `firebase deploy` also ensures this grant for storage-triggered functions, so a failure
+# here is only a warning.
+gcloud beta services identity create --service=storage.googleapis.com --quiet >/dev/null 2>&1 || true
+api GET "https://storage.googleapis.com/storage/v1/projects/$P/serviceAccount" >/dev/null || true
+GCS_SA="$(gcloud storage service-agent --project="$P" 2>/dev/null || true)"
+if [[ -n "$GCS_SA" ]] && gcloud projects add-iam-policy-binding "$P" --member="serviceAccount:$GCS_SA" --role=roles/pubsub.publisher --condition=None --quiet >/dev/null 2>&1; then
+  echo "Cloud Storage service agent can publish events"
+else
+  echo "::warning::Cloud Storage service agent not ready yet; firebase deploy will grant it"
+fi
 
 step "Anonymous sign-in"
 cfg=$(api PATCH "https://identitytoolkit.googleapis.com/admin/v2/projects/$P/config?updateMask=signIn.anonymous.enabled" '{"signIn":{"anonymous":{"enabled":true}}}')
