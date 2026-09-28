@@ -26,18 +26,25 @@ gcloud storage buckets update "gs://$INCOMING" --lifecycle-file=/tmp/lifecycle.j
 gcloud storage buckets update "gs://$DATA" --soft-delete-duration=0 >/dev/null
 # Uploads bucket is served by Firebase Storage (security rules); the data bucket never is.
 api POST "https://firebasestorage.googleapis.com/v1beta/projects/$P/buckets/$INCOMING:addFirebase" '{}' >/dev/null || true
-# The Storage trigger needs the Cloud Storage service agent to publish events.
-# The Storage trigger needs the Cloud Storage service agent to publish events. Google creates it
-# lazily; `firebase deploy` also ensures this grant for storage-triggered functions, so a failure
-# here is only a warning.
-gcloud beta services identity create --service=storage.googleapis.com --quiet >/dev/null 2>&1 || true
-api GET "https://storage.googleapis.com/storage/v1/projects/$P/serviceAccount" >/dev/null || true
-GCS_SA="$(gcloud storage service-agent --project="$P" 2>/dev/null || true)"
-if [[ -n "$GCS_SA" ]] && gcloud projects add-iam-policy-binding "$P" --member="serviceAccount:$GCS_SA" --role=roles/pubsub.publisher --condition=None --quiet >/dev/null 2>&1; then
-  echo "Cloud Storage service agent can publish events"
-else
-  echo "::warning::Cloud Storage service agent not ready yet; firebase deploy will grant it"
-fi
+step "Service agents needed by Cloud Functions triggers"
+PN="$(gcloud projects describe "$P" --format='value(projectNumber)')"
+# Enabling Compute creates the default compute service account that Eventarc checks for.
+gcloud services enable compute.googleapis.com --quiet
+gcloud beta services identity create --service=pubsub.googleapis.com --quiet >/dev/null 2>&1 || true
+gcloud beta services identity create --service=eventarc.googleapis.com --quiet >/dev/null 2>&1 || true
+# Asking Cloud Storage for its service account creates it.
+echo "Storage service agent: $(api GET "https://storage.googleapis.com/storage/v1/projects/$P/serviceAccount" | tr -d '\n' | head -c 300)"
+grant() { # member role
+  for attempt in 1 2 3 4 5 6; do
+    if gcloud projects add-iam-policy-binding "$P" --member="$1" --role="$2" --condition=None --quiet >/dev/null 2>/tmp/iam.err; then echo "granted $2 to $1"; return 0; fi
+    echo "  waiting to grant $2 to $1 (attempt $attempt): $(tail -1 /tmp/iam.err)"; sleep 20
+  done
+  echo "::warning::could not grant $2 to $1"; return 0
+}
+grant "serviceAccount:service-$PN@gs-project-accounts.iam.gserviceaccount.com" roles/pubsub.publisher
+grant "serviceAccount:service-$PN@gcp-sa-pubsub.iam.gserviceaccount.com" roles/iam.serviceAccountTokenCreator
+grant "serviceAccount:$PN-compute@developer.gserviceaccount.com" roles/run.invoker
+grant "serviceAccount:$PN-compute@developer.gserviceaccount.com" roles/eventarc.eventReceiver
 
 step "Anonymous sign-in"
 cfg=$(api PATCH "https://identitytoolkit.googleapis.com/admin/v2/projects/$P/config?updateMask=signIn.anonymous.enabled" '{"signIn":{"anonymous":{"enabled":true}}}')

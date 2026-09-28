@@ -29,7 +29,7 @@ APIS=(
   identitytoolkit.googleapis.com firebaseappcheck.googleapis.com firebasehosting.googleapis.com
   monitoring.googleapis.com logging.googleapis.com secretmanager.googleapis.com
   iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com cloudresourcemanager.googleapis.com
-  serviceusage.googleapis.com firebaserules.googleapis.com cloudbilling.googleapis.com
+  serviceusage.googleapis.com firebaserules.googleapis.com cloudbilling.googleapis.com compute.googleapis.com
 )
 # Google accepts at most 20 services per call.
 for ((i = 0; i < ${#APIS[@]}; i += 20)); do
