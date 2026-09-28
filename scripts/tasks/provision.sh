@@ -45,6 +45,11 @@ grant "serviceAccount:service-$PN@gs-project-accounts.iam.gserviceaccount.com" r
 grant "serviceAccount:service-$PN@gcp-sa-pubsub.iam.gserviceaccount.com" roles/iam.serviceAccountTokenCreator
 grant "serviceAccount:$PN-compute@developer.gserviceaccount.com" roles/run.invoker
 grant "serviceAccount:$PN-compute@developer.gserviceaccount.com" roles/eventarc.eventReceiver
+grant "serviceAccount:service-$PN@gcp-sa-eventarc.iam.gserviceaccount.com" roles/eventarc.serviceAgent
+# New projects build functions with the default compute account, which needs these roles.
+for role in roles/cloudbuild.builds.builder roles/logging.logWriter roles/artifactregistry.writer roles/storage.objectViewer; do
+  grant "serviceAccount:$PN-compute@developer.gserviceaccount.com" "$role"
+done
 
 step "Anonymous sign-in"
 cfg=$(api PATCH "https://identitytoolkit.googleapis.com/admin/v2/projects/$P/config?updateMask=signIn.anonymous.enabled" '{"signIn":{"anonymous":{"enabled":true}}}')

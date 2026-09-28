@@ -16,7 +16,14 @@ ENFORCE_APP_CHECK=${ENFORCE_APP_CHECK:-false}
 ENV
 cd "$ROOT/firebase"
 firebase_cli target:apply storage incoming "$INCOMING" >/dev/null
-firebase_cli deploy --only functions,firestore,storage,hosting --force
+firebase_cli deploy --only firestore,storage,hosting --force
+# The first 2nd-gen functions deploy in a project often races Google's own setup (permissions
+# propagating, source bucket creation). Firebase recommends retrying after a few minutes.
+for attempt in 1 2 3 4; do
+  if firebase_cli deploy --only functions --force; then break; fi
+  [[ $attempt == 4 ]] && fail "functions deploy failed 4 times"
+  echo "Functions deploy attempt $attempt failed; retrying in 2 minutes..."; sleep 120
+done
 
 step "Synthetic monitoring user"
 if ! gcloud secrets describe synthetic-mcp-token >/dev/null 2>&1; then
