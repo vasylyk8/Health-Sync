@@ -22,14 +22,19 @@ if [[ "$(gcloud billing projects describe "$PROJECT_ID" --format='value(billingE
 fi
 
 echo "==> Enabling APIs (takes a few minutes)"
-gcloud services enable \
-  firebase.googleapis.com firestore.googleapis.com firebasestorage.googleapis.com storage.googleapis.com \
-  cloudfunctions.googleapis.com run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
-  eventarc.googleapis.com pubsub.googleapis.com cloudscheduler.googleapis.com cloudtasks.googleapis.com \
-  identitytoolkit.googleapis.com firebaseappcheck.googleapis.com firebasehosting.googleapis.com \
-  monitoring.googleapis.com logging.googleapis.com secretmanager.googleapis.com \
-  iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com cloudresourcemanager.googleapis.com \
-  serviceusage.googleapis.com firebaserules.googleapis.com
+APIS=(
+  firebase.googleapis.com firestore.googleapis.com firebasestorage.googleapis.com storage.googleapis.com
+  cloudfunctions.googleapis.com run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
+  eventarc.googleapis.com pubsub.googleapis.com cloudscheduler.googleapis.com cloudtasks.googleapis.com
+  identitytoolkit.googleapis.com firebaseappcheck.googleapis.com firebasehosting.googleapis.com
+  monitoring.googleapis.com logging.googleapis.com secretmanager.googleapis.com
+  iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com cloudresourcemanager.googleapis.com
+  serviceusage.googleapis.com firebaserules.googleapis.com cloudbilling.googleapis.com
+)
+# Google accepts at most 20 services per call.
+for ((i = 0; i < ${#APIS[@]}; i += 20)); do
+  gcloud services enable "${APIS[@]:i:20}"
+done
 
 echo "==> Service accounts"
 for SA in "$DEPLOY_SA" "$RUNTIME_SA"; do

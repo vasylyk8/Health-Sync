@@ -23,7 +23,7 @@ final class OnboardingUITests: XCTestCase {
 
     func testWelcomeToHome() {
         let app = launch()
-        XCTAssertTrue(app.staticTexts["Health Sync"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["KROK"].waitForExistence(timeout: 5))
         snapshot("01-Welcome")
         app.buttons["connectHealth"].tap()
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))

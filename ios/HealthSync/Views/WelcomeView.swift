@@ -10,7 +10,7 @@ struct WelcomeView: View {
                 .font(.system(size: 88))
                 .foregroundStyle(Theme.accent.gradient)
                 .accessibilityHidden(true)
-            Text("Health Sync")
+            Text("KROK")
                 .font(.largeTitle.bold())
                 .padding(.top, 20)
             Text("Ask Claude or ChatGPT about your Apple Health data.")

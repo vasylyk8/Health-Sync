@@ -8,7 +8,12 @@ bad() { echo "  ❌ $*"; problems+=("$*"); }
 
 step "Google Cloud"
 gcloud projects describe "$P" >/dev/null 2>&1 && ok "project $P reachable via GitHub OIDC" || bad "cannot access project $P (check GCP_* secrets / B4 script)"
-[[ "$(gcloud billing projects describe "$P" --format='value(billingEnabled)' 2>/dev/null)" == "True" ]] && ok "billing enabled" || bad "billing not enabled (Blaze plan, B2)"
+# The deploy account usually may not read billing status; a real billing problem shows up at deploy.
+case "$(gcloud billing projects describe "$P" --format='value(billingEnabled)' 2>/dev/null)" in
+  True) ok "billing enabled" ;;
+  False) bad "billing not enabled (Blaze plan, B2)" ;;
+  *) echo "  ⚠️  billing status not readable by the deploy account (fine if the project is on Blaze)" ;;
+esac
 for s in cloudfunctions run firestore firebasestorage eventarc cloudtasks identitytoolkit firebaseappcheck monitoring secretmanager; do
   gcloud services list --enabled --format='value(config.name)' 2>/dev/null | grep -q "^$s.googleapis.com$" && ok "API $s" || bad "API $s not enabled (re-run B4 script)"
 done
@@ -23,11 +28,20 @@ for v in APPLE_TEAM_ID BUNDLE_ID ASC_APP_ID ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8;
 if [[ -n "${ASC_KEY_P8:-}" && -n "${ASC_KEY_ID:-}" ]]; then
   JWT=$(python3 "$ROOT/scripts/tasks/asc_jwt.py" 2>/dev/null || true)
   if [[ -n "$JWT" ]]; then
-    code=$(curl -s -o /tmp/asc.json -w '%{http_code}' -H "Authorization: Bearer $JWT" "https://api.appstoreconnect.apple.com/v1/apps?filter[bundleId]=$BUNDLE_ID")
+    code=$(curl -sg -o /tmp/asc.json -w '%{http_code}' -H "Authorization: Bearer $JWT" "https://api.appstoreconnect.apple.com/v1/apps?filter[bundleId]=$BUNDLE_ID")
     [[ "$code" == 200 ]] && ok "App Store Connect API key works" || bad "App Store Connect API key rejected (HTTP $code)"
     grep -q "\"bundleId\" *: *\"$BUNDLE_ID\"" /tmp/asc.json && ok "app record for $BUNDLE_ID exists" || bad "no App Store Connect app with bundle id $BUNDLE_ID (A4)"
-    code=$(curl -s -o /tmp/certs.json -w '%{http_code}' -H "Authorization: Bearer $JWT" "https://api.appstoreconnect.apple.com/v1/certificates?filter[certificateType]=DISTRIBUTION,IOS_DISTRIBUTION")
-    [[ "$code" == 200 ]] && ok "key can list certificates (Admin role)" || bad "key cannot manage certificates (needs Admin role, A5)"
+    code=$(curl -sg -o /tmp/certs.json -w '%{http_code}' -H "Authorization: Bearer $JWT" "https://api.appstoreconnect.apple.com/v1/certificates?filter[certificateType]=DISTRIBUTION,IOS_DISTRIBUTION")
+    [[ "$code" == 200 ]] && ok "key has Admin-level access (needed for cloud signing)" || bad "key lacks Admin role (A5)"
+    for email in ${TESTER_EMAILS//,/ }; do
+      code=$(curl -sg -o /tmp/user.json -w '%{http_code}' -H "Authorization: Bearer $JWT" "https://api.appstoreconnect.apple.com/v1/users?filter[username]=$email")
+      if grep -qi "\"username\" *: *\"$email\"" /tmp/user.json; then ok "tester $email is an App Store Connect user"
+      else
+        code=$(curl -sg -o /tmp/inv.json -w '%{http_code}' -H "Authorization: Bearer $JWT" "https://api.appstoreconnect.apple.com/v1/userInvitations?filter[email]=$email")
+        if grep -qi "$email" /tmp/inv.json; then echo "  ⚠️  $email was invited to App Store Connect but hasn't accepted yet (needed for TestFlight)"
+        else bad "$email is not an App Store Connect user (A7)"; fi
+      fi
+    done
   else
     bad "could not build an App Store Connect token from ASC_KEY_P8 (paste the whole .p8 file)"
   fi

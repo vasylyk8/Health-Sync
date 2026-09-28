@@ -1,4 +1,4 @@
-# Health Sync
+# KROK
 
 An iPhone app that mirrors your Apple Health data to a private, EU-hosted server, so Claude or ChatGPT can answer questions about it through a remote MCP connector.
 

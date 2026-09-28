@@ -2,7 +2,7 @@
 
 Apple's rules (App Store Review Guideline 5.1.3 and the HealthKit privacy documentation) allow HealthKit data to be used to provide health/fitness services to the user, and shared with third parties only with the user's permission, for health or fitness purposes. It may never be used for advertising or data mining, or sold.
 
-**How Health Sync is designed to fit:**
+**How KROK is designed to fit:**
 - The **service** is health and fitness management. Users ask questions about their own sleep, activity, heart rate and workouts, and get answers based on their own data. The app, its screens, its listing and the review notes all describe exactly this.
 - **The third party is chosen by the user**, named on a consent screen ("Anthropic processes this data under its own terms"), and only receives data when the user asks it a question.
 - **No advertising, selling or data mining.** Server-side analytics never include health data.

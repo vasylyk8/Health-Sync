@@ -19,7 +19,7 @@ jobs:
     env:
       BUNDLE_ID: app.healthsync.dev
       APPLE_TEAM_ID: ''
-      PUBLIC_BASE_URL: https://health-sync.web.app
+      PUBLIC_BASE_URL: https://krok-1d60a.web.app
     steps:
       - uses: actions/checkout@v4
       - name: Tools

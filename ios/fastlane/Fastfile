@@ -1,5 +1,8 @@
 # Automated build, test and TestFlight upload. Runs on GitHub's macOS machines; no Mac needed.
 # Credentials come from environment variables set by the GitHub workflow (see docs/SETUP.md).
+require "fileutils"
+require "tmpdir"
+
 default_platform(:ios)
 
 PROJECT = "HealthSync.xcodeproj"
@@ -35,43 +38,59 @@ platform :ios do
     )
   end
 
-  desc "Proves signing and capabilities work (compatibility gate): build + upload"
+  desc "Build, sign with Apple's cloud-managed distribution certificate, verify, upload to TestFlight"
+  # No certificate is created, imported or revoked: the archive is signed locally with an ad-hoc
+  # identity ("-"), then `xcodebuild -exportArchive` re-signs it through Apple's cloud signing using
+  # the App Store Connect API key (Admin role). SIGNING_MODE=xcode lets Xcode manage signing
+  # entirely (may create an "Apple Development" certificate) if cloud export of an ad-hoc archive
+  # is refused.
   lane :beta do
     key = api_key
+    bundle = ENV.fetch("BUNDLE_ID")
+    team = ENV.fetch("APPLE_TEAM_ID")
     setup_ci
     generate
-    match(
-      type: "appstore",
-      storage_mode: "google_cloud",
-      google_cloud_bucket_name: ENV.fetch("MATCH_BUCKET"),
-      google_cloud_project_id: ENV.fetch("GCP_PROJECT_ID"),
-      app_identifier: ENV.fetch("BUNDLE_ID"),
-      team_id: ENV.fetch("APPLE_TEAM_ID"),
-      api_key: key,
-      readonly: false
-    )
-    profile = ENV["sigh_#{ENV.fetch('BUNDLE_ID')}_appstore_profile-name"]
-    update_code_signing_settings(
-      path: PROJECT,
-      use_automatic_signing: false,
-      team_id: ENV.fetch("APPLE_TEAM_ID"),
-      targets: ["HealthSync"],
-      code_sign_identity: "Apple Distribution",
-      profile_name: profile
-    )
-    latest = latest_testflight_build_number(api_key: key, app_identifier: ENV.fetch("BUNDLE_ID"), initial_build_number: 0)
+    key_path = File.expand_path("../build/AuthKey.p8", __dir__)
+    FileUtils.mkdir_p(File.dirname(key_path))
+    File.write(key_path, ENV.fetch("ASC_KEY_P8"))
+    auth = "-allowProvisioningUpdates -authenticationKeyPath #{key_path} -authenticationKeyID #{ENV.fetch('ASC_KEY_ID')} -authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')}"
+
+    latest = latest_testflight_build_number(api_key: key, app_identifier: bundle, initial_build_number: 0)
     increment_build_number(xcodeproj: PROJECT, build_number: latest + 1)
+
+    archive_args = if ENV["SIGNING_MODE"] == "xcode"
+      "#{auth} DEVELOPMENT_TEAM=#{team} CODE_SIGN_STYLE=Automatic"
+    else
+      "CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=#{team} PROVISIONING_PROFILE_SPECIFIER="
+    end
     build_app(
       project: PROJECT,
       scheme: SCHEME,
       configuration: "Release",
       export_method: "app-store",
-      export_options: { provisioningProfiles: { ENV.fetch("BUNDLE_ID") => profile } },
+      export_options: { signingStyle: "automatic", teamID: team, uploadSymbols: true, manageAppVersionAndBuildNumber: false },
+      xcargs: archive_args,
+      export_xcargs: auth,
+      skip_profile_detection: true,
       output_directory: "build"
     )
-    upload_to_testflight(api_key: key, skip_waiting_for_build_processing: false, distribute_external: false)
-    upload_symbols_to_crashlytics(gsp_path: "HealthSync/GoogleService-Info.plist") rescue UI.important("Crashlytics symbol upload skipped")
+    verify_entitlements(lane_context[SharedValues::IPA_OUTPUT_PATH])
+    upload_to_testflight(api_key: key, app_identifier: bundle, skip_waiting_for_build_processing: false, distribute_external: false)
     add_internal_testers(key)
+  ensure
+    File.delete(key_path) if key_path && File.exist?(key_path)
+  end
+
+  # Refuse to upload an app whose signature lost its HealthKit entitlement.
+  private_lane :verify_entitlements do |ipa|
+    Dir.mktmpdir do |dir|
+      sh("unzip -q #{ipa.shellescape} -d #{dir.shellescape}")
+      app = Dir[File.join(dir, "Payload", "*.app")].first
+      ents = sh("codesign -d --entitlements :- #{app.shellescape} 2>/dev/null", log: false)
+      UI.user_error!("Signed app is missing the HealthKit entitlement") unless ents.include?("com.apple.developer.healthkit")
+      UI.user_error!("Signed app is missing App Attest") unless ents.include?("com.apple.developer.devicecheck.appattest-environment")
+      UI.success("Entitlements verified (HealthKit, App Attest)")
+    end
   end
 
   # Best effort: if Apple's API refuses, the build is still on TestFlight and the owner can add

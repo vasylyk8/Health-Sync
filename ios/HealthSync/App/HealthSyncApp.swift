@@ -61,5 +61,6 @@ enum Theme {
     static let accent = Color(red: 1.0, green: 0.22, blue: 0.37)
     /// Set at build time from the deployed site (Info.plist key PrivacyPolicyURL).
     static let privacyURL: URL = (Bundle.main.object(forInfoDictionaryKey: "PrivacyPolicyURL") as? String).flatMap(URL.init(string:))
-        ?? URL(string: "https://health-sync.web.app/privacy")!
+        ?? URL(string: "https://krok-1d60a.web.app/privacy")!
+    static var supportURL: URL { privacyURL.deletingLastPathComponent().appendingPathComponent("support") }
 }

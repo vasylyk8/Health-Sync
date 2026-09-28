@@ -1,4 +1,4 @@
-// Asks ChatGPT's API a question with the Health Sync connector attached (Responses API MCP tool).
+// Asks ChatGPT's API a question with the KROK connector attached (Responses API MCP tool).
 import OpenAI from 'openai';
 
 const client = new OpenAI();

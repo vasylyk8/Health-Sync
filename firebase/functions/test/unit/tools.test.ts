@@ -90,7 +90,7 @@ describe('summarize', () => {
     await upload(env, { type: HR, mode: 'recent', window: { start: day(1), end: day(2) }, checkedAt: day(2) }, [{ k: 's', id: 'a', s: day(1, 8), e: day(1, 8), v: 50, u: 'count/min' }]);
     const r = await summarize(deps(env), { type: 'HeartRate', start_date: '2024-06-01', end_date: '2024-06-01', period: 'none' });
     expect(r.coverage[0]!.stale).toBe(true);
-    expect(r.notes.join(' ')).toMatch(/opens the Health Sync app/);
+    expect(r.notes.join(' ')).toMatch(/opens the KROK app/);
   });
 
   it('rejects bad input clearly', async () => {

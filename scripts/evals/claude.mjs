@@ -1,4 +1,4 @@
-// Asks Claude a question with the Health Sync connector attached (Anthropic MCP connector).
+// Asks Claude a question with the KROK connector attached (Anthropic MCP connector).
 import Anthropic from '@anthropic-ai/sdk';
 
 const client = new Anthropic();

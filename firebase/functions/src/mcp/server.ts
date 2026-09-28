@@ -19,7 +19,7 @@ export interface McpDeps {
   now?: () => number;
 }
 
-export const SERVER_INSTRUCTIONS = `This server gives read-only access to the user's own Apple Health data, mirrored from their iPhone by the Health Sync app.
+export const SERVER_INSTRUCTIONS = `This server gives read-only access to the user's own Apple Health data, mirrored from their iPhone by the KROK app.
 Start with list_available_data (what exists and how far back) or get_health_overview (a recent snapshot).
 Use summarize for totals, averages, minimums and maximums over any period. It is exact and de-duplicates overlapping devices for totals. Prefer it over fetching raw samples.
 Use get_samples only for small ranges when individual readings matter.
@@ -99,7 +99,7 @@ const TOOLS: { name: string; title: string; description: string; input: z.ZodRaw
 ];
 
 function buildServer(q: QueryDeps, deps: McpDeps, provider: Provider): McpServer {
-  const server = new McpServer({ name: 'health-sync', version: '1.0.0' }, { instructions: SERVER_INSTRUCTIONS });
+  const server = new McpServer({ name: 'krok', version: '1.0.0' }, { instructions: SERVER_INSTRUCTIONS });
   for (const tool of TOOLS) {
     server.registerTool(
       tool.name,
@@ -171,13 +171,13 @@ export async function handleMcp(req: IncomingMessage & { body?: unknown }, res: 
 
   if (!TOKEN_RE.test(token)) {
     if (!badTokenAllowed(ip, now())) return send(res, 429, { error: 'too_many_requests' });
-    return send(res, 404, { error: 'not_found', message: 'This Health Sync link is not valid.' });
+    return send(res, 404, { error: 'not_found', message: 'This KROK link is not valid.' });
   }
   const hash = hashToken(token);
   const rec = await deps.tokens.resolve(hash);
   if (!rec) {
     if (!badTokenAllowed(ip, now())) return send(res, 429, { error: 'too_many_requests' });
-    return send(res, 404, { error: 'not_found', message: 'This Health Sync link was disconnected. Open the Health Sync app to get a new link.' });
+    return send(res, 404, { error: 'not_found', message: 'This KROK link was disconnected. Open the KROK app to get a new link.' });
   }
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -188,7 +188,7 @@ export async function handleMcp(req: IncomingMessage & { body?: unknown }, res: 
     return send(res, 429, { error: 'too_many_requests', message: 'Too many requests. Wait a minute.' });
   }
   const user = await deps.meta.getUser(rec.uid);
-  if (!user || user.deleting) return send(res, 404, { error: 'not_found', message: 'This Health Sync link is no longer active.' });
+  if (!user || user.deleting) return send(res, 404, { error: 'not_found', message: 'This KROK link is no longer active.' });
 
   await deps.connections.touch(rec.uid, rec.provider, now(), user.connections[rec.provider]).catch(() => undefined);
 

@@ -51,13 +51,13 @@ targets:
     info:
       path: HealthSync/Info.plist
       properties:
-        CFBundleDisplayName: Health Sync
+        CFBundleDisplayName: KROK
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UIRequiredDeviceCapabilities: [healthkit]
-        NSHealthShareUsageDescription: "Health Sync reads your Health data so that the AI assistants you connect (Claude, ChatGPT) can answer questions about it. Nothing is shared until you connect an assistant."
-        NSHealthUpdateUsageDescription: "Health Sync never writes to Apple Health."
+        NSHealthShareUsageDescription: "KROK reads your Health data so that the AI assistants you connect (Claude, ChatGPT) can answer questions about it. Nothing is shared until you connect an assistant."
+        NSHealthUpdateUsageDescription: "KROK never writes to Apple Health."
         UIBackgroundModes: [fetch, processing]
         BGTaskSchedulerPermittedIdentifiers: [app.healthsync.sync]
         ITSAppUsesNonExemptEncryption: false

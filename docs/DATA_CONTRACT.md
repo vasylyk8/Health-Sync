@@ -95,7 +95,7 @@ The phone's upload ack only means **accepted**. "Synced" in the app and every to
   `coverage` (per type: synced intervals, caughtUp, earliest, latest, checkedAt, stale),
   `complete` (true only if the requested range is fully inside the coverage intervals for all types used), and `dataAsOf`.
   If a result would exceed its row cap (cap+1 check) or ~60 KB, the tool returns an error explaining how to narrow the request. It **never** returns an aggregate over partial rows.
-  If the data is more than 24 h old: `note: "Data last synced …; ask the user to open Health Sync to refresh."`
+  If the data is more than 24 h old: `note: "Data last synced …; ask the user to open KROK to refresh."`
 
 ## 5. Deletion ("Delete all my data")
 

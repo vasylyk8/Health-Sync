@@ -15,7 +15,7 @@ gcloud firestore databases describe --database='(default)' >/dev/null 2>&1 || \
   gcloud firestore databases create --database='(default)' --location=eur3 --type=firestore-native --quiet
 
 step "Buckets (EU, no soft delete so deletions are final)"
-for B in "$INCOMING" "$DATA" "$SIGNING"; do
+for B in "$INCOMING" "$DATA"; do
   gcloud storage buckets describe "gs://$B" >/dev/null 2>&1 || \
     gcloud storage buckets create "gs://$B" --location="$REGION" --uniform-bucket-level-access --public-access-prevention --soft-delete-duration=0
 done
@@ -53,11 +53,6 @@ echo "iOS app: $APP_ID"
 
 step "App Check (App Attest; enforcement stays off until the soak test passes)"
 api PATCH "https://firebaseappcheck.googleapis.com/v1/projects/$P/apps/$APP_ID/appAttestConfig?updateMask=tokenTtl" '{"tokenTtl":"3600s"}' >/dev/null || true
-
-step "Secrets"
-if ! gcloud secrets describe match-password >/dev/null 2>&1; then
-  openssl rand -base64 32 | gcloud secrets create match-password --data-file=- --replication-policy=user-managed --locations="$REGION" >/dev/null
-fi
 
 step "Keep secret links out of request logs"
 FILTER='resource.type="cloud_run_revision" AND httpRequest.requestUrl:"/mcp/"'

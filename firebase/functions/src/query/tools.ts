@@ -48,7 +48,7 @@ function envelope(deps: QueryDeps, mans: [string, TypeManifest | null][], comple
   const checked = mans.map(([, m]) => m?.coverage.checkedAt ?? null).filter((x): x is number => x !== null);
   const asOf = checked.length ? Math.min(...checked) : null;
   if (coverage.some((cv) => cv.stale)) {
-    notes.push('Some of this data was last synced more than a day ago. Suggest the user opens the Health Sync app on their iPhone to refresh.');
+    notes.push('Some of this data was last synced more than a day ago. Suggest the user opens the KROK app on their iPhone to refresh.');
   }
   if (!complete) {
     notes.push('The requested range is not fully synced yet (see coverage). Treat results as partial and tell the user.');
@@ -339,7 +339,7 @@ export async function listAvailableData(deps: QueryDeps): Promise<ToolResult> {
     });
   const notes = types.length
     ? []
-    : ['No Health data has been synced yet. The user should open the Health Sync app and keep it open while it syncs.'];
+    : ['No Health data has been synced yet. The user should open the KROK app and keep it open while it syncs.'];
   const env = envelope(deps, mans.map((m) => [m.type, m] as [string, TypeManifest]), mans.every((m) => m.coverage.caughtUp), notes);
   return { ...env, coverage: [], types, groups: [...new Set(types.map((t) => t.group))] };
 }
@@ -392,7 +392,7 @@ export async function getOverview(deps: QueryDeps, args: { days?: number; timezo
   });
   const env = envelope(deps, [], complete);
   if (coverage.some((cv) => cv.stale)) {
-    env.notes.unshift('Some of this data was last synced more than a day ago. Suggest the user opens the Health Sync app on their iPhone to refresh.');
+    env.notes.unshift('Some of this data was last synced more than a day ago. Suggest the user opens the KROK app on their iPhone to refresh.');
   }
   return { ...env, coverage: dedupeCoverage(coverage), period: `${start}..${today}`, timezone: tz, metrics };
 }

@@ -1,9 +1,9 @@
-# Health Sync Privacy Policy (DRAFT – needs legal review before launch)
+# KROK Privacy Policy (DRAFT – needs legal review before launch)
 
-_Last updated: [date]. Controller: [Company legal name, address, contact email]._
+_Last updated: 28 September 2026. Controller: 2ndOp Inc, 1 Yule Ave, Toronto, ON M6S 1E7, Canada · vasylyk@outlook.com._
 
-## What Health Sync does
-Health Sync copies the Apple Health data you allow it to read to our servers, so that the AI assistants **you** connect (Anthropic's Claude and/or OpenAI's ChatGPT) can answer questions about it.
+## What KROK does
+KROK copies the Apple Health data you allow it to read to our servers, so that the AI assistants **you** connect (Anthropic's Claude and/or OpenAI's ChatGPT) can answer questions about it.
 
 ## What we collect
 - **Health and fitness data** you allow in Apple Health (for example steps, heart rate, sleep, workouts, body measurements, nutrition, cycle tracking). Clinical health records are not read.
@@ -24,13 +24,13 @@ Health Sync copies the Apple Health data you allow it to read to our servers, so
 Until you delete it (Settings menu → Delete All My Data, completed within 24 hours), or automatically **one year after your last sync**. Access logs (which tool was used and when, no health values) are kept for 90 days.
 
 ## Your rights
-You can access, correct, export or delete your data, withdraw consent, and complain to your data protection authority. Because we don't know who you are, the easiest way to delete is in the app. For anything else, contact [email] and include your anonymous account ID (shown in the app's support screen – to be added).
+You can access, correct, export or delete your data, withdraw consent, and complain to your data protection authority. Because we don't know who you are, the easiest way to delete is in the app. For anything else, email vasylyk@outlook.com.
 
 ## Security
 Encryption in transit and at rest, per-assistant private links that can be revoked, strict access controls, and no health data in logs.
 
 ## Children
-Health Sync is not intended for children under 16.
+KROK is not intended for children under 16.
 
 ## Changes
 We'll notify you in the app of material changes.

@@ -144,7 +144,7 @@ struct SetupSheet: View {
                 }
             }
         } message: {
-            Text("\(provider.name) will immediately lose access. You can also remove the Health Sync connector in \(provider.name)'s settings.")
+            Text("\(provider.name) will immediately lose access. You can also remove the KROK connector in \(provider.name)'s settings.")
         }
     }
 }

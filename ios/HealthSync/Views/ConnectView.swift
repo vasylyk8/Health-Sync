@@ -23,11 +23,12 @@ struct ConnectView: View {
                     SyncStatusView(progress: model.progress, status: model.status)
                 }
             }
-            .navigationTitle("Health Sync")
+            .navigationTitle("KROK")
             .refreshable { await model.syncNow() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        Link(destination: Theme.supportURL) { Label("Help & Support", systemImage: "questionmark.circle") }
                         Link(destination: Theme.privacyURL) { Label("Privacy Policy", systemImage: "hand.raised") }
                         Button(role: .destructive) { confirmDelete = true } label: { Label("Delete All My Data", systemImage: "trash") }
                     } label: {
@@ -39,7 +40,7 @@ struct ConnectView: View {
             .sheet(item: $selected) { provider in
                 SetupSheet(provider: provider)
             }
-            .confirmationDialog("Delete all your data from Health Sync?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            .confirmationDialog("Delete all your data from KROK?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete All My Data", role: .destructive) { Task { await model.deleteAllData() } }
             } message: {
                 Text("Connected assistants lose access immediately and your copy on our servers is erased. Apple Health itself is not changed.")
@@ -105,7 +106,7 @@ struct SyncStatusView: View {
                 .font(.subheadline)
             } else if progress.historyComplete && status.typesWithData == 0 && status.registered {
                 Text("No readable Health data found").font(.subheadline.weight(.medium))
-                Text("Check Settings › Health › Data Access & Devices › Health Sync and turn on the categories you want to share.")
+                Text("Check Settings › Health › Data Access & Devices › KROK and turn on the categories you want to share.")
                     .font(.footnote).foregroundStyle(.secondary)
             } else {
                 Label("Getting ready…", systemImage: "hourglass").font(.subheadline)

@@ -7,7 +7,7 @@ rpc() { curl -sS -X POST "$MCP" -H 'Content-Type: application/json' -H 'Accept: 
 
 code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/healthz"); [[ "$code" == 200 ]] || fail "healthz returned $code"
 echo "healthz ok"
-rpc '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' | grep -q '"health-sync"' || fail "MCP initialize failed"
+rpc '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' | grep -q '"krok"' || fail "MCP initialize failed"
 echo "initialize ok"
 rpc '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | grep -q '"summarize"' || fail "tools/list failed"
 echo "tools/list ok"

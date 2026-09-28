@@ -32,7 +32,7 @@ struct AIProvider: Identifiable, Hashable {
         steps: [
             Step(title: "Copy your private link", detail: "This link lets Claude read your Health data. Keep it private.", illustration: .copyLink),
             Step(title: "Open Claude's settings", detail: "Sign in if asked. You'll land on the Connectors page.", illustration: .openSettings(site: "claude.ai", path: ["Settings", "Connectors"])),
-            Step(title: "Add the connector", detail: "Tap \"Add custom connector\", name it Health Sync, paste your link, then tap Add.", illustration: .addConnector(site: "claude.ai", button: "Add custom connector", fields: ["Health Sync", "https://…/mcp/…"])),
+            Step(title: "Add the connector", detail: "Tap \"Add custom connector\", name it KROK, paste your link, then tap Add.", illustration: .addConnector(site: "claude.ai", button: "Add custom connector", fields: ["KROK", "https://…/mcp/…"])),
         ],
         tip: "On Claude's free plan you can have one custom connector. If you already have one, remove it first.")
 
@@ -42,7 +42,7 @@ struct AIProvider: Identifiable, Hashable {
         steps: [
             Step(title: "Copy your private link", detail: "This link lets ChatGPT read your Health data. Keep it private.", illustration: .copyLink),
             Step(title: "Open ChatGPT's settings", detail: "Sign in if asked. In Apps & Connectors, open Advanced settings and turn on Developer mode.", illustration: .openSettings(site: "chatgpt.com", path: ["Settings", "Apps & Connectors", "Developer mode"])),
-            Step(title: "Create the connector", detail: "Tap Create, name it Health Sync, paste your link, choose \"No authentication\", then save.", illustration: .addConnector(site: "chatgpt.com", button: "Create", fields: ["Health Sync", "https://…/mcp/…", "No authentication"])),
+            Step(title: "Create the connector", detail: "Tap Create, name it KROK, paste your link, choose \"No authentication\", then save.", illustration: .addConnector(site: "chatgpt.com", button: "Create", fields: ["KROK", "https://…/mcp/…", "No authentication"])),
         ],
         tip: "Custom connectors need ChatGPT Plus, Pro or Business.")
 

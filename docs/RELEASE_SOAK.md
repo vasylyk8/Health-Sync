@@ -5,7 +5,7 @@ Automated tests can't reproduce real Apple Watch data or background syncing over
 Write down anything odd, with the time it happened, and send it to me. I'll fix it and send a new TestFlight build.
 
 ## Day 1: setup (about 20 minutes)
-1. Install **TestFlight** from the App Store, open the invite email and install **Health Sync**.
+1. Install **TestFlight** from the App Store, open the invite email and install **KROK**.
 2. Open the app and tap **Connect to Apple Health**. On Apple's screen tap **Turn On All**, then **Allow**.
 3. ✅ The home screen shows "Syncing your history…" with a percentage.
 4. Leave the app open (screen on) until the percentage reaches 100% or stops moving. Note how long it took: ______.
@@ -22,14 +22,14 @@ Write down anything odd, with the time it happened, and send it to me. I'll fix 
 9. Ask the same three questions in ChatGPT. ✅ They match.
 
 ## Days 2–5: normal life (about 5 minutes a day)
-- Use your phone normally. **Don't** open Health Sync unless a step says so.
+- Use your phone normally. **Don't** open KROK unless a step says so.
 - Each evening, ask Claude: "How many steps did I take today, and when was my data last synced?"
   ✅ The data is at most a few hours old (it syncs in the background when iOS allows).
 - **Day 2:** in the Health app, add a manual weight entry, then delete another old manual entry (or add one and delete it). Next day, ask Claude about your weight. ✅ The new entry is there and the deleted one is gone.
 - **Day 3:** turn on Airplane Mode for a few hours while walking. Turn it off. ✅ That evening the steps show up.
-- **Day 3:** swipe Health Sync away in the app switcher (force-quit). Next day, ask Claude about today's steps. ✅ Claude says the data may be stale and suggests opening the app. Open the app → ✅ fresh again.
+- **Day 3:** swipe KROK away in the app switcher (force-quit). Next day, ask Claude about today's steps. ✅ Claude says the data may be stale and suggests opening the app. Open the app → ✅ fresh again.
 - **Day 4:** restart your iPhone. ✅ Syncing continues without opening the app.
-- **Day 5:** in Health Sync, open **Claude → Disconnect**. Ask Claude a health question. ✅ It can no longer read your data. Reconnect it (a new link is created).
+- **Day 5:** in KROK, open **Claude → Disconnect**. Ask Claude a health question. ✅ It can no longer read your data. Reconnect it (a new link is created).
 
 ## Second tester (long Apple Watch history)
 - Record how long the first sync took and roughly how many years of history there are: ______
