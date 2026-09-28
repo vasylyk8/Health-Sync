@@ -49,7 +49,7 @@
         }
       },
       {
-        "source": "/healthz",
+        "source": "/health",
         "function": {
           "functionId": "healthz",
           "region": "europe-west1"

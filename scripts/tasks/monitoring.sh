@@ -7,7 +7,7 @@ TOKEN_RAW=$(gcloud secrets versions access latest --secret=synthetic-mcp-token)
 exists_uptime() { gcloud monitoring uptime list-configs --filter="displayName=\"$1\"" --format='value(name)' | head -1; }
 if [[ -z "$(exists_uptime hs-healthz)" ]]; then
   gcloud monitoring uptime create hs-healthz --resource-type=uptime-url --resource-labels=host="$P.web.app",project_id="$P" \
-    --path=/healthz --protocol=https --period=5 --timeout=20 --matcher-content='"ok":true' >/dev/null
+    --path=/health --protocol=https --period=5 --timeout=20 --matcher-content='"ok":true' >/dev/null
 fi
 if [[ -z "$(exists_uptime hs-mcp-synthetic)" ]]; then
   gcloud monitoring uptime create hs-mcp-synthetic --resource-type=uptime-url --resource-labels=host="$P.web.app",project_id="$P" \

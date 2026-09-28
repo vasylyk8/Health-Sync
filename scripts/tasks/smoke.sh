@@ -7,11 +7,11 @@ rpc() { curl -sS -X POST "$MCP" -H 'Content-Type: application/json' -H 'Accept: 
 
 # A fresh Hosting release can take a minute to reach every edge.
 for i in $(seq 1 12); do
-  code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/healthz"); [[ "$code" == 200 ]] && break
+  code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/health"); [[ "$code" == 200 ]] && break
   sleep 10
 done
 if [[ "$code" != 200 ]]; then
-  echo "--- $BASE_URL/healthz"; curl -sS -i "$BASE_URL/healthz" | head -c 1500; echo
+  echo "--- $BASE_URL/health"; curl -sS -i "$BASE_URL/health" | head -c 1500; echo
   direct=$(gcloud functions describe healthz --region="$REGION" --format='value(serviceConfig.uri)' 2>/dev/null || true)
   [[ -n "$direct" ]] && { echo "--- $direct"; curl -sS -i "$direct" | head -c 800; echo; }
   fail "healthz returned $code"
