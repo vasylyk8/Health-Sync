@@ -2,3 +2,4 @@ node_modules/
 lib/
 src/generated/
 *.log
+.seed/

@@ -33,7 +33,10 @@ if ! gcloud secrets describe synthetic-mcp-token >/dev/null 2>&1; then
 fi
 SYNTHETIC_TOKEN=$(gcloud secrets versions access latest --secret=synthetic-mcp-token)
 export SYNTHETIC_TOKEN GCP_PROJECT_ID
-(cd "$ROOT/firebase/functions" && node "$ROOT/scripts/synthetic/seed.mjs")
+# ESM resolves packages next to the script, so run a copy inside functions/ (where firebase-admin is installed).
+SEED_DIR="$ROOT/firebase/functions/.seed"
+mkdir -p "$SEED_DIR" && cp "$ROOT"/scripts/synthetic/*.mjs "$SEED_DIR"/
+node "$SEED_DIR/seed.mjs"; rm -rf "$SEED_DIR"
 
 step "Live smoke test"
 "$ROOT/scripts/tasks/smoke.sh"

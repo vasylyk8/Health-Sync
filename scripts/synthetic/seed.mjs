@@ -1,6 +1,6 @@
 // Seeds (or refreshes) the synthetic monitoring user in the deployed project.
 // Env: GCP_PROJECT_ID, SYNTHETIC_TOKEN (raw 43-char link token). Uses Application Default
-// Credentials (GitHub OIDC). Run from firebase/functions (for firebase-admin).
+// Credentials (GitHub OIDC). deploy.sh copies it into firebase/functions (for firebase-admin).
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import { initializeApp } from 'firebase-admin/app';
