@@ -1,6 +1,6 @@
 import { FieldPath, type Firestore } from 'firebase-admin/firestore';
 import { COMPACT_THRESHOLD } from '../ingest/ingest.js';
-import { effectiveUserPatch, emptyManifest, type BatchState, type BlobStore, type FileRef, type Interval, type MetaStore, type TypeManifest, type UserDoc } from './types.js';
+import { effectiveUserPatch, emptyManifest, emptyWorkoutData, type WorkoutDataDoc, type BatchState, type BlobStore, type FileRef, type Interval, type MetaStore, type TypeManifest, type UserDoc } from './types.js';
 
 /** Firestore document ids cannot contain '/'; HealthKit ids never do, but guard anyway. */
 const typeDocId = (type: string) => type.replace(/\//g, '_');
@@ -74,6 +74,51 @@ export class FirestoreMeta implements MetaStore {
       if (Object.keys(patch).length) tx.update(userRef, patch);
       return 'published';
     });
+  }
+
+  private workoutRef(uid: string, wid: string) {
+    return this.user(uid).collection('workouts').doc(wid);
+  }
+
+  async getWorkoutData(uid: string, wid: string): Promise<WorkoutDataDoc | null> {
+    const snap = await this.workoutRef(uid, wid).get();
+    return snap.exists ? (snap.data() as WorkoutDataDoc) : null;
+  }
+
+  async listWorkoutData(uid: string): Promise<WorkoutDataDoc[]> {
+    const snap = await this.user(uid).collection('workouts').get();
+    return snap.docs.map((d) => d.data() as WorkoutDataDoc);
+  }
+
+  async publishWorkoutData(args: Parameters<MetaStore['publishWorkoutData']>[0]): ReturnType<MetaStore['publishWorkoutData']> {
+    const { uid, wid, batchId, generation, mutate, userPatch } = args;
+    const userRef = this.user(uid);
+    const docRef = this.workoutRef(uid, wid);
+    const batchRef = userRef.collection('batches').doc(batchId);
+    return this.db.runTransaction(async (tx) => {
+      const [userSnap, batchSnap, docSnap] = await Promise.all([tx.get(userRef), tx.get(batchRef), tx.get(docRef)]);
+      const user = userSnap.data() as UserDoc | undefined;
+      if (!user || user.deleting || user.generation !== generation) return 'discarded';
+      if (batchSnap.get('state') === 'published') return 'duplicate';
+      const current = docSnap.exists ? (docSnap.data() as WorkoutDataDoc) : emptyWorkoutData(wid);
+      tx.set(docRef, mutate(current));
+      tx.set(batchRef, { state: 'published', at: Date.now(), expireAt: new Date(Date.now() + 30 * 86_400_000) });
+      const patch = effectiveUserPatch(user, userPatch);
+      if (Object.keys(patch).length) tx.update(userRef, patch);
+      return 'published';
+    });
+  }
+
+  async deleteWorkoutData(uid: string, wids: string[]): Promise<FileRef[]> {
+    const files: FileRef[] = [];
+    for (const wid of wids) {
+      const ref = this.workoutRef(uid, wid);
+      const snap = await ref.get();
+      if (!snap.exists) continue;
+      for (const s of Object.values((snap.data() as WorkoutDataDoc).streams ?? {})) files.push(...s.files);
+      await ref.delete();
+    }
+    return files;
   }
 
   async swapFiles(uid: string, type: string, partition: string, removed: string[], added: FileRef | null): Promise<boolean> {

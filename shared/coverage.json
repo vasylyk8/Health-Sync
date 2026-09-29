@@ -1549,6 +1549,18 @@
    "kind": "characteristics",
    "group": "profile",
    "record": "p"
+  },
+  {
+   "id": "_daily",
+   "kind": "daily",
+   "group": "daily",
+   "record": "day"
+  },
+  {
+   "id": "_wstream",
+   "kind": "workoutdata",
+   "group": "workouts",
+   "record": "ws"
   }
  ]
 }

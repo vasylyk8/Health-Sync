@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
-import { effectiveUserPatch, emptyManifest, type BatchState, type BlobStore, type FileRef, type MetaStore, type TypeManifest, type UserDoc } from '../../src/store/types.js';
+import { effectiveUserPatch, emptyManifest, emptyWorkoutData, type WorkoutDataDoc, type BatchState, type BlobStore, type FileRef, type MetaStore, type TypeManifest, type UserDoc } from '../../src/store/types.js';
 import { ingestObject } from '../../src/ingest/ingest.js';
 
 /** Blob store backed by a temp directory. */
@@ -28,6 +28,7 @@ export class MemoryMeta implements MetaStore {
   users = new Map<string, UserDoc>();
   manifests = new Map<string, TypeManifest>();
   batches = new Map<string, { state: BatchState; detail?: string }>();
+  workoutData = new Map<string, WorkoutDataDoc>();
   addUser(uid: string, patch: Partial<UserDoc> = {}) {
     this.users.set(uid, { generation: 1, deleting: false, createdAt: 0, lastVisibleAt: null, tz: 'UTC', connections: {}, links: {}, ...patch });
   }
@@ -45,6 +46,28 @@ export class MemoryMeta implements MetaStore {
     this.batches.set(`${uid}/${batchId}`, { state: 'published' });
     Object.assign(user, effectiveUserPatch(user, userPatch));
     return 'published' as const;
+  }
+  async getWorkoutData(uid: string, wid: string) { return structuredClone(this.workoutData.get(`${uid}/${wid}`) ?? null); }
+  async listWorkoutData(uid: string) { return [...this.workoutData.entries()].filter(([k]) => k.startsWith(uid + '/')).map(([, v]) => structuredClone(v)); }
+  async publishWorkoutData({ uid, wid, batchId, generation, mutate, userPatch }: Parameters<MetaStore['publishWorkoutData']>[0]) {
+    const user = this.users.get(uid);
+    if (!user || user.deleting || user.generation !== generation) return 'discarded' as const;
+    if (this.batches.get(`${uid}/${batchId}`)?.state === 'published') return 'duplicate' as const;
+    const cur = this.workoutData.get(`${uid}/${wid}`) ?? emptyWorkoutData(wid);
+    this.workoutData.set(`${uid}/${wid}`, mutate(structuredClone(cur)));
+    this.batches.set(`${uid}/${batchId}`, { state: 'published' });
+    Object.assign(user, effectiveUserPatch(user, userPatch));
+    return 'published' as const;
+  }
+  async deleteWorkoutData(uid: string, wids: string[]) {
+    const files: FileRef[] = [];
+    for (const wid of wids) {
+      const d = this.workoutData.get(`${uid}/${wid}`);
+      if (!d) continue;
+      for (const s of Object.values(d.streams)) files.push(...s.files);
+      this.workoutData.delete(`${uid}/${wid}`);
+    }
+    return files;
   }
   async swapFiles(uid: string, type: string, partition: string, removed: string[], added: FileRef | null) {
     const man = this.manifests.get(`${uid}/${type}`);
@@ -69,7 +92,8 @@ export function makeEnv(now = Date.UTC(2024, 5, 30, 12)): Env {
 let seq = 0;
 export interface UploadOpts {
   type: string;
-  mode?: 'anchored' | 'recent' | 'stats' | 'profile' | 'reconcile' | 'status';
+  mode?: 'anchored' | 'recent' | 'stats' | 'profile' | 'reconcile' | 'status' | 'workoutdata';
+  schema?: 1 | 2;
   window?: { start: number; end: number };
   caughtUp?: boolean;
   checkedAt?: number;
@@ -83,7 +107,7 @@ export interface UploadOpts {
 export function makeBatch(env: Env, opts: UploadOpts, records: object[]): { path: string; gz: Buffer; batchId: string } {
   const batchId = opts.batchId ?? randomUUID();
   const header = {
-    kind: 'header', schema: 1, batchId, type: opts.type, seq: ++seq, tz: opts.tz ?? 'UTC', createdAt: env.now,
+    kind: 'header', schema: opts.schema ?? (opts.type === '_wstream' || opts.type === '_daily' ? 2 : 1), batchId, type: opts.type, seq: ++seq, tz: opts.tz ?? 'UTC', createdAt: env.now,
     mode: opts.mode ?? 'anchored', checkedAt: opts.checkedAt ?? env.now,
     ...(opts.window ? { window: opts.window } : {}),
     ...(opts.caughtUp !== undefined ? { caughtUp: opts.caughtUp } : {}),

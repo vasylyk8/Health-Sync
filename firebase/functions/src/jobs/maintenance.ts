@@ -1,7 +1,8 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { lit, withDuck } from '../query/duck.js';
-import { dataPath } from '../ingest/ingest.js';
+import { dataPath, dropWorkoutData } from '../ingest/ingest.js';
+import { WORKOUT_TYPE } from '../ingest/batch.js';
 import type { BlobStore, MetaStore } from '../store/types.js';
 import { log } from '../log.js';
 
@@ -44,6 +45,10 @@ export async function finishReconcile(deps: Deps, uid: string, type: string, rec
       uid, type, batchId: reconcileId, generation: user.generation,
       mutate: (m) => ({ ...m, version: m.version + 1, files: { ...m.files, _tombstones: [...(m.files._tombstones ?? []).filter((f) => f.path !== path), { path, bytes }] } }),
     });
+    if (res === 'published' && type === WORKOUT_TYPE) {
+      const ids = (await c.runAndReadAll(`SELECT id FROM read_parquet(${lit(out)})`)).getRows().map((r) => String(r[0]));
+      await dropWorkoutData(deps, uid, ids);
+    }
     log.info('reconcile finished', { uid, type, removed: n, result: res });
     return n;
   });

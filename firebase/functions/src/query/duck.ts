@@ -2,7 +2,7 @@ import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Row } from '../ingest/batch.js';
+import { STREAM_COLS, type Row, type StreamChunk } from '../ingest/batch.js';
 
 /**
  * Opens a private in-memory DuckDB for one operation. Only trusted, server-written SQL runs here:
@@ -48,4 +48,24 @@ export async function idsToParquet(c: DuckDBConnection, dir: string, ids: string
   await writeFile(src, ids.map((id) => JSON.stringify({ id })).join('\n'));
   await c.run(`COPY (SELECT * FROM read_json(${lit(src)}, format='newline_delimited', columns={id:'VARCHAR'})) TO ${lit(out)} (FORMAT parquet, COMPRESSION zstd)`);
   return out;
+}
+
+/** One row per raw workout point; unused value columns stay NULL (cheap in Parquet). */
+export const STREAM_COLUMNS = '{t:\'BIGINT\',v:\'DOUBLE\',lat:\'DOUBLE\',lon:\'DOUBLE\',alt:\'DOUBLE\',spd:\'DOUBLE\',crs:\'DOUBLE\',ha:\'DOUBLE\',va:\'DOUBLE\'}';
+
+/** Writes raw stream chunks of one (workout, stream) to a zstd Parquet file, sorted by time. */
+export async function streamToParquet(c: DuckDBConnection, dir: string, chunks: StreamChunk[], name: string): Promise<{ path: string; points: number }> {
+  const src = join(dir, `${name}.ndjson`);
+  const out = join(dir, `${name}.parquet`);
+  const lines: string[] = [];
+  for (const ch of chunks) {
+    for (let i = 0; i < ch.t.length; i++) {
+      const row: Record<string, number | null> = { t: ch.t[i]! };
+      for (const col of STREAM_COLS) row[col] = ch.cols[col]?.[i] ?? null;
+      lines.push(JSON.stringify(row));
+    }
+  }
+  await writeFile(src, lines.join('\n'));
+  await c.run(`COPY (SELECT * FROM read_json(${lit(src)}, format='newline_delimited', columns=${STREAM_COLUMNS}) ORDER BY t) TO ${lit(out)} (FORMAT parquet, COMPRESSION zstd)`);
+  return { path: out, points: lines.length };
 }

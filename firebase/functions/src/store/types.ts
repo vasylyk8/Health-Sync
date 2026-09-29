@@ -58,6 +58,34 @@ export interface UserDoc {
 
 export type BatchState = 'published' | 'rejected' | 'discarded';
 
+/** One raw data stream (heart rate, route, ...) of a workout, as stored in Parquet. */
+export interface StreamInfo {
+  /** Generation of the phone-side read that wrote these files; a newer one replaces older files. */
+  gen: number;
+  files: FileRef[];
+  points: number;
+  unit: string | null;
+  /** Value columns present (v, lat, lon, alt, spd, crs, ha, va). */
+  cols: string[];
+}
+
+/** Index of the raw data uploaded for one workout (Firestore: users/{uid}/workouts/{wid}). */
+export interface WorkoutDataDoc {
+  wid: string;
+  version: number;
+  streams: Record<string, StreamInfo>;
+  /** What the phone said it would send (stream -> point count) for generation `expectedGen`. */
+  expected: Record<string, number> | null;
+  expectedGen: number | null;
+  /** True once every expected stream of `expectedGen` has arrived in full. */
+  rawComplete: boolean;
+  updatedAt: number;
+}
+
+export function emptyWorkoutData(wid: string): WorkoutDataDoc {
+  return { wid, version: 0, streams: {}, expected: null, expectedGen: null, rawComplete: false, updatedAt: 0 };
+}
+
 export interface MetaStore {
   getUser(uid: string): Promise<UserDoc | null>;
   getManifest(uid: string, type: string): Promise<TypeManifest | null>;
@@ -83,6 +111,19 @@ export interface MetaStore {
    * files published meanwhile. Returns false (no change) if some removed path is already gone.
    */
   swapFiles(uid: string, type: string, partition: string, removed: string[], added: FileRef | null): Promise<boolean>;
+  getWorkoutData(uid: string, wid: string): Promise<WorkoutDataDoc | null>;
+  listWorkoutData(uid: string): Promise<WorkoutDataDoc[]>;
+  /** Like `publish`, but for one workout's raw-data index. `batchId` must be unique per workout. */
+  publishWorkoutData(args: {
+    uid: string;
+    wid: string;
+    batchId: string;
+    generation: number;
+    mutate: (d: WorkoutDataDoc) => WorkoutDataDoc;
+    userPatch?: Partial<Pick<UserDoc, 'lastVisibleAt' | 'tz'>>;
+  }): Promise<'published' | 'duplicate' | 'discarded'>;
+  /** Removes the raw-data index of deleted workouts and returns the files it referenced. */
+  deleteWorkoutData(uid: string, wids: string[]): Promise<FileRef[]>;
 }
 
 export function emptyManifest(type: string): TypeManifest {
