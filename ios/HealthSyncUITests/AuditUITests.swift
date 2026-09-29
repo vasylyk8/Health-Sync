@@ -11,17 +11,26 @@ final class AuditUITests: XCTestCase {
         app.launchArguments = ["-uiTesting"] + args
         app.launch(); return app
     }
+    /// Runs Apple's accessibility audit. If the audit tool itself times out (error -56, which happens on
+    /// slow CI machines and says nothing about the app), it is run once more. Real findings still fail.
+    private func audit(_ app: XCUIApplication) throws {
+        do {
+            try app.performAccessibilityAudit()
+        } catch let error as NSError where error.domain == "com.apple.xcode.xctest.accessibilityAudit" && error.code == -56 {
+            try app.performAccessibilityAudit()
+        }
+    }
     func testWelcomeAccessibilityAndCapture() throws {
         let app = launch()
         XCTAssertTrue(app.buttons["connectHealth"].waitForExistence(timeout: 10))
         shot("audit-welcome")
-        try app.performAccessibilityAudit()
+        try audit(app)
     }
     func testHomeAccessibilityAndCapture() throws {
         let app = launch(["-onboarded"])
         XCTAssertTrue(app.buttons["provider.chatgpt"].waitForExistence(timeout: 10))
         shot("audit-home")
-        try app.performAccessibilityAudit()
+        try audit(app)
     }
     func testLargeTextWelcomeAndHome() {
         let app = launch(["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
