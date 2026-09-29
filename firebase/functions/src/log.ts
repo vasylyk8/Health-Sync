@@ -7,6 +7,7 @@ type Fields = Record<string, string | number | boolean | null | undefined>;
 const SAFE_KEYS = new Set([
   'uid', 'batchId', 'type', 'result', 'records', 'reason', 'tool', 'provider', 'ms', 'bytes',
   'status', 'files', 'partition', 'job', 'count', 'code', 'op', 'removed', 'generation',
+  'mode', 'readMs', 'uploadMs', 'types',
 ]);
 
 function emit(severity: string, message: string, fields: Fields = {}) {

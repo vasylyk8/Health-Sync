@@ -1,6 +1,6 @@
 import { FieldPath, type Firestore } from 'firebase-admin/firestore';
 import { COMPACT_THRESHOLD } from '../ingest/ingest.js';
-import { emptyManifest, type BatchState, type BlobStore, type FileRef, type Interval, type MetaStore, type TypeManifest, type UserDoc } from './types.js';
+import { effectiveUserPatch, emptyManifest, type BatchState, type BlobStore, type FileRef, type Interval, type MetaStore, type TypeManifest, type UserDoc } from './types.js';
 
 /** Firestore document ids cannot contain '/'; HealthKit ids never do, but guard anyway. */
 const typeDocId = (type: string) => type.replace(/\//g, '_');
@@ -70,7 +70,8 @@ export class FirestoreMeta implements MetaStore {
       const current = manSnap.exists ? fromDoc(manSnap.data()!) : emptyManifest(type);
       tx.set(manRef, toDoc(mutate(current)));
       tx.set(batchRef, { state: 'published', at: Date.now(), expireAt: new Date(Date.now() + 30 * 86_400_000) });
-      if (userPatch && Object.keys(userPatch).length) tx.update(userRef, userPatch);
+      const patch = effectiveUserPatch(user, userPatch);
+      if (Object.keys(patch).length) tx.update(userRef, patch);
       return 'published';
     });
   }

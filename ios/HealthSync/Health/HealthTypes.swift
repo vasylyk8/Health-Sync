@@ -39,6 +39,8 @@ struct SyncType: @unchecked Sendable, Hashable {
 
 enum HealthTypes {
     static let profileId = "_profile"
+    /// Batch type for "checked, nothing new" reports covering many types at once.
+    static let statusId = "_status"
 
     static func loadCoverage(bundle: Bundle = .main) -> [CoverageEntry] {
         guard let url = bundle.url(forResource: "coverage", withExtension: "json"),

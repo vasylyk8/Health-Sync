@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
-import { emptyManifest, type BatchState, type BlobStore, type FileRef, type MetaStore, type TypeManifest, type UserDoc } from '../../src/store/types.js';
+import { effectiveUserPatch, emptyManifest, type BatchState, type BlobStore, type FileRef, type MetaStore, type TypeManifest, type UserDoc } from '../../src/store/types.js';
 import { ingestObject } from '../../src/ingest/ingest.js';
 
 /** Blob store backed by a temp directory. */
@@ -42,7 +42,7 @@ export class MemoryMeta implements MetaStore {
     const cur = this.manifests.get(`${uid}/${type}`) ?? emptyManifest(type);
     this.manifests.set(`${uid}/${type}`, mutate(structuredClone(cur)));
     this.batches.set(`${uid}/${batchId}`, { state: 'published' });
-    Object.assign(user, userPatch ?? {});
+    Object.assign(user, effectiveUserPatch(user, userPatch));
     return 'published' as const;
   }
   async swapFiles(uid: string, type: string, partition: string, removed: string[], added: FileRef | null) {
@@ -68,7 +68,7 @@ export function makeEnv(now = Date.UTC(2024, 5, 30, 12)): Env {
 let seq = 0;
 export interface UploadOpts {
   type: string;
-  mode?: 'anchored' | 'recent' | 'stats' | 'profile' | 'reconcile';
+  mode?: 'anchored' | 'recent' | 'stats' | 'profile' | 'reconcile' | 'status';
   window?: { start: number; end: number };
   caughtUp?: boolean;
   checkedAt?: number;

@@ -16,7 +16,7 @@ final class FakeBackend: Backend, @unchecked Sendable {
         let url = "https://health-sync.example/mcp/\(provider)-\(UUID().uuidString.prefix(8))"
         lock.withLock { links[provider] = url }
         Task {
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: .seconds(6))
             self.lock.withLock { self.setUp[provider] = true }
         }
         return url

@@ -64,6 +64,7 @@ export async function ingestObject(objectPath: string, deps: IngestDeps, opts: {
   }
 
   const { header } = parsed;
+  if (header.mode === 'status') return ingestStatus(uid, batchId, objectPath, parsed, user.generation, deps);
   const type = header.type;
   const written: Record<string, FileRef> = {};
 
@@ -103,8 +104,46 @@ export async function ingestObject(objectPath: string, deps: IngestDeps, opts: {
   if (result === 'published' && header.reconcileId && header.reconcileDone && deps.onReconcileDone) {
     await deps.onReconcileDone(uid, type, header.reconcileId);
   }
-  log.info('batch processed', { uid, batchId, type, result, records: parsed.recordCount });
+  log.info('batch processed', { uid, batchId, type, result, records: parsed.recordCount, mode: header.mode, readMs: header.perf?.readMs, uploadMs: header.perf?.uploadMs });
   return result;
+}
+
+/** A `status` batch: many types checked with nothing new. Updates each type's freshness (and
+ *  marks it fully synced when `caughtUp`) without writing any data files. */
+async function ingestStatus(uid: string, batchId: string, objectPath: string, parsed: ParsedBatch, generation: number, deps: IngestDeps): Promise<IngestOutcome> {
+  const now = (deps.now ?? Date.now)();
+  let result: IngestOutcome = 'published';
+  for (const [i, st] of parsed.statuses.entries()) {
+    const r = await deps.meta.publish({
+      uid,
+      type: st.type,
+      // One publish per type, each idempotent on its own id, so an event retry is harmless.
+      batchId: `${batchId}.${i}`,
+      generation,
+      userPatch: { lastVisibleAt: now, ...(parsed.header.tz ? { tz: parsed.header.tz } : {}) },
+      mutate: (man) => applyStatus(man, st, now),
+    });
+    if (r === 'discarded') {
+      result = 'discarded';
+      break;
+    }
+  }
+  await deps.meta.markBatch(uid, batchId, result === 'discarded' ? 'discarded' : 'published');
+  await deps.incoming.delete(objectPath).catch(() => undefined);
+  log.info('batch processed', { uid, batchId, type: parsed.header.type, result, types: parsed.statuses.length, mode: 'status', readMs: parsed.header.perf?.readMs, uploadMs: parsed.header.perf?.uploadMs });
+  return result;
+}
+
+/** Pure manifest update for one status entry (exported for tests). */
+export function applyStatus(man: TypeManifest, st: { at: number; caughtUp: boolean }, now: number): TypeManifest {
+  const cov = { ...man.coverage };
+  if (st.caughtUp) {
+    cov.caughtUp = true;
+    cov.intervals = addInterval(cov.intervals, [0, st.at]);
+  }
+  cov.checkedAt = Math.max(cov.checkedAt ?? 0, st.at);
+  cov.visibleAt = now;
+  return { ...man, version: man.version + 1, coverage: cov };
 }
 
 /** Pure manifest update for one batch (exported for tests). */

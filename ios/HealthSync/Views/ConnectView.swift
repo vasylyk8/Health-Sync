@@ -92,9 +92,13 @@ struct SyncStatusView: View {
         VStack(alignment: .leading, spacing: 8) {
             if progress.typesTotal > 0 && !progress.historyComplete {
                 ProgressView(value: progress.fraction) {
-                    Text("Syncing your history… \(Int(progress.fraction * 100))%").font(.subheadline.weight(.medium))
+                    Text("\(progress.stepTitle) · \(Int(progress.fraction * 100))%").font(.subheadline.weight(.medium))
                 }
                 .accessibilityIdentifier("syncProgress")
+                if progress.recentReady {
+                    Text("Your last 30 days are ready. You can already ask Claude or ChatGPT about them.")
+                        .font(.footnote)
+                }
                 Text("Keep the app open while your history syncs. You can connect an assistant meanwhile.")
                     .font(.footnote).foregroundStyle(.secondary)
             } else if let last = status.lastVisibleDate {

@@ -18,13 +18,16 @@ export const HeaderSchema = z.object({
   appVersion: z.string().max(32).optional(),
   tz: z.string().max(64).optional(),
   createdAt: epochMs,
-  mode: z.enum(['anchored', 'recent', 'stats', 'profile', 'reconcile']),
+  /** `status`: one batch for many types that had nothing new (type "_status", records `c`). */
+  mode: z.enum(['anchored', 'recent', 'stats', 'profile', 'reconcile', 'status']),
   window: z.object({ start: epochMs, end: epochMs }).optional(),
   caughtUp: z.boolean().optional(),
   checkedAt: epochMs.optional(),
   /** Set on every page of a reconcile pass; `reconcileDone` on the last page. */
   reconcileId: z.string().uuid().optional(),
   reconcileDone: z.boolean().optional(),
+  /** Client timings for the batch (never health data): read = HealthKit query, upload = previous upload. */
+  perf: z.object({ readMs: z.number().int().min(0).max(3_600_000).optional(), uploadMs: z.number().int().min(0).max(3_600_000).optional() }).strict().optional(),
 }).strict();
 export type BatchHeader = z.infer<typeof HeaderSchema>;
 
@@ -47,8 +50,13 @@ const ActivityRec = z.object({ k: z.literal('a'), day: z.string().regex(/^\d{4}-
 const StatRec = z.object({ k: z.literal('h'), t: str(120).optional(), s: epochMs, e: epochMs, agg: z.enum(['sum', 'avg', 'min', 'max']), v: z.number().finite(), u: str(40) }).strict();
 const ProfileRec = z.object({ k: z.literal('p') }).passthrough();
 const DeleteRec = z.object({ k: z.literal('d'), id: uuid }).strict();
+/** "Checked this type at `at`, nothing new; `cu` = its full history has been delivered." */
+const StatusRec = z.object({ k: z.literal('c'), t: str(120), at: epochMs, cu: z.boolean() }).strict();
 
-export const RecordSchema = z.discriminatedUnion('k', [SampleRec, WorkoutRec, CorrelationRec, EcgRec, HeartbeatRec, ActivityRec, StatRec, ProfileRec, DeleteRec]);
+export const RecordSchema = z.discriminatedUnion('k', [SampleRec, WorkoutRec, CorrelationRec, EcgRec, HeartbeatRec, ActivityRec, StatRec, ProfileRec, DeleteRec, StatusRec]);
+
+/** Batch type used by `status` batches. */
+export const STATUS_TYPE = '_status';
 export type BatchRecord = z.infer<typeof RecordSchema>;
 
 /** Normalized row written to Parquet (one table shape for every type). */
@@ -79,6 +87,8 @@ export interface ParsedBatch {
   /** Min/max sample start time in this batch (null if none). */
   span: { start: number; end: number } | null;
   recordCount: number;
+  /** Only for `status` batches: one entry per known type. */
+  statuses: { type: string; at: number; caughtUp: boolean }[];
 }
 
 export class BatchError extends Error {
@@ -113,7 +123,10 @@ export function parseBatch(gz: Buffer): ParsedBatch {
   if (lines.length - 1 > LIMITS.maxRecordsPerBatch) throw new BatchError('too many records');
 
   const header = parseLine(lines[0]!, 0, HeaderSchema);
-  if (!TYPES_BY_ID.has(header.type)) throw new BatchError(`unknown type ${header.type}`);
+  const isStatus = header.mode === 'status';
+  if (isStatus !== (header.type === STATUS_TYPE)) throw new BatchError('status batches must use type _status');
+  if (!isStatus && !TYPES_BY_ID.has(header.type)) throw new BatchError(`unknown type ${header.type}`);
+  const statuses: ParsedBatch['statuses'] = [];
 
   const partitions = new Map<string, Row[]>();
   const tombstones: string[] = [];
@@ -128,7 +141,12 @@ export function parseBatch(gz: Buffer): ParsedBatch {
   for (let i = 1; i < lines.length; i++) {
     const rec = parseLine(lines[i]!, i, RecordSchema) as Record<string, unknown> & BatchRecord;
     const base = { seq: header.seq, batch: header.batchId, rid: header.reconcileId ?? null };
+    if (isStatus !== (rec.k === 'c')) throw new BatchError(`line ${i}: record not allowed in this batch`);
     switch (rec.k) {
+      case 'c':
+        // Unknown types (e.g. from a newer app) are skipped rather than failing the whole batch.
+        if (TYPES_BY_ID.has(rec.t)) statuses.push({ type: rec.t, at: rec.at, caughtUp: rec.cu });
+        continue;
       case 'd':
         tombstones.push(rec.id);
         continue;
@@ -174,7 +192,8 @@ export function parseBatch(gz: Buffer): ParsedBatch {
     partitions,
     tombstones,
     span: min === Infinity ? null : { start: min, end: max },
-    recordCount: lines.length - 1,
+    recordCount: isStatus ? 0 : lines.length - 1,
+    statuses,
   };
 }
 

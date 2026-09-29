@@ -8,13 +8,19 @@ final class ScriptedSource: HealthSource, @unchecked Sendable {
     var recent: [String: [Record]] = [:]
     var stats: [Record] = []
     var earliest: Date?
+    var failing: Set<String> = []
+    struct HealthKitFailure: Error {}
     var anchorsSeen: [String: [Data?]] = [:]
     var isAvailable: Bool { true }
     func requestAuthorization(types: [SyncType]) async throws {}
     func samples(_ type: SyncType, from: Date, to: Date) async throws -> [Record] { recent[type.id] ?? [] }
     private let lock = NSLock()
     func anchoredPage(_ type: SyncType, anchor: Data?, limit: Int) async throws -> AnchoredPage {
+        try nextPage(type, anchor)
+    }
+    private func nextPage(_ type: SyncType, _ anchor: Data?) throws -> AnchoredPage {
         lock.lock(); defer { lock.unlock() }
+        if failing.contains(type.id) { throw HealthKitFailure() }
         anchorsSeen[type.id, default: []].append(anchor)
         var list = pages[type.id] ?? []
         guard !list.isEmpty else { return AnchoredPage(records: [], newAnchor: anchor, objectCount: 0) }
@@ -83,10 +89,12 @@ final class SyncEngineTests: XCTestCase {
         let outcome = try await engine.run()
         XCTAssertEqual(outcome, .finished)
         let modes = up.uploaded.map { $0.header["mode"] as! String }
-        XCTAssertEqual(modes, ["profile", "recent", "stats", "anchored", "anchored"])
-        // First page was full (2 of limit 2) so not caught up; second page empty => caught up.
+        XCTAssertEqual(modes, ["profile", "recent", "stats", "anchored", "status"])
+        // First page was full (2 of limit 2) so not caught up; the second page was empty, which is
+        // reported in the status batch instead of its own upload.
         XCTAssertEqual(up.uploaded[3].header["caughtUp"] as? Bool, false)
-        XCTAssertEqual(up.uploaded[4].header["caughtUp"] as? Bool, true)
+        XCTAssertEqual(up.uploaded[4].type, "_status")
+        XCTAssertNotNil(up.uploaded[3].header["perf"], "timings are sent for diagnosis")
         XCTAssertEqual(outbox.state.anchors[hr.id], Data("A1".utf8))
         XCTAssertTrue(outbox.state.caughtUp.contains(hr.id))
         XCTAssertTrue(outbox.state.recentDone.contains(hr.id))
@@ -94,6 +102,49 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertEqual(seqs, seqs.sorted())
         XCTAssertEqual(Set(seqs).count, seqs.count)
         XCTAssertTrue(outbox.pending().isEmpty)
+    }
+
+    func testTypesWithNothingNewShareOneStatusUpload() async throws {
+        let types = (0..<5).map { SyncType(id: "E\($0)", kind: .category, sampleType: nil, unit: nil) }
+        let up = RecordingUploader()
+        let outbox = Outbox(root: root)
+        let engine = SyncEngine(source: ScriptedSource(), uploader: up, outbox: outbox, types: types)
+        _ = try await engine.run()
+        let status = up.uploaded.filter { $0.header["mode"] as? String == "status" }
+        XCTAssertEqual(status.count, 1)
+        XCTAssertEqual(status.first?.records, 5)
+        XCTAssertFalse(up.uploaded.contains { $0.header["mode"] as? String == "anchored" })
+        XCTAssertEqual(outbox.state.caughtUp, Set(types.map(\.id)))
+        let p = await engine.progress
+        XCTAssertTrue(p.historyComplete)
+
+        // A later run with nothing new doesn't upload again within the hour.
+        let before = up.uploaded.count
+        _ = try await engine.run()
+        XCTAssertEqual(up.uploaded.count, before)
+    }
+
+    func testOneFailingTypeDoesNotStopTheOthers() async throws {
+        let types = (0..<4).map { SyncType(id: "F\($0)", kind: .category, sampleType: nil, unit: nil) }
+        let source = ScriptedSource()
+        source.failing = ["F1"]
+        for t in types { source.pages[t.id] = [AnchoredPage(records: [sample("\(t.id)-a")], newAnchor: Data(t.id.utf8), objectCount: 1)] }
+        let up = RecordingUploader()
+        let outbox = Outbox(root: root)
+        let engine = SyncEngine(source: source, uploader: up, outbox: outbox, types: types)
+        do {
+            _ = try await engine.run()
+            XCTFail("the failing type should make the run report an error")
+        } catch is ScriptedSource.HealthKitFailure {}
+        XCTAssertEqual(outbox.state.caughtUp, ["F0", "F2", "F3"])
+        XCTAssertNil(outbox.state.lastSyncAt, "the run is not recorded as complete, so it is retried")
+    }
+
+    func testMostAskedTypesSyncFirst() {
+        let ids = ["HKQuantityTypeIdentifierDietaryWater", "HKQuantityTypeIdentifierHeartRate", "X", "HKQuantityTypeIdentifierStepCount"]
+        let types = ids.map { SyncType(id: $0, kind: .quantity(cumulative: true), sampleType: nil, unit: .count()) }
+        XCTAssertEqual(SyncEngine.prioritized(types).map(\.id),
+                       ["HKQuantityTypeIdentifierStepCount", "HKQuantityTypeIdentifierHeartRate", "HKQuantityTypeIdentifierDietaryWater", "X"])
     }
 
     func testOfflineNeverAdvancesAnchorAndResumes() async throws {
@@ -152,8 +203,10 @@ final class SyncEngineTests: XCTestCase {
         var p = SyncProgress(typesDone: 0, typesTotal: 10, isSyncing: true)
         p.stepsDone = 10
         p.stepsTotal = 40
+        p.phase = 2
         XCTAssertEqual(p.fraction, 0.25)
         XCTAssertFalse(p.historyComplete)
+        XCTAssertEqual(p.stepTitle, "Step 2 of 3: long-term totals")
     }
 
     func testDeadlineStopsCleanly() async throws {

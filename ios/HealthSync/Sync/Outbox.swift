@@ -19,6 +19,8 @@ final class Outbox: @unchecked Sendable {
         case recentDone
         case statsFull(Date)
         case caughtUp
+        /// A status batch confirmed these types are fully synced.
+        case caughtUpMany([String])
         case reconcileDone
         case activityInitial
         case correlationInitial
@@ -114,6 +116,7 @@ final class Outbox: @unchecked Sendable {
             case .recentDone: s.recentDone.insert(entry.typeId)
             case .statsFull(let at): s.statsFullAt[entry.typeId] = at
             case .caughtUp: s.caughtUp.insert(entry.typeId)
+            case .caughtUpMany(let ids): s.caughtUp.formUnion(ids)
             case .reconcileDone:
                 s.caughtUp.insert(entry.typeId)
                 s.reconcile[entry.typeId] = nil

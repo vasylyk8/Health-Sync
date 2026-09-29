@@ -98,6 +98,20 @@ export function emptyManifest(type: string): TypeManifest {
 }
 
 /** Merge a new interval into a sorted, non-overlapping list (touching intervals are joined). */
+/** "Last updated" is written at most once a minute: every publish touches the user doc, and
+ *  parallel uploads would otherwise contend on it (Firestore sustains ~1 write/s per doc). */
+export const LAST_VISIBLE_MIN_STEP_MS = 60_000;
+
+export function effectiveUserPatch(user: UserDoc, patch: Partial<Pick<UserDoc, 'lastVisibleAt' | 'tz'>> | undefined) {
+  const out: Partial<Pick<UserDoc, 'lastVisibleAt' | 'tz'>> = {};
+  if (!patch) return out;
+  if (patch.tz !== undefined && patch.tz !== user.tz) out.tz = patch.tz;
+  if (patch.lastVisibleAt != null && (user.lastVisibleAt == null || patch.lastVisibleAt - user.lastVisibleAt >= LAST_VISIBLE_MIN_STEP_MS)) {
+    out.lastVisibleAt = patch.lastVisibleAt;
+  }
+  return out;
+}
+
 export function addInterval(list: Interval[], iv: Interval): Interval[] {
   const all = [...list, iv].sort((a, b) => a[0] - b[0]);
   const out: Interval[] = [];

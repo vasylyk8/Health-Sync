@@ -15,6 +15,18 @@ struct SyncProgress: Equatable, Sendable {
     /// from the start instead of only in the final phase.
     var stepsDone = 0
     var stepsTotal = 0
+    /// 1 = last 30 days, 2 = long-term totals, 3 = full history (0 = not syncing).
+    var phase = 0
+    /// Every type's last 30 days are on the server: the AI is already useful.
+    var recentReady = false
+    var stepTitle: String {
+        switch phase {
+        case 1: return "Step 1 of 3: last 30 days"
+        case 2: return "Step 2 of 3: long-term totals"
+        case 3: return "Step 3 of 3: full history"
+        default: return "Syncing your history"
+        }
+    }
     var fraction: Double {
         if stepsTotal > 0 { return min(1, Double(stepsDone) / Double(stepsTotal)) }
         return typesTotal == 0 ? 0 : Double(typesDone) / Double(typesTotal)
@@ -27,7 +39,11 @@ struct SyncProgress: Equatable, Sendable {
 /// was already sent by the recent pass).
 actor SyncEngine {
     struct Config: Sendable {
-        var pageLimit = 5000
+        /// Objects per anchored page for plain samples. Pages are split into ≤ 5 MB uploads anyway;
+        /// small pages only add round trips.
+        var pageLimit = 20_000
+        /// Cap for types whose objects carry large nested data (ECG voltages, heartbeat series, workouts).
+        var heavyPageLimit = 2_000
         var recentDays = 30
         var statsIncrementalDays = 3
         var statsFullEvery: TimeInterval = 7 * 86_400
@@ -48,6 +64,33 @@ actor SyncEngine {
     private let telemetry: Telemetry
     private var running = false
     private var progressHandler: (@Sendable (SyncProgress) -> Void)?
+    private var phase = 0
+    private var lastReported: [Int]?
+    /// Types checked with nothing new, reported together in one status batch.
+    private var statusPending: [String: Date] = [:]
+    private var typeErrors: [Error] = []
+    private var lastUploadMs: Int?
+    /// Set when an upload fails (offline, server down): every type would fail the same way, so
+    /// the whole run stops instead of isolating the error to one type.
+    private var uploadFailed = false
+
+    /// Most-asked types first, so answers are useful while the rest syncs.
+    static let priority = [
+        "HKQuantityTypeIdentifierStepCount", "HKCategoryTypeIdentifierSleepAnalysis", "HKQuantityTypeIdentifierHeartRate",
+        "HKWorkoutTypeIdentifier", "HKQuantityTypeIdentifierActiveEnergyBurned", "HKQuantityTypeIdentifierRestingHeartRate",
+        "HKQuantityTypeIdentifierHeartRateVariabilitySDNN", "HKQuantityTypeIdentifierDistanceWalkingRunning",
+        "HKQuantityTypeIdentifierBodyMass", "HKQuantityTypeIdentifierVO2Max", "HKQuantityTypeIdentifierAppleExerciseTime",
+        "HKQuantityTypeIdentifierBasalEnergyBurned", "HKQuantityTypeIdentifierWalkingHeartRateAverage",
+        "HKQuantityTypeIdentifierOxygenSaturation", "HKQuantityTypeIdentifierRespiratoryRate", "HKQuantityTypeIdentifierFlightsClimbed",
+    ]
+
+    /// Stable sort: priority types first (in priority order), everything else keeps its order.
+    static func prioritized(_ types: [SyncType]) -> [SyncType] {
+        let rank = Dictionary(uniqueKeysWithValues: priority.enumerated().map { ($1, $0) })
+        return types.enumerated()
+            .sorted { (rank[$0.element.id] ?? priority.count, $0.offset) < (rank[$1.element.id] ?? priority.count, $1.offset) }
+            .map(\.element)
+    }
 
     init(source: HealthSource, uploader: Uploader, outbox: Outbox, types: [SyncType], config: Config = Config(),
          now: @escaping @Sendable () -> Date = Date.init, timeZone: @escaping @Sendable () -> String = { TimeZone.current.identifier },
@@ -55,7 +98,7 @@ actor SyncEngine {
         self.source = source
         self.uploader = uploader
         self.outbox = outbox
-        self.types = types
+        self.types = SyncEngine.prioritized(types)
         self.config = config
         self.now = now
         self.timeZone = timeZone
@@ -64,6 +107,7 @@ actor SyncEngine {
 
     func onProgress(_ handler: @escaping @Sendable (SyncProgress) -> Void) {
         progressHandler = handler
+        lastReported = nil
         report(syncing: running)
     }
 
@@ -75,12 +119,17 @@ actor SyncEngine {
         // The full-history phase takes longest, so it counts double.
         let done = anchored.filter { s.recentDone.contains($0.id) }.count + quantity.filter { s.statsFullAt[$0.id] != nil }.count + 2 * caughtUp
         return SyncProgress(typesDone: caughtUp, typesTotal: anchored.count, isSyncing: running,
-                            stepsDone: done, stepsTotal: 3 * anchored.count + quantity.count)
+                            stepsDone: done, stepsTotal: 3 * anchored.count + quantity.count, phase: running ? phase : 0,
+                            recentReady: !anchored.isEmpty && anchored.allSatisfy { s.recentDone.contains($0.id) })
     }
 
+    /// Notifies the UI only when something visible changes (whole percent, step, flags).
     private func report(syncing: Bool) {
         var p = progress
         p.isSyncing = syncing
+        let key = [Int(p.fraction * 100), p.phase, p.isSyncing ? 1 : 0, p.recentReady ? 1 : 0, p.historyComplete ? 1 : 0]
+        guard key != lastReported else { return }
+        lastReported = key
         progressHandler?(p)
     }
 
@@ -102,12 +151,16 @@ actor SyncEngine {
         try startReconcileIfNeeded()
         try await syncProfile()
 
+        typeErrors = []
+        uploadFailed = false
         do {
             let anchored = types.filter(\.isAnchored)
+            phase = 1
             try await eachType(anchored.filter { !outbox.state.recentDone.contains($0.id) }) { engine, t in
                 if outOfTime() { throw OutOfTime() }
                 try await engine.recent(t)
             }
+            phase = 2
             try await eachType(types.filter { if case .quantity = $0.kind { return true } else { return false } }) { engine, t in
                 if outOfTime() { throw OutOfTime() }
                 try await engine.stats(t)
@@ -118,6 +171,7 @@ actor SyncEngine {
             for t in types where t.kind == .correlation {
                 try await correlation(t)
             }
+            phase = 3
             try await eachType(anchored) { engine, t in
                 while true {
                     if outOfTime() { throw OutOfTime() }
@@ -125,9 +179,14 @@ actor SyncEngine {
                     await engine.report(syncing: true)
                 }
             }
+            try await sendStatus()
         } catch is OutOfTime {
+            try? await sendStatus()
             return .outOfTime
         }
+        // A type that failed (e.g. one HealthKit query error) didn't stop the others; report the
+        // run as failed so it is retried, but everything else is already synced.
+        if let first = typeErrors.first { throw first }
         try outbox.update { $0.lastSyncAt = now() }
         return .finished
     }
@@ -139,16 +198,33 @@ actor SyncEngine {
     private func eachType(_ list: [SyncType], _ body: @escaping @Sendable (SyncEngine, SyncType) async throws -> Void) async throws {
         var queue = list[...]
         let parallel = max(1, config.parallelTypes)
+        // One type's failure is recorded and the others continue; running out of time or
+        // cancellation stops everything.
+        let isolated: @Sendable (SyncType) async throws -> Void = { t in
+            do {
+                try await body(self, t)
+            } catch let e where e is OutOfTime || e is CancellationError {
+                throw e
+            } catch {
+                if await self.uploadFailed { throw error }
+                await self.noteFailure(t, error)
+            }
+        }
         try await withThrowingTaskGroup(of: Void.self) { group in
             for _ in 0..<parallel {
                 guard let t = queue.popFirst() else { break }
-                group.addTask { try await body(self, t) }
+                group.addTask { try await isolated(t) }
             }
             while try await group.next() != nil {
                 await self.report(syncing: true)
-                if let t = queue.popFirst() { group.addTask { try await body(self, t) } }
+                if let t = queue.popFirst() { group.addTask { try await isolated(t) } }
             }
         }
+    }
+
+    private func noteFailure(_ t: SyncType, _ error: Error) {
+        typeErrors.append(error)
+        telemetry.nonFatal("sync.type", code: (error as NSError).code)
     }
 
     /// Quick incremental sync of specific types (HealthKit background observers).
@@ -163,6 +239,7 @@ actor SyncEngine {
             }
             if case .quantity = t.kind, outbox.state.statsFullAt[t.id] != nil { try await stats(t) }
         }
+        try await sendStatus()
     }
 
     // MARK: Steps
@@ -170,7 +247,9 @@ actor SyncEngine {
     private func recent(_ t: SyncType) async throws {
         let end = now()
         let start = end.addingTimeInterval(-Double(config.recentDays) * 86_400)
+        let started = Date()
         let records = try await source.samples(t, from: start, to: end)
+        let readMs = Self.ms(since: started)
         if records.isEmpty {
             // Nothing recent: skip the upload. The full-history pass reports this type (and its
             // coverage) to the server anyway, so an empty batch here only costs a round trip.
@@ -178,7 +257,7 @@ actor SyncEngine {
             return
         }
         let header = BatchHeader(type: t.id, mode: .recent, seq: try outbox.nextSeq(t.id), window: (start, end), checkedAt: end)
-        try await send(t.id, header: header, records: records, anchor: nil, completes: .recentDone)
+        try await send(t.id, header: header, records: records, anchor: nil, completes: .recentDone, readMs: readMs)
     }
 
     private func stats(_ t: SyncType) async throws {
@@ -203,10 +282,12 @@ actor SyncEngine {
         var chunkStart = start
         while chunkStart < end {
             let chunkEnd = min(Calendar(identifier: .gregorian).date(byAdding: .year, value: 1, to: chunkStart) ?? end, end)
+            let started = Date()
             let records = try await source.hourlyStats(t, from: chunkStart, to: chunkEnd)
+            let readMs = Self.ms(since: started)
             let header = BatchHeader(type: t.id, mode: .stats, seq: try outbox.nextSeq(t.id), window: (chunkStart, chunkEnd), checkedAt: end)
             let last = chunkEnd >= end
-            try await send(t.id, header: header, records: records, anchor: nil, completes: last && full ? .statsFull(end) : nil)
+            try await send(t.id, header: header, records: records, anchor: nil, completes: last && full ? .statsFull(end) : nil, readMs: readMs)
             chunkStart = chunkEnd
         }
     }
@@ -243,21 +324,47 @@ actor SyncEngine {
         let reconcileId = outbox.state.reconcile[t.id]
         let anchor = outbox.state.anchors[t.id]
         let checked = now()
-        let page = try await source.anchoredPage(t, anchor: anchor, limit: config.pageLimit)
-        let caughtUp = page.objectCount < config.pageLimit
-        if page.objectCount == 0 && reconcileId == nil && outbox.state.caughtUp.contains(t.id) {
-            // Nothing changed. Still tell the server we checked, so freshness stays accurate,
-            // at most once an hour per type.
-            if let last = lastEmptyCheck[t.id], checked.timeIntervalSince(last) < 3600 { return true }
+        let limit = pageLimit(for: t)
+        let started = Date()
+        let page = try await source.anchoredPage(t, anchor: anchor, limit: limit)
+        let readMs = Self.ms(since: started)
+        let caughtUp = page.objectCount < limit
+        if page.objectCount == 0 && reconcileId == nil {
+            // Nothing new (or no data at all). Instead of one upload per type, it goes into a
+            // single status batch; already-synced types are re-reported at most once an hour.
+            if outbox.state.caughtUp.contains(t.id), let last = lastEmptyCheck[t.id], checked.timeIntervalSince(last) < 3600 { return true }
             lastEmptyCheck[t.id] = checked
+            statusPending[t.id] = checked
+            return true
         }
         let header = BatchHeader(
             type: t.id, mode: reconcileId == nil ? .anchored : .reconcile, seq: try outbox.nextSeq(t.id),
             caughtUp: caughtUp, checkedAt: checked, reconcileId: reconcileId, reconcileDone: reconcileId == nil ? nil : caughtUp)
         let completes: Outbox.Completion? = caughtUp ? (reconcileId == nil ? .caughtUp : .reconcileDone) : nil
-        try await send(t.id, header: header, records: page.records, anchor: page.newAnchor, completes: completes)
+        try await send(t.id, header: header, records: page.records, anchor: page.newAnchor, completes: completes, readMs: readMs)
         return caughtUp
     }
+
+    private func pageLimit(for t: SyncType) -> Int {
+        switch t.kind {
+        case .quantity, .category: return config.pageLimit
+        default: return min(config.pageLimit, config.heavyPageLimit)
+        }
+    }
+
+    /// Sends every pending "checked, nothing new" type in one batch.
+    private func sendStatus() async throws {
+        guard !statusPending.isEmpty else { return }
+        let items = statusPending.sorted { $0.key < $1.key }
+        statusPending = [:]
+        let id = HealthTypes.statusId
+        let records: [Record] = items.map { ["k": "c", "t": .string($0.key), "at": $0.value.ms, "cu": true] }
+        let header = BatchHeader(type: id, mode: .status, seq: try outbox.nextSeq(id), checkedAt: now())
+        try await send(id, header: header, records: records, anchor: nil, completes: .caughtUpMany(items.map(\.key)))
+        report(syncing: running)
+    }
+
+    private static func ms(since start: Date) -> Int { Int(Date().timeIntervalSince(start) * 1000) }
 
     private var lastEmptyCheck: [String: Date] = [:]
 
@@ -277,8 +384,11 @@ actor SyncEngine {
 
     // MARK: Upload
 
-    private func send(_ typeId: String, header: BatchHeader, records: [Record], anchor: Data?, completes: Outbox.Completion?) async throws {
+    private func send(_ typeId: String, header: BatchHeader, records: [Record], anchor: Data?, completes: Outbox.Completion?, readMs: Int? = nil) async throws {
         let outbox = self.outbox
+        var header = header
+        header.readMs = readMs
+        header.uploadMs = lastUploadMs
         let batches = try BatchWriter.make(
             header: header, records: records, nextSeq: { (try? outbox.nextSeq(typeId)) ?? header.seq },
             now: now(), tz: timeZone(), device: config.device, appVersion: config.appVersion)
@@ -298,7 +408,14 @@ actor SyncEngine {
                     continue
                 }
                 let sha = SHA256.hash(data: gz).map { String(format: "%02x", $0) }.joined()
-                try await uploader.upload(batchId: id, gz: gz, sha256: sha, typeId: entry.typeId)
+                let started = Date()
+                do {
+                    try await uploader.upload(batchId: id, gz: gz, sha256: sha, typeId: entry.typeId)
+                } catch {
+                    uploadFailed = true
+                    throw error
+                }
+                lastUploadMs = Self.ms(since: started)
                 try outbox.markUploaded(&entry, batchId: id)
             }
             try outbox.complete(entry)

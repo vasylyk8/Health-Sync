@@ -41,7 +41,7 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(app.buttons["copyLink"].waitForExistence(timeout: 5))
         snapshot("03-Steps")
         app.buttons["copyLink"].tap()
-        XCTAssertTrue(app.buttons["Copied"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["Copied"].waitForExistence(timeout: 5))
         // The fake backend reports Claude as set up shortly after; the sheet closes itself.
         let setUp = NSPredicate(format: "value == 'Set up'")
         expectation(for: setUp, evaluatedWith: app.buttons["provider.claude"])

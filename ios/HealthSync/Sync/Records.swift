@@ -50,7 +50,8 @@ extension Optional where Wrapped == String {
 }
 
 enum BatchMode: String, Codable, Sendable {
-    case anchored, recent, stats, profile, reconcile
+    /// `status`: one batch reporting many types that had nothing new (type "_status").
+    case anchored, recent, stats, profile, reconcile, status
 }
 
 struct BatchHeader: Sendable {
@@ -62,6 +63,9 @@ struct BatchHeader: Sendable {
     var checkedAt: Date
     var reconcileId: String?
     var reconcileDone: Bool?
+    /// Timings sent to the server so slow syncs can be diagnosed (never health data).
+    var readMs: Int?
+    var uploadMs: Int?
 
     func record(batchId: String, now: Date, tz: String, device: String, appVersion: String) -> Record {
         var r: Record = [
@@ -75,6 +79,10 @@ struct BatchHeader: Sendable {
             r["reconcileId"] = .string(reconcileId)
             r["reconcileDone"] = .bool(reconcileDone ?? false)
         }
+        var perf: [String: RecordValue] = [:]
+        if let readMs { perf["readMs"] = .int(Int64(min(max(readMs, 0), 3_600_000))) }
+        if let uploadMs { perf["uploadMs"] = .int(Int64(min(max(uploadMs, 0), 3_600_000))) }
+        if !perf.isEmpty { r["perf"] = .object(perf) }
         return r
     }
 }
