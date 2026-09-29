@@ -13,7 +13,7 @@ Plain-language steps. Nothing here happens automatically: **no step below runs u
 3. **Install the new app build** (TestFlight). On first launch it detects the old version's sync state, keeps only its counters, and re-reads every workout with full detail, newest first. Keep the app open and the phone unlocked for the first sync (the screen stays on). The AI can already answer about recent workouts after a few seconds.
 4. **Remove the old data from the server:**
    - Run the **`cleanup-legacy-plan`** task (read-only). It lists what would be removed and changes nothing.
-   - Run **`cleanup-legacy`**. It copies the old data to a private backup bucket that **deletes itself after 14 days**, checks every copy, then deletes the old files and their index entries. It never touches workouts, daily rows, raw workout data, connector links or your account.
+   - Run **`cleanup-legacy`**. You chose **no backup** (it is your own data and Apple Health stays the original), so it deletes the old files and their index entries directly. It never touches workouts, daily rows, raw workout data, connector links or your account.
    - Because you chose to delete in the same release, run this right after step 3 is confirmed working (step 5). If anything looks wrong in step 5, do not run it: the old data is harmless meanwhile (the AI tools no longer show it).
 5. **Check on your real iPhone** (things a simulator cannot test):
    - [ ] On first launch, iOS asks for Health access: **Workouts and Workout Routes** must appear in the list; allow all.
@@ -29,7 +29,7 @@ Plain-language steps. Nothing here happens automatically: **no step below runs u
 
 ## If something goes wrong
 - **Server deployed but app not yet installed:** nothing is lost. The phone keeps its queue and sends everything once updated.
-- **Old data cleanup:** the 14-day backup (`gs://<project>-legacy-backup/legacy/`) can be copied back by an engineer. After 14 days it is gone by design.
+- **Old data cleanup:** there is no backup by your choice, so deletion is final. The originals stay in Apple Health on your phone.
 - **Raw data still "partial" for a workout:** the AI says so. Open KROK, pull down, wait; if it stays partial, the run summary in the app's sync issue line tells why.
 - **Stop the AI seeing routes:** disconnect the assistant in KROK (its link stops working immediately) or delete all data.
 

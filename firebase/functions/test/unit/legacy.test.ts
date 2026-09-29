@@ -69,6 +69,15 @@ describe('legacy data cleanup', () => {
     expect((await planLegacyCleanup(env, env.uid)).totalFiles).toBe(7);
   });
 
+  it('deletes without a backup only when the owner opts out explicitly', async () => {
+    const env = makeEnv();
+    await seedAccount(env);
+    const res = await runLegacyCleanup({ meta: env.meta, data: env.data }, env.uid, { dryRun: false, skipBackup: true });
+    expect(res.backedUp).toBe(0);
+    expect(res.deletedFiles).toBe(7);
+    expect((await planLegacyCleanup(env, env.uid)).types).toEqual([]);
+  });
+
   it('deletes nothing if a backup copy does not match', async () => {
     const env = makeEnv();
     await seedAccount(env);

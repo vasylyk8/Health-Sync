@@ -63,24 +63,28 @@ export interface LegacyResult {
  * is left. Any failure before the delete step leaves the server data untouched. Never touches
  * workouts, daily context, raw streams, tokens or the user document.
  */
-export async function runLegacyCleanup(deps: LegacyDeps, uid: string, opts: { dryRun: boolean }): Promise<LegacyResult> {
+export async function runLegacyCleanup(deps: LegacyDeps, uid: string, opts: { dryRun: boolean; skipBackup?: boolean }): Promise<LegacyResult> {
   const plan = await planLegacyCleanup(deps, uid);
   const result: LegacyResult = { plan, backedUp: 0, deletedFiles: 0, deletedManifests: 0 };
   if (opts.dryRun || plan.types.length === 0) return result;
-  if (!deps.backup) throw new Error('a backup store is required before deleting anything');
+  // The backup is required unless the owner explicitly opts out (skipBackup).
+  if (!opts.skipBackup) {
+    const backup = deps.backup;
+    if (!backup) throw new Error('a backup store is required before deleting anything');
 
-  // Keep the manifests too, so the backup can be understood (and restored) later.
-  const manifests = (await deps.meta.listManifests(uid)).filter((m) => !KEEP_TYPES.has(m.type));
-  await deps.backup.write(`legacy/${uid}/_manifests.json`, Buffer.from(JSON.stringify(manifests)));
+    // Keep the manifests too, so the backup can be understood (and restored) later.
+    const manifests = (await deps.meta.listManifests(uid)).filter((m) => !KEEP_TYPES.has(m.type));
+    await backup.write(`legacy/${uid}/_manifests.json`, Buffer.from(JSON.stringify(manifests)));
 
-  for (const t of plan.types) {
-    for (const name of t.files) {
-      const bytes = await deps.data.read(name);
-      const dest = `legacy/${uid}/${name.slice(`data/${uid}/`.length)}`;
-      await deps.backup.write(dest, bytes);
-      const check = await deps.backup.read(dest);
-      if (check.byteLength !== bytes.byteLength) throw new Error(`backup of ${name} does not match; nothing was deleted`);
-      result.backedUp++;
+    for (const t of plan.types) {
+      for (const name of t.files) {
+        const bytes = await deps.data.read(name);
+        const dest = `legacy/${uid}/${name.slice(`data/${uid}/`.length)}`;
+        await backup.write(dest, bytes);
+        const check = await backup.read(dest);
+        if (check.byteLength !== bytes.byteLength) throw new Error(`backup of ${name} does not match; nothing was deleted`);
+        result.backedUp++;
+      }
     }
   }
 

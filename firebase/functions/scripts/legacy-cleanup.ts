@@ -19,7 +19,9 @@ const db = getFirestore();
 const storage = getStorage();
 const meta = new FirestoreMeta(db);
 const data = new GcsBlobs(storage.bucket(dataBucketName(project)) as never);
-const backup = new GcsBlobs(storage.bucket(`${project}-legacy-backup`) as never);
+// The owner chose to delete without a backup (their own data, Apple Health is the original).
+const skipBackup = process.env.SKIP_BACKUP === '1';
+const backup = skipBackup ? undefined : new GcsBlobs(storage.bucket(`${project}-legacy-backup`) as never);
 
 const users = await db.collection('users').listDocuments();
 let failures = 0;
@@ -27,7 +29,7 @@ for (const ref of users) {
   const user = await meta.getUser(ref.id);
   if (!user || user.deleting) continue;
   try {
-    const res = await runLegacyCleanup({ meta, data, backup }, ref.id, { dryRun: mode === 'plan' });
+    const res = await runLegacyCleanup({ meta, data, backup }, ref.id, { dryRun: mode === 'plan', skipBackup });
     console.log(`user ${ref.id.slice(0, 6)}…: ${res.plan.types.length} legacy type(s), ${res.plan.totalFiles} file(s)`);
     for (const t of res.plan.types) console.log(`  ${t.type}: ${t.files.length} file(s)${t.hasManifest ? ', has index' : ''}`);
     if (mode === 'run') console.log(`  backed up ${res.backedUp}, deleted ${res.deletedFiles} file(s) and ${res.deletedManifests} index doc(s)`);
