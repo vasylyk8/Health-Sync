@@ -53,6 +53,7 @@ struct WelcomeView: View {
                 .controlSize(.large)
                 .disabled(model.busy)
                 .accessibilityIdentifier("connectHealth")
+                Text(model.trace.joined(separator: " ")).font(.system(size: 6)).accessibilityIdentifier("debugTrace")  // TEMP DEBUG
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 24)
