@@ -229,11 +229,15 @@ actor SyncEngine {
 
     /// Quick incremental sync of specific types (HealthKit background observers).
     func runTypes(_ ids: Set<String>, deadline: Date) async throws {
-        guard !running else { return }
+        // Only types whose history is already in: HealthKit calls every observer once at launch, and a
+        // type that is still syncing belongs to the main run (which orders and reports it). Taking the
+        // engine for one of those would keep the main run from starting.
+        let eligible = types.filter { ids.contains($0.id) && outbox.state.caughtUp.contains($0.id) }
+        guard !running, !eligible.isEmpty else { return }
         running = true
         defer { running = false }
         try await flush()
-        for t in types where ids.contains(t.id) {
+        for t in eligible {
             while now() < deadline {
                 if try await anchoredPage(t) { break }
             }
