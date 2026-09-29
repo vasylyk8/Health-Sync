@@ -1,0 +1,2 @@
+app_identifier(ENV["BUNDLE_ID"])
+team_id(ENV["APPLE_TEAM_ID"])

@@ -1,0 +1,628 @@
+{
+ "version": 2,
+ "note": "KROK syncs workouts (with all raw data) and daily context only. Shared by the iOS app and the server.",
+ "excluded": {
+  "everything else": "v2: only workouts and daily context are synced (owner decision)",
+  "SexualActivity/Contraceptive/Pregnancy*/Lactation/Progesterone*/Bleeding*Pregnancy": "data minimisation: only menstrual-cycle context is read",
+  "HKClinicalType*": "clinical records excluded",
+  "ECG/heartbeat series/audiograms": "not workout data"
+ },
+ "types": [
+  {
+   "id": "HKWorkoutTypeIdentifier",
+   "kind": "workout",
+   "group": "workouts",
+   "record": "w"
+  },
+  {
+   "id": "_daily",
+   "kind": "daily",
+   "group": "daily",
+   "record": "day"
+  },
+  {
+   "id": "_wstream",
+   "kind": "workoutdata",
+   "group": "workouts",
+   "record": "ws"
+  }
+ ],
+ "workoutQuantityTypes": [
+  {
+   "id": "HKQuantityTypeIdentifierStepCount",
+   "unit": "count",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierDistanceWalkingRunning",
+   "unit": "m",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierDistanceCycling",
+   "unit": "m",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierDistanceWheelchair",
+   "unit": "m",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierDistanceSwimming",
+   "unit": "m",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierDistanceDownhillSnowSports",
+   "unit": "m",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierDistanceCrossCountrySkiing",
+   "unit": "m",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierDistancePaddleSports",
+   "unit": "m",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierDistanceRowing",
+   "unit": "m",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierDistanceSkatingSports",
+   "unit": "m",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierBasalEnergyBurned",
+   "unit": "kcal",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierActiveEnergyBurned",
+   "unit": "kcal",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierFlightsClimbed",
+   "unit": "count",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierPushCount",
+   "unit": "count",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierSwimmingStrokeCount",
+   "unit": "count",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierAppleExerciseTime",
+   "unit": "min",
+   "agg": "cumulative"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierPhysicalEffort",
+   "unit": "kcal/(hr*kg)",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierCyclingPower",
+   "unit": "W",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierCyclingSpeed",
+   "unit": "m/s",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierCyclingCadence",
+   "unit": "count/min",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierCyclingFunctionalThresholdPower",
+   "unit": "W",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierRunningPower",
+   "unit": "W",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierRunningSpeed",
+   "unit": "m/s",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierRunningStrideLength",
+   "unit": "m",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierRunningVerticalOscillation",
+   "unit": "cm",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierRunningGroundContactTime",
+   "unit": "ms",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierCrossCountrySkiingSpeed",
+   "unit": "m/s",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierPaddleSportsSpeed",
+   "unit": "m/s",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierRowingSpeed",
+   "unit": "m/s",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierEstimatedWorkoutEffortScore",
+   "unit": "appleEffortScore",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierWorkoutEffortScore",
+   "unit": "appleEffortScore",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierUnderwaterDepth",
+   "unit": "m",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierWaterTemperature",
+   "unit": "degC",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierHeartRate",
+   "unit": "count/min",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierHeartRateRecoveryOneMinute",
+   "unit": "count/min",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierOxygenSaturation",
+   "unit": "%",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierRespiratoryRate",
+   "unit": "count/min",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierEnvironmentalAudioExposure",
+   "unit": "dBASPL",
+   "agg": "discrete"
+  },
+  {
+   "id": "HKQuantityTypeIdentifierHeadphoneAudioExposure",
+   "unit": "dBASPL",
+   "agg": "discrete"
+  }
+ ],
+ "dailyMetrics": [
+  {
+   "key": "restingHr",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierRestingHeartRate",
+   "unit": "count/min",
+   "agg": "avg"
+  },
+  {
+   "key": "hrv",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
+   "unit": "ms",
+   "agg": "avg"
+  },
+  {
+   "key": "respiratoryRate",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierRespiratoryRate",
+   "unit": "count/min",
+   "agg": "avg"
+  },
+  {
+   "key": "sleepingWristTempC",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierAppleSleepingWristTemperature",
+   "unit": "degC",
+   "agg": "avg"
+  },
+  {
+   "key": "spo2Avg",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierOxygenSaturation",
+   "unit": "%",
+   "agg": "avg"
+  },
+  {
+   "key": "spo2Min",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierOxygenSaturation",
+   "unit": "%",
+   "agg": "min"
+  },
+  {
+   "key": "walkingHrAvg",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierWalkingHeartRateAverage",
+   "unit": "count/min",
+   "agg": "avg"
+  },
+  {
+   "key": "sleepBreathingDisturbances",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierAppleSleepingBreathingDisturbances",
+   "unit": "count",
+   "agg": "avg"
+  },
+  {
+   "key": "sleep",
+   "kind": "sleep",
+   "id": "HKCategoryTypeIdentifierSleepAnalysis",
+   "outputs": [
+    "sleepAsleepMin",
+    "sleepInBedMin",
+    "sleepCoreMin",
+    "sleepDeepMin",
+    "sleepRemMin",
+    "sleepAwakeMin",
+    "sleepBedtime",
+    "sleepWakeTime"
+   ]
+  },
+  {
+   "key": "steps",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierStepCount",
+   "unit": "count",
+   "agg": "sum"
+  },
+  {
+   "key": "walkRunDistanceM",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierDistanceWalkingRunning",
+   "unit": "m",
+   "agg": "sum"
+  },
+  {
+   "key": "cyclingDistanceM",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierDistanceCycling",
+   "unit": "m",
+   "agg": "sum"
+  },
+  {
+   "key": "swimDistanceM",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierDistanceSwimming",
+   "unit": "m",
+   "agg": "sum"
+  },
+  {
+   "key": "flightsClimbed",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierFlightsClimbed",
+   "unit": "count",
+   "agg": "sum"
+  },
+  {
+   "key": "activeKcal",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierActiveEnergyBurned",
+   "unit": "kcal",
+   "agg": "sum"
+  },
+  {
+   "key": "basalKcal",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierBasalEnergyBurned",
+   "unit": "kcal",
+   "agg": "sum"
+  },
+  {
+   "key": "exerciseMin",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierAppleExerciseTime",
+   "unit": "min",
+   "agg": "sum"
+  },
+  {
+   "key": "standMin",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierAppleStandTime",
+   "unit": "min",
+   "agg": "sum"
+  },
+  {
+   "key": "daylightMin",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierTimeInDaylight",
+   "unit": "min",
+   "agg": "sum"
+  },
+  {
+   "key": "physicalEffortAvg",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierPhysicalEffort",
+   "unit": "kcal/(hr*kg)",
+   "agg": "avg"
+  },
+  {
+   "key": "rings",
+   "kind": "activitySummary",
+   "id": "HKActivitySummaryTypeIdentifier",
+   "outputs": [
+    "ringMoveKcal",
+    "ringMoveGoalKcal",
+    "ringExerciseMin",
+    "ringExerciseGoalMin",
+    "ringStandHours",
+    "ringStandGoalHours"
+   ]
+  },
+  {
+   "key": "vo2max",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierVO2Max",
+   "unit": "ml/(kg*min)",
+   "agg": "last"
+  },
+  {
+   "key": "walkingSpeedMps",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierWalkingSpeed",
+   "unit": "m/s",
+   "agg": "avg"
+  },
+  {
+   "key": "walkingStepLengthM",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierWalkingStepLength",
+   "unit": "m",
+   "agg": "avg"
+  },
+  {
+   "key": "walkingAsymmetryPct",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierWalkingAsymmetryPercentage",
+   "unit": "%",
+   "agg": "avg"
+  },
+  {
+   "key": "walkingDoubleSupportPct",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierWalkingDoubleSupportPercentage",
+   "unit": "%",
+   "agg": "avg"
+  },
+  {
+   "key": "walkingSteadinessPct",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierAppleWalkingSteadiness",
+   "unit": "%",
+   "agg": "last"
+  },
+  {
+   "key": "stairAscentSpeedMps",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierStairAscentSpeed",
+   "unit": "m/s",
+   "agg": "avg"
+  },
+  {
+   "key": "stairDescentSpeedMps",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierStairDescentSpeed",
+   "unit": "m/s",
+   "agg": "avg"
+  },
+  {
+   "key": "sixMinuteWalkM",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierSixMinuteWalkTestDistance",
+   "unit": "m",
+   "agg": "last"
+  },
+  {
+   "key": "bodyMassKg",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierBodyMass",
+   "unit": "kg",
+   "agg": "last"
+  },
+  {
+   "key": "bodyFatPct",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierBodyFatPercentage",
+   "unit": "%",
+   "agg": "last"
+  },
+  {
+   "key": "leanMassKg",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierLeanBodyMass",
+   "unit": "kg",
+   "agg": "last"
+  },
+  {
+   "key": "bmi",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierBodyMassIndex",
+   "unit": "count",
+   "agg": "last"
+  },
+  {
+   "key": "heightM",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierHeight",
+   "unit": "m",
+   "agg": "last"
+  },
+  {
+   "key": "waistM",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierWaistCircumference",
+   "unit": "m",
+   "agg": "last"
+  },
+  {
+   "key": "dietaryKcal",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierDietaryEnergyConsumed",
+   "unit": "kcal",
+   "agg": "sum"
+  },
+  {
+   "key": "proteinG",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierDietaryProtein",
+   "unit": "g",
+   "agg": "sum"
+  },
+  {
+   "key": "carbsG",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierDietaryCarbohydrates",
+   "unit": "g",
+   "agg": "sum"
+  },
+  {
+   "key": "fatG",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierDietaryFatTotal",
+   "unit": "g",
+   "agg": "sum"
+  },
+  {
+   "key": "sugarG",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierDietarySugar",
+   "unit": "g",
+   "agg": "sum"
+  },
+  {
+   "key": "fiberG",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierDietaryFiber",
+   "unit": "g",
+   "agg": "sum"
+  },
+  {
+   "key": "sodiumG",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierDietarySodium",
+   "unit": "g",
+   "agg": "sum"
+  },
+  {
+   "key": "waterL",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierDietaryWater",
+   "unit": "L",
+   "agg": "sum"
+  },
+  {
+   "key": "caffeineG",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierDietaryCaffeine",
+   "unit": "g",
+   "agg": "sum"
+  },
+  {
+   "key": "mindfulMin",
+   "kind": "category",
+   "id": "HKCategoryTypeIdentifierMindfulSession",
+   "mode": "minutes"
+  },
+  {
+   "key": "stateOfMind",
+   "kind": "stateOfMind",
+   "id": "HKDataTypeIdentifierStateOfMind",
+   "outputs": [
+    "moodValenceAvg",
+    "moodEntries"
+   ]
+  },
+  {
+   "key": "basalBodyTempC",
+   "kind": "quantity",
+   "id": "HKQuantityTypeIdentifierBasalBodyTemperature",
+   "unit": "degC",
+   "agg": "avg"
+  },
+  {
+   "key": "cycleMenstrualFlow",
+   "kind": "category",
+   "id": "HKCategoryTypeIdentifierMenstrualFlow",
+   "mode": "values"
+  },
+  {
+   "key": "cycleIntermenstrualBleeding",
+   "kind": "category",
+   "id": "HKCategoryTypeIdentifierIntermenstrualBleeding",
+   "mode": "values"
+  },
+  {
+   "key": "cycleOvulationTestResult",
+   "kind": "category",
+   "id": "HKCategoryTypeIdentifierOvulationTestResult",
+   "mode": "values"
+  },
+  {
+   "key": "cycleCervicalMucusQuality",
+   "kind": "category",
+   "id": "HKCategoryTypeIdentifierCervicalMucusQuality",
+   "mode": "values"
+  },
+  {
+   "key": "cycleInfrequentMenstrualCycles",
+   "kind": "category",
+   "id": "HKCategoryTypeIdentifierInfrequentMenstrualCycles",
+   "mode": "values"
+  },
+  {
+   "key": "cycleIrregularMenstrualCycles",
+   "kind": "category",
+   "id": "HKCategoryTypeIdentifierIrregularMenstrualCycles",
+   "mode": "values"
+  },
+  {
+   "key": "cyclePersistentIntermenstrualBleeding",
+   "kind": "category",
+   "id": "HKCategoryTypeIdentifierPersistentIntermenstrualBleeding",
+   "mode": "values"
+  },
+  {
+   "key": "cycleProlongedMenstrualPeriods",
+   "kind": "category",
+   "id": "HKCategoryTypeIdentifierProlongedMenstrualPeriods",
+   "mode": "values"
+  }
+ ]
+}

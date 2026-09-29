@@ -1,0 +1,20 @@
+rules_version = '2';
+// Incoming-uploads bucket only. The phone may create (never read, overwrite or delete) gzipped
+// batches in its own folder. Processed data lives in a separate bucket with no client access.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /incoming/{uid}/{file} {
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && file.matches('^[0-9a-f-]{36}[.]ndjson[.]gz$')
+        && request.resource.size > 0
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType == 'application/gzip'
+        && request.resource.metadata.schema == '1'
+        && request.resource.metadata.sha256.matches('^[0-9a-f]{64}$');
+    }
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

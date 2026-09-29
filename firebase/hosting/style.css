@@ -1,0 +1,19 @@
+:root{color-scheme:light dark;--accent:#e8385e;--muted:#6b6b76;--line:#e6e6ea;--card:#f7f7f9}
+@media (prefers-color-scheme:dark){:root{--muted:#a0a0ab;--line:#2c2c31;--card:#1a1a1d;--accent:#ff5a7e}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{font:17px/1.6 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;max-width:720px;margin:0 auto;padding:24px 20px 56px;background:Canvas;color:CanvasText}
+.top{display:flex;align-items:center;justify-content:space-between;padding-bottom:16px;margin-bottom:28px;border-bottom:1px solid var(--line)}
+.brand{font-weight:800;letter-spacing:.08em;color:var(--accent);text-decoration:none}
+.top nav a{margin-left:18px;font-size:15px;text-decoration:none}
+h1{font-size:28px;line-height:1.2;margin:0 0 12px}
+h2{font-size:20px;margin:32px 0 8px}
+p,li{max-width:65ch}
+ul{padding-left:22px}
+li{margin:6px 0}
+a{color:var(--accent);text-underline-offset:3px}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+.lead{font-size:21px;color:var(--muted);margin:0 0 28px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px 20px 12px;margin:16px 0}
+.foot{margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:14px;color:var(--muted)}
+.foot a{color:inherit}

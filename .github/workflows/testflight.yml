@@ -1,0 +1,46 @@
+# Signs the iOS app and uploads it to TestFlight. Manual, or on main after merges.
+name: testflight
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['ios/**', 'shared/**']
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+jobs:
+  upload:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      HAS_SECRETS: ${{ secrets.ASC_KEY_P8 != '' && secrets.GCP_WIF_PROVIDER != '' }}
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      TESTER_EMAILS: ${{ secrets.TESTER_EMAILS }}
+    steps:
+      - if: env.HAS_SECRETS != 'true'
+        run: echo "::notice::Apple/Google secrets not set yet (docs/SETUP.md). Skipping."
+      - if: env.HAS_SECRETS == 'true'
+        uses: actions/checkout@v4
+      - if: env.HAS_SECRETS == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - if: env.HAS_SECRETS == 'true'
+        uses: google-github-actions/setup-gcloud@v2
+      - if: env.HAS_SECRETS == 'true'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      - if: env.HAS_SECRETS == 'true'
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          scripts/tasks/testflight.sh

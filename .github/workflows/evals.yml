@@ -1,0 +1,42 @@
+# Weekly: real Claude and ChatGPT answer fixed questions through the live connector.
+# A failure emails the repository owner (GitHub's default for failed scheduled runs).
+name: evals
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    env:
+      HAS_GCP: ${{ secrets.GCP_WIF_PROVIDER != '' }}
+    steps:
+      - if: env.HAS_GCP != 'true'
+        run: echo "::notice::Not deployed yet. Skipping."
+      - if: env.HAS_GCP == 'true'
+        uses: actions/checkout@v4
+      - if: env.HAS_GCP == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - if: env.HAS_GCP == 'true'
+        uses: google-github-actions/setup-gcloud@v2
+      - if: env.HAS_GCP == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - if: env.HAS_GCP == 'true'
+        working-directory: scripts/evals
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          P: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          npm install --no-audit --no-fund
+          TOKEN=$(gcloud secrets versions access latest --secret=synthetic-mcp-token --project "$P")
+          echo "::add-mask::$TOKEN"
+          MCP_URL="https://$P.web.app/mcp/$TOKEN" node run.mjs

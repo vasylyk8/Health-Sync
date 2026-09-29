@@ -1,0 +1,7 @@
+{
+  "name": "health-sync-evals",
+  "private": true,
+  "type": "module",
+  "scripts": { "eval": "node run.mjs" },
+  "dependencies": { "@anthropic-ai/sdk": "latest", "openai": "latest" }
+}
