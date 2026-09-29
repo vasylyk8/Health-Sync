@@ -89,6 +89,10 @@ enum Theme {
     static let success = Color(UIColor { traits in
         traits.userInterfaceStyle == .dark ? UIColor.systemGreen : UIColor(red: 0.10, green: 0.50, blue: 0.20, alpha: 1)
     })
+    /// Orange that stays readable as small text on a light background.
+    static let warning = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor.systemOrange : UIColor(red: 0.70, green: 0.32, blue: 0.0, alpha: 1)
+    })
     /// Set at build time from the deployed site (Info.plist key PrivacyPolicyURL).
     static let privacyURL: URL = (Bundle.main.object(forInfoDictionaryKey: "PrivacyPolicyURL") as? String).flatMap(URL.init(string:))
         ?? URL(string: "https://krok-1d60a.web.app/privacy")!

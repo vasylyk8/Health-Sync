@@ -17,9 +17,9 @@ struct ConnectView: View {
                             .accessibilityValue(model.isSetUp(provider) ? "Set up" : "Not set up")
                     }
                 } header: {
-                    Text("Connect an assistant")
+                    Text("Connect an assistant").foregroundStyle(Theme.mutedText)
                 } footer: {
-                    Text("Then ask it things like \"How did I sleep this week?\"")
+                    Text("Then ask it things like \"How did I sleep this week?\"").foregroundStyle(Theme.mutedText)
                 }
                 Section {
                     SyncStatusView(progress: model.progress, status: model.status, issue: model.syncIssue)
@@ -78,7 +78,7 @@ struct ProviderRow: View {
                     .foregroundStyle(Theme.success)
                     .accessibilityIdentifier("setUp.\(provider.id)")
             } else {
-                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.mutedText)
             }
         }
         .padding(.vertical, 6)
@@ -121,7 +121,7 @@ struct SyncStatusView: View {
             if let issue {
                 Label(issue, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.warning)
                     .accessibilityIdentifier("syncIssue")
             }
             if let start = status.historyStart {
