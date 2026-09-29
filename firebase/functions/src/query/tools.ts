@@ -23,7 +23,7 @@ export type Stat = (typeof STATS)[number];
 
 const MAX_PERIOD_ROWS = 2000;
 const MAX_SAMPLE_ROWS = 500;
-const OVERVIEW_CONCURRENCY = 3;
+const OVERVIEW_CONCURRENCY = 2;
 
 const FMT: Record<Period, string> = {
   hour: '%Y-%m-%d %H:00',

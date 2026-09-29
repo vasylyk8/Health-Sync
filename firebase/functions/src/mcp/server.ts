@@ -183,11 +183,15 @@ export async function handleMcp(req: IncomingMessage & { body?: unknown }, res: 
     res.setHeader('Allow', 'POST');
     return send(res, 405, { error: 'method_not_allowed' });
   }
-  if (!(await deps.limiter.hit(`mcp_${hash.slice(0, 32)}`, LIMITS.mcpRequestsPerMinute, 60_000))) {
+  // The rate-limit transaction and the user lookup are independent: run them together to save a round trip.
+  const [allowed, user] = await Promise.all([
+    deps.limiter.hit(`mcp_${hash.slice(0, 32)}`, LIMITS.mcpRequestsPerMinute, 60_000),
+    deps.meta.getUser(rec.uid),
+  ]);
+  if (!allowed) {
     res.setHeader('Retry-After', '60');
     return send(res, 429, { error: 'too_many_requests', message: 'Too many requests. Wait a minute.' });
   }
-  const user = await deps.meta.getUser(rec.uid);
   if (!user || user.deleting) return send(res, 404, { error: 'not_found', message: 'This KROK link is no longer active.' });
 
   await deps.connections.touch(rec.uid, rec.provider, now(), user.connections[rec.provider]).catch(() => undefined);
