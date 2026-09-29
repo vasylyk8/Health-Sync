@@ -120,25 +120,11 @@ platform :ios do
     end
   end
 
-  # Best effort: if Apple's API refuses, the build is still on TestFlight and the owner can add
-  # testers with one click (App Store Connect > TestFlight > Team). The run log says so.
-  private_lane :add_internal_testers do |key|
-    emails = ENV.fetch("TESTER_EMAILS", "").split(",").map(&:strip).reject(&:empty?)
-    next if emails.empty?
-    begin
-      Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from(hash: key)
-      app = Spaceship::ConnectAPI::App.find(ENV.fetch("BUNDLE_ID"))
-      group = app.get_beta_groups.find { |g| g.name == "Team" } ||
-              app.create_beta_group(group_name: "Team", is_internal_group: true, has_access_to_all_builds: true)
-      File.write("asc_key.json", JSON.dump(key))
-      emails.each do |email|
-        sh("fastlane pilot add #{email.shellescape} --groups Team --app_identifier #{ENV.fetch('BUNDLE_ID').shellescape} --api_key_path asc_key.json") rescue UI.important("Could not add #{email}; add them in App Store Connect > TestFlight")
-      end
-      UI.success("TestFlight group 'Team' has #{emails.count} tester(s) requested")
-    rescue => e
-      UI.important("Automatic tester setup failed (#{e.class}). Add testers manually in App Store Connect > TestFlight.")
-    ensure
-      File.delete("asc_key.json") if File.exist?("asc_key.json")
-    end
+  # Best effort: if Apple refuses a tester, the build is still on TestFlight and the owner can add
+  # them with one click (App Store Connect > TestFlight > Team). scripts/tasks/testers.py prints why.
+  private_lane :add_internal_testers do |_key|
+    sh("python3 #{File.expand_path('../../scripts/tasks/testers.py', __dir__).shellescape}")
+  rescue => e
+    UI.important("Some testers could not be added (#{e.class}). Add them in App Store Connect > TestFlight > Team.")
   end
 end
