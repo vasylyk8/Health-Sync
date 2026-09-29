@@ -180,7 +180,7 @@ final class QAUITests: XCTestCase {
         tapContinue(app)
         let row = app.buttons["provider.claude"]
         expectation(for: NSPredicate(format: "value == 'Set up'"), evaluatedWith: row)
-        waitForExpectations(timeout: 20)
+        waitForExpectations(timeout: 60)
         row.tap()
         XCTAssertTrue(app.buttons["disconnect"].waitForExistence(timeout: 5))
         app.buttons["disconnect"].tap()

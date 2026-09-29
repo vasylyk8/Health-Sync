@@ -129,6 +129,7 @@ struct SyncStatusView: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
         .padding(.vertical, 4)
     }
 }
