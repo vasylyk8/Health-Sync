@@ -95,6 +95,8 @@ describe('workout raw data ingest', () => {
     expect((await bad({ ...hr(), v: [1, 2] })).result).toBe('rejected'); // length mismatch
     expect((await bad({ k: 'ws', wid: WID, st: 'HeartRate', gen: GEN, t: [T0] })).result).toBe('rejected'); // no values
     expect((await bad({ ...hr(), st: '../evil' })).result).toBe('rejected');
+    expect((await bad({ ...hr(), wid: 'a/b' })).result).toBe('rejected'); // would escape the workout's document
+    expect((await upload(env, { type: W }, [{ k: 'd', id: '../x' }])).result).toBe('rejected');
     expect((await bad(hr(), { schema: 1 })).result).toBe('rejected');
     expect((await upload(env, { type: W }, [hr()])).result).toBe('rejected'); // ws outside workoutdata
     expect((await upload(env, { type: '_wstream', mode: 'anchored' }, [hr()])).result).toBe('rejected');

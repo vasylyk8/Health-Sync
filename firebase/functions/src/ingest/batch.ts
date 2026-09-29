@@ -40,7 +40,8 @@ const common = {
   tz: str(64).nullish(),
   md: z.record(z.string().max(100), z.union([z.string().max(1000), z.number(), z.boolean()])).nullish(),
 };
-const uuid = z.string().min(1).max(64);
+/** Ids become Firestore document ids and storage path parts: no slashes or other surprises. */
+const uuid = z.string().regex(/^[0-9A-Za-z_-]{1,64}$/);
 
 const fin = z.number().finite().nullish();
 const WorkoutRec = z.object({ k: z.literal('w'), id: uuid, s: epochMs, e: epochMs, act: z.number().int(), dur: fin, en: fin, dist: fin, hrAvg: fin, hrMax: fin, ...common }).passthrough();
