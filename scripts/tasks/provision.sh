@@ -46,6 +46,10 @@ grant "serviceAccount:service-$PN@gcp-sa-pubsub.iam.gserviceaccount.com" roles/i
 grant "serviceAccount:$PN-compute@developer.gserviceaccount.com" roles/run.invoker
 grant "serviceAccount:$PN-compute@developer.gserviceaccount.com" roles/eventarc.eventReceiver
 grant "serviceAccount:service-$PN@gcp-sa-eventarc.iam.gserviceaccount.com" roles/eventarc.serviceAgent
+# Functions run as the runtime account, and Eventarc delivers upload events as that account too.
+RUNTIME="${GCP_RUNTIME_SA:?GCP_RUNTIME_SA secret missing}"
+grant "serviceAccount:$RUNTIME" roles/run.invoker
+grant "serviceAccount:$RUNTIME" roles/eventarc.eventReceiver
 # New projects build functions with the default compute account, which needs these roles.
 for role in roles/cloudbuild.builds.builder roles/logging.logWriter roles/artifactregistry.writer roles/storage.objectViewer; do
   grant "serviceAccount:$PN-compute@developer.gserviceaccount.com" "$role"
