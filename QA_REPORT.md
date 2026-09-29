@@ -59,6 +59,9 @@ The outbox design is good, but three paths commit the anchor anyway:
 ### H6: Any `claude/**` branch push deploys to production
 `deploy.yml` runs on `branches: [main, 'claude/**']` with `firebase/**` paths. This happened during this QA session: my test-only commit started a production deploy. **I cancelled it before any job ran, so nothing was deployed.** Your TestFlight testers use this same backend. Restrict deploys to `main`, or to one named release branch.
 
+### H7: After "Delete All My Data" the user can't reconnect without force-quitting
+Reproduced in the simulator (`QAUITests.testReonboardAfterDelete`, iPhone 17e, in-memory fakes). The welcome screen comes back with **Connect to Apple Health greyed out and spinning**. It is still disabled after 20 s, and tapping does nothing. Only terminating and relaunching the app recovers; onboarding then works. The spinner and the disabled state are both driven by `AppModel.busy`, so something leaves `busy == true` after deletion. From the code, `deleteAllData`'s `defer` should clear it, so the root cause isn't pinned down. Look at the ordering of `withAnimation { phase = .welcome }` against the `defer`, and at any other writer of `busy` during the transition. **Confirm on a device (D-12).**
+
 ---
 
 ## 2. Medium severity
@@ -108,6 +111,7 @@ The outbox design is good, but three paths commit the anchor anyway:
 - **Home:** provider names, chevrons and subtitles take the pink accent (the list button tint). "Requires ChatGPT Plus" fails contrast; at the largest size "ChatGPT" wraps as "ChatG-PT".
 - **Accessibility audit:** "Privacy Policy" hit area is under 44 pt; VoiceOver reads the consent icon as "lock.shield.fill"; the white step numbers 1–3 on the Claude orange fail contrast; the sheets' "Close" and the sync status text don't fully scale with Dynamic Type. Several other items were flagged "contrast nearly passed".
 - **Dark mode:** the welcome screen renders correctly.
+- **Re-onboarding after Delete All My Data:** fails. The Connect button stays disabled until the app is relaunched (H7). This also blocked the remaining flow tests (disconnect, reopening setup, double-tap Continue), so those are not verified.
 - **Test harness:** the `-uiTesting` build still uses the real Keychain, so a link created in one test leaks into the next and the sheet skips consent. The QA suite resets state with Delete All My Data first.
 
 ## 6. Device checklist (what only you can check, ~15 min + background days)
@@ -122,6 +126,7 @@ Use together with `docs/RELEASE_SOAK.md`.
 - **D-8** Copy the link, then paste on your Mac. If it pastes, Universal Clipboard exposure is confirmed. (M6)
 - **D-9** Turn on VoiceOver and go through onboarding and the Claude setup. Note anything unlabeled or read out of order.
 - **D-10** Largest text size (Settings → Accessibility → Larger Text): go through every screen and look for clipping.
+- **D-12** Tap ••• → Delete All My Data. Can you tap "Connect to Apple Health" straight away, or is it greyed out with a spinner until you force-quit? (H7)
 - **D-11** Start a sync, then tap ••• → Delete All My Data straight away, onboard again, and let it finish. Compare "History synced back to" with the first run. (H5)
 
 ## Repro tests added (report only; no app code changed)
