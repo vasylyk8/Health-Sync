@@ -89,7 +89,7 @@ describe('QA findings: totals', () => {
 });
 
 describe('QA findings: sleep', () => {
-  it.fails('S-5: sleep ending after noon belongs to that day, not the next', async () => {
+  it('S-5: sleep ending after noon belongs to that day, not the next', async () => {
     const env = makeEnv(day(30, 20));
     // Late sleeper: 02:00 -> 12:30 on Jun 29 (UTC). Nap-free, one night.
     await send(env, 1, { type: SLEEP, mode: 'recent', window: { start: day(20), end: env.now } }, [
@@ -99,7 +99,7 @@ describe('QA findings: sleep', () => {
     expect((r.nights as { night: string }[]).map((n) => n.night)).toEqual(['2024-06-29']);
   });
 
-  it.fails('S-6: summarize(SleepAnalysis) and get_sleep agree on which day a night belongs to', async () => {
+  it('S-6: summarize(SleepAnalysis) and get_sleep agree on which day a night belongs to', async () => {
     const env = makeEnv(day(30, 20));
     await send(env, 1, { type: SLEEP, mode: 'recent', window: { start: day(20), end: env.now } }, [
       { k: 's', id: 'a', s: day(28, 23), e: day(29, 1), c: 4, src: 'Watch' }, // deep, starts before midnight

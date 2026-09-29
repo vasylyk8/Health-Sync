@@ -55,7 +55,8 @@ const TOOLS: { name: string; title: string; description: string; input: z.ZodRaw
       'Exact calculation over a Health data type, grouped by hour/day/week/month/year or "none" (one total for the range). ' +
       'stat: sum | avg | min | max | count | duration_min (category types such as MindfulSession or SleepAnalysis). ' +
       'Defaults: sum for cumulative types (steps, distance, energy), avg for others. Weeks start on Monday. ' +
-      'Optional source filter (e.g. "Watch") and category_value (e.g. SleepAnalysis 4 = deep sleep).',
+      'Optional source filter (e.g. "Watch") and category_value (e.g. SleepAnalysis 4 = deep sleep). ' +
+      'SleepAnalysis is grouped by the date the night ends (like get_sleep); prefer get_sleep for per-night sleep.',
     input: {
       type: z.string().describe('Data type name from list_available_data, e.g. StepCount, HeartRate'),
       start_date: dateField,

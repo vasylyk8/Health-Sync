@@ -24,6 +24,14 @@ export type Stat = (typeof STATS)[number];
 const MAX_PERIOD_ROWS = 2000;
 const MAX_SAMPLE_ROWS = 500;
 const OVERVIEW_CONCURRENCY = 2;
+const SLEEP_TYPE = 'HKCategoryTypeIdentifierSleepAnalysis';
+
+/**
+ * Local date a sleep segment belongs to: the morning it ends. Segments ending before 18:00 count
+ * for that day, so a late sleeper who wakes after noon is not pushed into the next day's night.
+ * Both get_sleep and summarize(SleepAnalysis) use this, so the two tools agree.
+ */
+const nightOf = (endCol: string, tz: string) => `CAST(${localTs(endCol, tz)} - INTERVAL 18 HOUR AS DATE) + 1`;
 
 const FMT: Record<Period, string> = {
   hour: '%Y-%m-%d %H:00',
@@ -141,7 +149,8 @@ export async function summarize(deps: QueryDeps, args: SummarizeArgs): Promise<T
       notes.push('Merged hourly statistics do not cover this whole range yet, so raw samples were used instead.');
     }
 
-    // Raw path.
+    // Raw path. Sleep is grouped by the night it belongs to (as get_sleep does), not by segment start.
+    const ltExpr = t.id === SLEEP_TYPE && args.period !== 'hour' ? `(${nightOf('e', r.tz)})::TIMESTAMP` : localTs('s', r.tz);
     const man = await loadType(c, dir, deps, t.id, rough, 'raw', { what: 'raw', budget });
     const filters = [within];
     if (args.source) filters.push(`(src ILIKE ${lit('%' + args.source + '%')} OR dev ILIKE ${lit('%' + args.source + '%')})`);
@@ -156,7 +165,7 @@ export async function summarize(deps: QueryDeps, args: SummarizeArgs): Promise<T
     };
     const out = await rows(c, `SELECT ${bucket} AS period, ${expr[stat]} AS value, count(*)::INTEGER AS samples,
         count(DISTINCT coalesce(src, '?'))::INTEGER AS sources
-      FROM (SELECT *, ${localTs('s', r.tz)} lt FROM raw) WHERE ${filters.join(' AND ')}
+      FROM (SELECT *, ${ltExpr} lt FROM raw) WHERE ${filters.join(' AND ')}
       GROUP BY 1 ORDER BY 1 LIMIT ${MAX_PERIOD_ROWS + 1}`);
     tooMany(out.length);
     const multiSource = out.some((row) => (row.sources as number) > 1);
@@ -254,7 +263,7 @@ export async function getWorkouts(deps: QueryDeps, args: { start_date: string; e
 
 // ---------------------------------------------------------------------------------------------
 
-const SLEEP = 'HKCategoryTypeIdentifierSleepAnalysis';
+const SLEEP = SLEEP_TYPE;
 
 /**
  * Nightly sleep, attributed to the local date the sleep ended. When several sources overlap
@@ -270,7 +279,7 @@ export async function getSleep(deps: QueryDeps, args: { start_date: string; end_
     const cap = 400;
     const out = await rows(c, `
       WITH x AS (
-        SELECT *, CAST(${localTs('e', r.tz)} - INTERVAL 12 HOUR AS DATE) + 1 AS night,
+        SELECT *, ${nightOf('e', r.tz)} AS night,
                (e - s) / 60000.0 AS mins
         FROM sl WHERE e > ${startUtc} - 43200000 AND e <= ${endUtc} + 43200000
       ),
