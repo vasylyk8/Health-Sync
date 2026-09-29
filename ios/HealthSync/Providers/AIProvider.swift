@@ -31,8 +31,8 @@ struct AIProvider: Identifiable, Hashable {
         setupURL: URL(string: "https://claude.ai/settings/connectors")!, websiteLabel: "claude.ai", subtitle: nil,
         steps: [
             Step(title: "Copy your private link", detail: "This link lets Claude read your Health data. Keep it private.", illustration: .copyLink),
-            Step(title: "Open Claude's settings", detail: "Sign in if asked. You'll land on the Connectors page.", illustration: .openSettings(site: "claude.ai", path: ["Settings", "Connectors"])),
-            Step(title: "Add the connector", detail: "Tap \"Add custom connector\", name it KROK, paste your link, then tap Add.", illustration: .addConnector(site: "claude.ai", button: "Add custom connector", fields: ["KROK", "https://…/mcp/…"])),
+            Step(title: "Open Claude's connectors", detail: "Sign in if asked. If you don't land on it, go to Customize, then Connectors.", illustration: .openSettings(site: "claude.ai", path: ["Customize", "Connectors"])),
+            Step(title: "Add the connector", detail: "Tap +, then \"Add custom connector\". Name it KROK, paste your link, then tap Add.", illustration: .addConnector(site: "claude.ai", button: "+ Add custom connector", fields: ["KROK", "https://…/mcp/…"])),
         ],
         tip: "On Claude's free plan you can have one custom connector. If you already have one, remove it first.")
 
