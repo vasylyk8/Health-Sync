@@ -20,7 +20,7 @@ struct ConnectView: View {
                     Text("Then ask it things like \"How did I sleep this week?\"")
                 }
                 Section {
-                    SyncStatusView(progress: model.progress, status: model.status)
+                    SyncStatusView(progress: model.progress, status: model.status, issue: model.syncIssue)
                 }
             }
             .navigationTitle("KROK")
@@ -87,6 +87,7 @@ struct ProviderRow: View {
 struct SyncStatusView: View {
     let progress: SyncProgress
     let status: ServerStatus
+    var issue: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -114,6 +115,12 @@ struct SyncStatusView: View {
                     .font(.footnote).foregroundStyle(.secondary)
             } else {
                 Label("Getting ready…", systemImage: "hourglass").font(.subheadline)
+            }
+            if let issue {
+                Label(issue, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("syncIssue")
             }
             if let start = status.historyStart {
                 Text("History synced back to \(start, format: .dateTime.month(.abbreviated).year())")

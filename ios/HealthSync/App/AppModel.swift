@@ -11,6 +11,8 @@ final class AppModel: ObservableObject {
     @Published var progress = SyncProgress(typesDone: 0, typesTotal: 0, isSyncing: false)
     @Published var errorMessage: String?
     @Published var busy = false
+    /// Shown under the sync status when the last sync attempt failed; cleared by the next success.
+    @Published var syncIssue: String?
 
     let providers = AIProvider.all
     private let backend: Backend
@@ -90,8 +92,14 @@ final class AppModel: ObservableObject {
             await refreshStatus()
             try await engine.run()
             await refreshStatus()
+            syncIssue = nil
+        } catch is CancellationError {
+            return
         } catch {
             telemetry.nonFatal("sync", code: (error as NSError).code)
+            syncIssue = (error as NSError).domain == NSURLErrorDomain
+                ? "You're offline. KROK will sync again when you're connected."
+                : "Sync paused. Pull down to try again."
         }
     }
 
@@ -108,6 +116,8 @@ final class AppModel: ObservableObject {
     /// Returns the provider's private link, creating it on first use (after consent).
     func link(for p: AIProvider) async -> String? {
         if let url = existingLink(for: p) { return url }
+        busy = true
+        defer { busy = false }
         do {
             let url = try await backend.createLink(provider: p.id)
             Keychain.set(url, for: "link.\(p.id)")

@@ -57,6 +57,7 @@ struct SetupSheet: View {
                 }
             }
             .buttonStyle(.borderedProminent).controlSize(.large)
+            .disabled(model.busy)
             .accessibilityIdentifier("consentContinue")
         }
         .padding(24)
@@ -73,6 +74,10 @@ struct SetupSheet: View {
                                 UIPasteboard.general.string = link
                                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                                 copied = true
+                                Task {
+                                    try? await Task.sleep(for: .seconds(3))
+                                    copied = false
+                                }
                             } label: {
                                 Label(copied ? "Copied" : "Copy Link", systemImage: copied ? "checkmark" : "doc.on.doc").frame(maxWidth: .infinity)
                             }
