@@ -16,5 +16,6 @@ step "install server dependencies"
 (cd "$ROOT/firebase/functions" && npm ci --no-audit --no-fund >/dev/null)
 step "back up, delete and verify"
 cd "$ROOT/firebase/functions"
+node scripts/copy-shared.mjs
 GCP_PROJECT_ID="$P" npx --yes tsx scripts/legacy-cleanup.ts run
 step "done. The backup is kept for 14 days at gs://$BACKUP/legacy/"
