@@ -21,11 +21,12 @@ Verified by CI: server unit tests, and the iOS unit and UI tests on the newest i
 | H1 observers only registered when a scene is active | **Fixed**: registered at process launch (`HealthSyncApp.init`). Needs the phone-restart check (D-3) on a device. |
 | H2 / S-1 merged totals lost after a later check | **Fixed**: merged totals are judged against their own window (up to 6 h behind the latest check). |
 | H2 / S-2 overview hides the double-counting warning | **Fixed**: raw sums that may double count are reported as unavailable; sub-call notes are kept. |
-| H3.1 upload `unauthorized` treated as success | **Open** (needs a server-side "does this batch exist" check). |
-| H3.2 / H3.3 rejected or missing batches | **Open**. |
+| H3.1 upload `unauthorized` treated as success | **Fixed on the phone**: it only counts as "already uploaded" when an earlier attempt of the same batch was interrupted; a rejection on a first attempt now fails loudly and is retried. Residual risk: an interrupted first attempt followed by a real rejection. A server-side "does this batch exist" check would close that. |
+| H3.3 missing batch file | **Fixed**: the entry is dropped without moving the anchor, so the data is read again. |
+| H3.2 a bad record rejects a whole batch | **Open**. |
 | H4 / S-3, S-4 deleted hours and reinstall ordering | **Open** (needs a Parquet schema or ordering change). Repro tests remain expected-fail. |
 | H5 / I-3 delete during a sync leaves an anchor | **Fixed**: in-flight uploads from before a reset are ignored. |
-| H6 `claude/**` branches deploy to production | **Open**: `deploy.yml` unchanged. |
+| H6 `claude/**` branches deploy to production | **Fixed**: `deploy.yml` now deploys only from `main` and `claude/youthful-planck-k7ff0m`. Confirmed: a later server commit on this branch started no deploy. |
 | H7 Connect stuck disabled after Delete | **Fixed**: `busy` is cleared before the screen changes. Confirmed by `testReonboardAfterDelete` on the small-device run. |
 | I-4 one failing type aborts the sync | Already fixed by per-type isolation on the dev branch; the test is now an ordinary regression test. |
 | M5 setup-sheet errors invisible | **Fixed**: shown inline in the sheet. |
@@ -33,7 +34,10 @@ Verified by CI: server unit tests, and the iOS unit and UI tests on the newest i
 | M8 / I-6 stale `earliest` date | **Fixed**: refreshed on every full recompute. |
 | M11 contrast, Dynamic Type clipping | **Mostly fixed**: no "contrast failed" items and no small hit areas left in the audit; welcome and consent text scroll with the button pinned below. The home "Synced … ago" line still clips at the largest sizes. |
 | V-1, V-2, V-3, rounding, `dataAsOf` | **Fixed**. |
-| M1–M4, M7, M9, M10, M12, S-5, S-6 | **Open**. |
+| S-5, S-6 sleep dating | **Fixed**: sleep is dated by the night it ends (before 18:00 counts for that day) in both `get_sleep` and `summarize`. |
+| M2 first sync locks the screen | **Partly fixed**: the screen stays awake during the first sync. Speed and a background task are still open. |
+| Privacy policy menu name | **Fixed** ("••• menu"). |
+| M3(c), M4, M7, M9, M10, M12 | **Open**. M4 needs a reliable "no data" signal; M7 is a log-sink setting; M9 and M10 are larger changes. |
 
 ## What was tested, and how
 
