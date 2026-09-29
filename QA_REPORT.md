@@ -101,8 +101,14 @@ The outbox design is good, but three paths commit the anchor anyway:
 - ⚠️ **App Privacy label:** Firebase Analytics collects an app-instance ID, and the answers mark usage data "not linked". Check against Firebase's published App Store disclosure guidance before submitting.
 - ✅ Guideline 5.1.2(i) (sharing data with third-party AI needs explicit consent): the per-assistant consent screen names the company. Keep it, and mention it in the review notes.
 
-## 5. iOS CI results (QA UI suite)
-_Filled in from the CI run on commit `cf68bbd`; see the section below._
+## 5. Simulator results (iPhone 17e, the smallest current model, and the newest iPhone)
+- **iOS unit tests: all 15 pass**, including the 3 QA repro tests. `XCTExpectFailure` is strict, so a pass means each expected failure actually happened: **I-3, I-4 and I-6 are confirmed.** The 3 existing onboarding UI tests pass.
+- **Launch time:** average 1.58 s across 5 cold launches on the simulator (in-memory fakes). Fine.
+- **Largest text size, welcome screen:** the tagline shrinks to "Apple Healt…", the privacy disclosure to "Your Health data…" and the button to "Connect t…", and the screen can't scroll. The consent text can't be read. **Fix:** a `ScrollView` plus `ViewThatFits`.
+- **Home:** provider names, chevrons and subtitles take the pink accent (the list button tint). "Requires ChatGPT Plus" fails contrast; at the largest size "ChatGPT" wraps as "ChatG-PT".
+- **Accessibility audit:** "Privacy Policy" hit area is under 44 pt; VoiceOver reads the consent icon as "lock.shield.fill"; the white step numbers 1–3 on the Claude orange fail contrast; the sheets' "Close" and the sync status text don't fully scale with Dynamic Type. Several other items were flagged "contrast nearly passed".
+- **Dark mode:** the welcome screen renders correctly.
+- **Test harness:** the `-uiTesting` build still uses the real Keychain, so a link created in one test leaks into the next and the sheet skips consent. The QA suite resets state with Delete All My Data first.
 
 ## 6. Device checklist (what only you can check, ~15 min + background days)
 Use together with `docs/RELEASE_SOAK.md`.
