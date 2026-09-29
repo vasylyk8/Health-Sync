@@ -20,7 +20,7 @@ export const HeaderSchema = z.object({
   tz: z.string().max(64).optional(),
   createdAt: epochMs,
   /** `status`: one batch for many types that had nothing new (type "_status", records `c`). */
-  mode: z.enum(['anchored', 'recent', 'stats', 'profile', 'reconcile', 'status', 'workoutdata']),
+  mode: z.enum(['anchored', 'recent', 'stats', 'reconcile', 'status', 'workoutdata']),
   window: z.object({ start: epochMs, end: epochMs }).optional(),
   caughtUp: z.boolean().optional(),
   checkedAt: epochMs.optional(),
@@ -42,13 +42,8 @@ const common = {
 };
 const uuid = z.string().min(1).max(64);
 
-const SampleRec = z.object({ k: z.literal('s'), id: uuid, s: epochMs, e: epochMs, v: z.number().finite().nullish(), c: z.number().int().nullish(), u: str(40).nullish(), n: z.number().int().nullish(), ...common }).passthrough();
-const WorkoutRec = z.object({ k: z.literal('w'), id: uuid, s: epochMs, e: epochMs, act: z.number().int(), ...common }).passthrough();
-const CorrelationRec = z.object({ k: z.literal('x'), id: uuid, s: epochMs, e: epochMs, ct: str(120), ...common }).passthrough();
-const EcgRec = z.object({ k: z.literal('ecg'), id: uuid, s: epochMs, e: epochMs, ...common }).passthrough();
-const HeartbeatRec = z.object({ k: z.literal('hb'), id: uuid, s: epochMs, e: epochMs, ...common }).passthrough();
-const ActivityRec = z.object({ k: z.literal('a'), day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).passthrough();
-const StatRec = z.object({ k: z.literal('h'), t: str(120).optional(), s: epochMs, e: epochMs, agg: z.enum(['sum', 'avg', 'min', 'max']), v: z.number().finite(), u: str(40) }).strict();
+const fin = z.number().finite().nullish();
+const WorkoutRec = z.object({ k: z.literal('w'), id: uuid, s: epochMs, e: epochMs, act: z.number().int(), dur: fin, en: fin, dist: fin, hrAvg: fin, hrMax: fin, ...common }).passthrough();
 /** Value columns of a raw workout stream (all optional except time). */
 export const STREAM_COLS = ['v', 'lat', 'lon', 'alt', 'spd', 'crs', 'ha', 'va'] as const;
 export const MAX_POINTS_PER_CHUNK = 20_000;
@@ -77,12 +72,11 @@ const DayRec = z.object({
   day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   m: z.record(str(60), z.union([z.number().finite(), z.string().max(200), z.boolean(), z.null()])),
 }).strict();
-const ProfileRec = z.object({ k: z.literal('p') }).passthrough();
 const DeleteRec = z.object({ k: z.literal('d'), id: uuid }).strict();
 /** "Checked this type at `at`, nothing new; `cu` = its full history has been delivered." */
 const StatusRec = z.object({ k: z.literal('c'), t: str(120), at: epochMs, cu: z.boolean() }).strict();
 
-export const RecordSchema = z.discriminatedUnion('k', [StreamRec, WorkoutMarkRec, DayRec, SampleRec, WorkoutRec, CorrelationRec, EcgRec, HeartbeatRec, ActivityRec, StatRec, ProfileRec, DeleteRec, StatusRec]);
+export const RecordSchema = z.discriminatedUnion('k', [StreamRec, WorkoutMarkRec, DayRec, WorkoutRec, DeleteRec, StatusRec]);
 
 /** Batch type used by `status` batches. */
 export const STATUS_TYPE = '_status';
@@ -91,6 +85,14 @@ export const WSTREAM_TYPE = '_wstream';
 export const DAILY_TYPE = '_daily';
 export const WORKOUT_TYPE = 'HKWorkoutTypeIdentifier';
 export type BatchRecord = z.infer<typeof RecordSchema>;
+
+/** Record kinds each batch type may carry: nothing else is stored. */
+const KINDS_BY_TYPE: Record<string, ReadonlySet<string>> = {
+  [WORKOUT_TYPE]: new Set(['w', 'd']),
+  [DAILY_TYPE]: new Set(['day']),
+  [WSTREAM_TYPE]: new Set(['ws', 'wd']),
+  [STATUS_TYPE]: new Set(['c']),
+};
 
 /** Normalized row written to Parquet (one table shape for every type). */
 export interface Row {
@@ -191,9 +193,7 @@ export function parseBatch(gz: Buffer): ParsedBatch {
   for (let i = 1; i < lines.length; i++) {
     const rec = parseLine(lines[i]!, i, RecordSchema) as Record<string, unknown> & BatchRecord;
     const base = { seq: header.seq, batch: header.batchId, rid: header.reconcileId ?? null };
-    if (isStatus !== (rec.k === 'c')) throw new BatchError(`line ${i}: record not allowed in this batch`);
-    if (isStream !== (rec.k === 'ws' || rec.k === 'wd')) throw new BatchError(`line ${i}: record not allowed in this batch`);
-    if (rec.k === 'day' && header.type !== DAILY_TYPE) throw new BatchError(`line ${i}: day records belong in _daily batches`);
+    if (!KINDS_BY_TYPE[header.type]?.has(rec.k)) throw new BatchError(`line ${i}: record kind ${rec.k} is not allowed in a ${header.type} batch`);
     switch (rec.k) {
       case 'ws': {
         const cols: StreamChunk['cols'] = {};
@@ -223,19 +223,6 @@ export function parseBatch(gz: Buffer): ParsedBatch {
         continue;
       case 'd':
         tombstones.push(rec.id);
-        continue;
-      case 'p':
-        push('_profile', { ...base, k: 'p', id: null, s: header.createdAt, e: header.createdAt, v: null, c: null, u: null, agg: null, src: null, bid: null, dev: null, tz: null, extra: extraOf(rec) });
-        continue;
-      case 'a': {
-        const [y, m, d] = rec.day.split('-').map(Number) as [number, number, number];
-        const s = Date.UTC(y, m - 1, d);
-        push(monthKey(s), { ...base, k: 'a', id: rec.day, s, e: s + 86_400_000, v: null, c: null, u: null, agg: null, src: null, bid: null, dev: null, tz: null, extra: extraOf(rec) });
-        continue;
-      }
-      case 'h':
-        if (rec.e <= rec.s) throw new BatchError(`line ${i}: stat bucket end before start`);
-        push(`_stats/${new Date(rec.s).getUTCFullYear()}`, { ...base, k: 'h', id: null, s: rec.s, e: rec.e, v: rec.v, c: null, u: rec.u, agg: rec.agg, src: null, bid: null, dev: null, tz: null, extra: null });
         continue;
       default: {
         if (rec.e < rec.s) throw new BatchError(`line ${i}: end before start`);

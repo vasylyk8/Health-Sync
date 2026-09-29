@@ -32,7 +32,7 @@ export async function finishReconcile(deps: Deps, uid: string, type: string, rec
     const out = join(dir, 'tomb.parquet');
     await c.run(`COPY (
         SELECT split_part(id, '#', 1) AS id FROM read_parquet([${local.map(lit).join(',')}], union_by_name=true)
-        WHERE k NOT IN ('h', 'p') AND id IS NOT NULL
+        WHERE id IS NOT NULL
         GROUP BY 1
         HAVING max(seq) < ${startSeq} AND count(*) FILTER (WHERE rid = ${lit(reconcileId)}) = 0
       ) TO ${lit(out)} (FORMAT parquet)`);
@@ -64,11 +64,10 @@ export async function compactType(deps: Deps, uid: string, type: string): Promis
   const tomb = man.files._tombstones ?? [];
   let compacted = 0;
   for (const [partition, files] of Object.entries(man.files)) {
-    if (partition.startsWith('_') && !partition.startsWith('_stats/')) continue;
+    if (partition.startsWith('_')) continue;
     if (files.length < 2) continue;
-    const isStats = partition.startsWith('_stats/');
     await withDuck(async (c, dir) => {
-      const local = await Promise.all([...files, ...(isStats ? [] : tomb)].map(async (f, i) => {
+      const local = await Promise.all([...files, ...tomb].map(async (f, i) => {
         const p = join(dir, `f${i}.parquet`);
         await deps.data.download(f.path, p);
         return p;
@@ -76,11 +75,10 @@ export async function compactType(deps: Deps, uid: string, type: string): Promis
       const dataFiles = local.slice(0, files.length).map(lit).join(',');
       const tombFiles = local.slice(files.length).map(lit).join(',');
       const out = join(dir, 'merged.parquet');
-      const dedupe = isStats ? 'PARTITION BY s, agg' : 'PARTITION BY id';
-      const dropDeleted = !isStats && tombFiles ? `AND split_part(id, '#', 1) NOT IN (SELECT id FROM read_parquet([${tombFiles}]))` : '';
+      const dropDeleted = tombFiles ? `AND split_part(id, '#', 1) NOT IN (SELECT id FROM read_parquet([${tombFiles}]))` : '';
       await c.run(`COPY (
           SELECT * FROM read_parquet([${dataFiles}], union_by_name=true) WHERE true ${dropDeleted}
-          QUALIFY row_number() OVER (${dedupe} ORDER BY seq DESC, batch DESC) = 1
+          QUALIFY row_number() OVER (PARTITION BY id ORDER BY seq DESC, batch DESC) = 1
           ORDER BY s
         ) TO ${lit(out)} (FORMAT parquet, COMPRESSION zstd)`);
       const path = dataPath(uid, type, partition, `compact-${Date.now()}`);

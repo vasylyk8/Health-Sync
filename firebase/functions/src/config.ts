@@ -47,6 +47,8 @@ export const TYPES_BY_ID = new Map(COVERAGE.types.map((t) => [t.id, t]));
 
 /** Friendly name for the AI: HKQuantityTypeIdentifierHeartRate -> HeartRate. */
 export function shortName(id: string): string {
+  if (id === 'HKWorkoutTypeIdentifier') return 'Workouts';
+  if (id === '_daily') return 'DailyContext';
   return id.replace(/^HK(QuantityTypeIdentifier|CategoryTypeIdentifier|DataTypeIdentifier|CorrelationTypeIdentifier|ScoredAssessmentTypeIdentifier)/, '').replace(/^HK/, '');
 }
 

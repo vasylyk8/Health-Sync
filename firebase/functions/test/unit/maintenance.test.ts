@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { compactType, finishReconcile } from '../../src/jobs/maintenance.js';
-import { summarize } from '../../src/query/tools.js';
+import { getWorkouts } from '../../src/query/workouts.js';
 import { deps, makeEnv, upload } from '../helpers/memory.js';
 
-const HR = 'HKQuantityTypeIdentifierHeartRate';
+const HR = 'HKWorkoutTypeIdentifier';
 const t = (h: number) => Date.UTC(2024, 5, 1, h);
-const hr = (id: string, h: number, v = 60) => ({ k: 's', id, s: t(h), e: t(h), v, u: 'count/min' });
+const hr = (id: string, h: number, v = 60) => ({ k: 'w', id, s: t(h), e: t(h) + 60_000, act: 37, actName: 'Running', en: v });
 const count = async (env: ReturnType<typeof makeEnv>) =>
-  ((await summarize(deps(env), { type: 'HeartRate', start_date: '2024-06-01', end_date: '2024-06-01', period: 'none', stat: 'count' })).rows as { value: number }[])[0]?.value ?? 0;
+  (await getWorkouts(deps(env), { start_date: '2024-06-01', end_date: '2024-06-01' })).count as number;
 
 describe('finishReconcile', () => {
   it('tombstones records deleted while offline, but keeps records added during the pass', async () => {

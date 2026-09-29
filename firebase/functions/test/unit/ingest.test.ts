@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { ingestObject } from '../../src/ingest/ingest.js';
 import { makeBatch, makeEnv, upload } from '../helpers/memory.js';
 
-const HR = 'HKQuantityTypeIdentifierHeartRate';
+const HR = 'HKWorkoutTypeIdentifier';
 const S = Date.UTC(2024, 5, 1, 8);
-const hr = (id: string, s: number, v = 60) => ({ k: 's', id, s, e: s, v, u: 'count/min', src: 'Watch' });
+const hr = (id: string, s: number, v = 60) => ({ k: 'w', id, s, e: s + 60_000, act: 37, actName: 'Running', dur: 60, en: v, src: 'Watch' });
 
 describe('ingestObject', () => {
   it('publishes parquet partitions and coverage', async () => {
@@ -58,7 +58,7 @@ describe('ingestObject', () => {
 
   it('rejects malformed batches without touching the manifest', async () => {
     const env = makeEnv();
-    const { result, batchId } = await upload(env, { type: HR }, [{ k: 's', id: 'a', s: 'yesterday' }]);
+    const { result, batchId } = await upload(env, { type: HR }, [{ k: 'w', id: 'a', s: 'yesterday' }]);
     expect(result).toBe('rejected');
     expect(env.meta.batches.get(`${env.uid}/${batchId}`)?.detail).toMatch(/line 1/);
     expect(await env.meta.getManifest(env.uid, HR)).toBeNull();
@@ -91,12 +91,12 @@ describe('checksums', () => {
 });
 
 describe('status batches (many types, nothing new)', () => {
-  const STEPS = 'HKQuantityTypeIdentifierStepCount';
+  const STEPS = '_daily';
   const st = (t: string, at: number, cu = true) => ({ k: 'c', t, at, cu });
 
   it('marks each listed type checked and fully synced, without data files', async () => {
     const env = makeEnv();
-    const { result } = await upload(env, { type: '_status', mode: 'status' }, [st(HR, env.now - 5), st(STEPS, env.now - 5), st('HKFutureType', env.now)]);
+    const { result } = await upload(env, { type: '_status', mode: 'status' }, [st(HR, env.now - 5), st(STEPS, env.now - 5), st('HKFutureType', env.now), st('HKQuantityTypeIdentifierHeartRate', env.now)]);
     expect(result).toBe('published');
     for (const t of [HR, STEPS]) {
       const man = (await env.meta.getManifest(env.uid, t))!;
@@ -106,6 +106,7 @@ describe('status batches (many types, nothing new)', () => {
       expect(man.files).toEqual({});
     }
     expect(await env.meta.getManifest(env.uid, 'HKFutureType')).toBeNull();
+    expect(await env.meta.getManifest(env.uid, 'HKQuantityTypeIdentifierHeartRate')).toBeNull(); // no longer synced
     expect(await env.meta.getManifest(env.uid, '_status')).toBeNull();
   });
 

@@ -1,6 +1,6 @@
 import type { DuckDBConnection } from '@duckdb/node-api';
 import { join } from 'node:path';
-import { COVERAGE, LIMITS, resolveType, shortName, type CoverageEntry } from '../config.js';
+import { LIMITS, shortName } from '../config.js';
 import { covers, type BlobStore, type MetaStore, type TypeManifest } from '../store/types.js';
 import { lit } from './duck.js';
 
@@ -40,28 +40,6 @@ export function parseDate(value: string, field: string): string {
     throw new ToolError('bad_request', `${field} must be a date like 2024-03-31`);
   }
   return value;
-}
-
-/** Everyday names an assistant is likely to use, mapped to the real type names. */
-const ALIASES: Record<string, string> = {
-  steps: 'StepCount', stepcount: 'StepCount', heartrate: 'HeartRate', pulse: 'HeartRate', restinghr: 'RestingHeartRate',
-  hrv: 'HeartRateVariabilitySDNN', heartratevariability: 'HeartRateVariabilitySDNN', sleep: 'SleepAnalysis',
-  weight: 'BodyMass', bodyweight: 'BodyMass', calories: 'ActiveEnergyBurned', activeenergy: 'ActiveEnergyBurned',
-  activecalories: 'ActiveEnergyBurned', distance: 'DistanceWalkingRunning', exercise: 'AppleExerciseTime',
-  exerciseminutes: 'AppleExerciseTime', vo2: 'VO2Max', vo2max: 'VO2Max', bloodoxygen: 'OxygenSaturation', spo2: 'OxygenSaturation',
-};
-
-const squash = (name: string) => name.toLowerCase().replace(/[\s_-]+/g, '');
-
-export function resolveKnownType(name: string): CoverageEntry {
-  const found = resolveType(name) ?? (ALIASES[squash(name)] ? resolveType(ALIASES[squash(name)]!) : undefined);
-  if (found) return found;
-  const q = squash(name);
-  const similar = q.length >= 3
-    ? COVERAGE.types.map((t) => shortName(t.id)).filter((n) => squash(n).includes(q) || q.includes(squash(n))).slice(0, 5)
-    : [];
-  const hint = similar.length ? ` Did you mean ${similar.join(', ')}?` : '';
-  throw new ToolError('not_found', `Unknown data type "${name}".${hint} Call list_available_data to see valid names.`);
 }
 
 export interface CoverageInfo {
@@ -113,8 +91,8 @@ export function yearsBetween(startMs: number, endMs: number): string[] {
 }
 
 export interface LoadOptions {
-  /** 'raw' = sample/workout/... records, 'stats' = merged hourly buckets, 'profile' = characteristics. */
-  what: 'raw' | 'stats' | 'profile';
+  /** Kept for readability at call sites: only raw records (workouts, daily rows) exist. */
+  what?: 'raw';
   /** Shared byte budget across all loads of one tool call. */
   budget: { bytes: number };
 }
@@ -123,10 +101,8 @@ const EMPTY_ROWS =
   'SELECT NULL::VARCHAR k, NULL::VARCHAR id, NULL::BIGINT s, NULL::BIGINT e, NULL::DOUBLE v, NULL::INTEGER c, NULL::VARCHAR u, NULL::VARCHAR agg, NULL::VARCHAR src, NULL::VARCHAR bid, NULL::VARCHAR dev, NULL::VARCHAR tz, NULL::VARCHAR extra, NULL::BIGINT seq, NULL::VARCHAR batch, NULL::VARCHAR rid WHERE false';
 
 /**
- * Downloads only the partitions of one type that overlap the range and creates table `<alias>`:
- *   raw:     deduplicated records minus deletions (latest upload of each id wins)
- *   stats:   merged hourly buckets (latest upload of each bucket wins)
- *   profile: characteristics rows
+ * Downloads only the monthly partitions of one type that overlap the range and creates table
+ * `<alias>` of deduplicated records minus deletions (the latest upload of each id wins).
  * Returns the manifest used, so callers can report coverage.
  */
 export async function loadType(
@@ -140,23 +116,13 @@ export async function loadType(
 ): Promise<TypeManifest | null> {
   const man = await deps.meta.getManifest(deps.uid, type);
   const all = man?.files ?? {};
-  let keys: string[];
-  if (opts.what === 'profile') keys = ['_profile'];
-  else if (opts.what === 'stats') {
-    const years = range === 'all' ? null : new Set(yearsBetween(range[0], range[1]).map((y) => `_stats/${y}`));
-    keys = Object.keys(all).filter((k) => k.startsWith('_stats/') && (!years || years.has(k)));
-  } else {
-    const months = range === 'all' ? null : new Set(monthsBetween(range[0], range[1]));
-    keys = Object.keys(all).filter((k) => !k.startsWith('_') && (!months || months.has(k)));
-  }
+  const months = range === 'all' ? null : new Set(monthsBetween(range[0], range[1]));
+  const keys = Object.keys(all).filter((k) => !k.startsWith('_') && (!months || months.has(k)));
   const files = keys.flatMap((k) => all[k] ?? []);
-  const tomb = opts.what === 'raw' ? (all._tombstones ?? []) : [];
+  const tomb = all._tombstones ?? [];
   opts.budget.bytes += [...files, ...tomb].reduce((n, f) => n + f.bytes, 0);
   if (opts.budget.bytes > LIMITS.maxScanBytes) {
-    throw new ToolError(
-      'too_large',
-      'That request needs too much data at once. Use a shorter date range or a coarser period, or use summarize (which can use hourly totals) instead of raw samples.',
-    );
+    throw new ToolError('too_large', 'That request needs too much data at once. Use a shorter date range.');
   }
   const local = await Promise.all(
     [...files, ...tomb].map(async (f, i) => {
@@ -169,18 +135,10 @@ export async function loadType(
   const tombFiles = local.slice(files.length);
   const list = (ps: string[]) => `[${ps.map(lit).join(',')}]`;
   const src = dataFiles.length ? `SELECT * FROM read_parquet(${list(dataFiles)}, union_by_name=true)` : EMPTY_ROWS;
-  if (opts.what === 'raw') {
-    const tombSql = tombFiles.length ? `SELECT id FROM read_parquet(${list(tombFiles)})` : 'SELECT NULL::VARCHAR id WHERE false';
-    await c.run(`CREATE OR REPLACE TEMP TABLE ${alias} AS
-      SELECT * FROM (${src}) r WHERE k NOT IN ('h', 'p') AND split_part(id, '#', 1) NOT IN (${tombSql})
-      QUALIFY row_number() OVER (PARTITION BY id ORDER BY seq DESC, batch DESC) = 1`);
-  } else if (opts.what === 'stats') {
-    await c.run(`CREATE OR REPLACE TEMP TABLE ${alias} AS
-      SELECT * FROM (${src}) r WHERE k = 'h'
-      QUALIFY row_number() OVER (PARTITION BY s, agg ORDER BY seq DESC, batch DESC) = 1`);
-  } else {
-    await c.run(`CREATE OR REPLACE TEMP TABLE ${alias} AS SELECT * FROM (${src}) r WHERE k = 'p' ORDER BY seq DESC, s DESC`);
-  }
+  const tombSql = tombFiles.length ? `SELECT id FROM read_parquet(${list(tombFiles)})` : 'SELECT NULL::VARCHAR id WHERE false';
+  await c.run(`CREATE OR REPLACE TEMP TABLE ${alias} AS
+    SELECT * FROM (${src}) r WHERE id NOT IN (${tombSql})
+    QUALIFY row_number() OVER (PARTITION BY id ORDER BY seq DESC, batch DESC) = 1`);
   return man;
 }
 
