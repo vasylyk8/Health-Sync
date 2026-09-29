@@ -226,7 +226,6 @@ final class QAUITests: XCTestCase {
         let result = XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: enabled, object: connect)], timeout: 20)
         print("QA-FLOW after delete: connectHealth enabled within 20 s = \(result == .completed)")
         shot("qa-flow-after-delete-20s")
-        print("QA-TRACE \(app.staticTexts["debugTrace"].label)")
         connect.tap()
         let home = app.buttons["provider.claude"].waitForExistence(timeout: 10)
         print("QA-FLOW after delete: reached home without relaunch = \(home)")

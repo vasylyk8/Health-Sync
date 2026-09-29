@@ -10,8 +10,7 @@ final class AppModel: ObservableObject {
     @Published var status: ServerStatus = .empty
     @Published var progress = SyncProgress(typesDone: 0, typesTotal: 0, isSyncing: false)
     @Published var errorMessage: String?
-    @Published var busy = false { didSet { trace.append("busy=\(busy)") } }
-    @Published var trace: [String] = []  // TEMP DEBUG
+    @Published var busy = false
     /// Shown under the sync status when the last sync attempt failed; cleared by the next success.
     @Published var syncIssue: String?
 
@@ -43,8 +42,6 @@ final class AppModel: ObservableObject {
     // MARK: Onboarding
 
     func connectHealth() async {
-        trace.append("connect:start")
-        defer { trace.append("connect:end") }
         busy = true
         defer { busy = false }
         do {
@@ -162,8 +159,6 @@ final class AppModel: ObservableObject {
     }
 
     func deleteAllData() async {
-        trace.append("delete:start")
-        defer { trace.append("delete:end") }
         busy = true
         defer { busy = false }
         do {
