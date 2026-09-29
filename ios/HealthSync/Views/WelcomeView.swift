@@ -4,6 +4,16 @@ struct WelcomeView: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
+        // Scrolls (instead of clipping) at large Dynamic Type sizes or on small screens.
+        GeometryReader { geo in
+            ScrollView {
+                content.frame(minHeight: geo.size.height)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+    }
+
+    private var content: some View {
         VStack(spacing: 0) {
             Spacer()
             Image(systemName: "heart.text.square.fill")
