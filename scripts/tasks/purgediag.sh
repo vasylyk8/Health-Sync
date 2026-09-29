@@ -19,10 +19,19 @@ for doc in rows:
 if not rows: print(json.dumps(d)[:400])
 ' || true
 
-step "purge queue"
-gcloud tasks queues describe purgeusertask --location="$REGION" --format='yaml(state,rateLimits,retryConfig)' 2>&1 | head -20 || true
-gcloud tasks list --queue=purgeusertask --location="$REGION" --format='table(name.basename(),scheduleTime,dispatchCount,responseCount,lastAttempt.responseStatus.code)' 2>&1 | head -20 || true
+step "task queues in this region"
+gcloud tasks queues list --location="$REGION" --format='table(name.basename(),state)' 2>&1 | head -20 || true
+for Q in $(gcloud tasks queues list --location="$REGION" --format='value(name.basename())' 2>/dev/null | grep -i purge); do
+  step "queue $Q"
+  gcloud tasks list --queue="$Q" --location="$REGION" --format='table(name.basename(),scheduleTime,dispatchCount,responseCount,lastAttempt.responseStatus.message)' 2>&1 | head -20 || true
+done
 
-step "purge task logs (last 6h)"
-gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"purgeusertask\"" \
-  --freshness=6h --limit=40 --format='value(timestamp,severity,textPayload,jsonPayload.message,jsonPayload.code,jsonPayload.err)' 2>&1 | head -60 || true
+step "deleteAllData / purge logs (last 24h, warnings and errors)"
+for SVC in deletealldata purgeusertask; do
+  echo "--- $SVC"
+  gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$SVC\" AND severity>=WARNING" \
+    --freshness=24h --limit=15 --format='value(timestamp,severity,textPayload,jsonPayload.message,jsonPayload.code,jsonPayload.err)' 2>&1 | head -40 || true
+done
+step "deleteAllData calls (last 24h)"
+gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"deletealldata\" AND textPayload:\"deletion\"" \
+  --freshness=24h --limit=10 --format='value(timestamp,textPayload,jsonPayload.message)' 2>&1 | head -20 || true
