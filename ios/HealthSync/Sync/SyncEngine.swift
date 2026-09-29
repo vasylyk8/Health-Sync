@@ -7,49 +7,41 @@ protocol Uploader: Sendable {
 }
 
 struct SyncProgress: Equatable, Sendable {
-    /// Types whose full history has been sent.
-    var typesDone: Int
-    var typesTotal: Int
+    /// Workouts whose raw data is on the server, and workouts found on this iPhone.
+    var detailsDone: Int
+    var detailsTotal: Int
     var isSyncing: Bool
-    /// Work units across all phases (last 30 days, hourly totals, full history), so the bar moves
-    /// from the start instead of only in the final phase.
+    /// Work units across all phases, so the bar moves from the start.
     var stepsDone = 0
     var stepsTotal = 0
-    /// 1 = last 30 days, 2 = long-term totals, 3 = full history (0 = not syncing).
+    /// 1 = recent workouts, 2 = daily context, 3 = workout history, 4 = workout details (0 = not syncing).
     var phase = 0
-    /// Every type's last 30 days are on the server: the AI is already useful.
+    /// Recent workouts and the daily context are on the server: the AI is already useful.
     var recentReady = false
     var stepTitle: String {
         switch phase {
-        case 1: return "Step 1 of 3: last 30 days"
-        case 2: return "Step 2 of 3: long-term totals"
-        case 3: return "Step 3 of 3: full history"
-        default: return "Syncing your history"
+        case 1: return "Step 1 of 4: recent workouts"
+        case 2: return "Step 2 of 4: daily context"
+        case 3: return "Step 3 of 4: workout history"
+        case 4: return "Step 4 of 4: workout details (\(detailsDone) of \(detailsTotal))"
+        default: return "Syncing your workouts"
         }
     }
-    var fraction: Double {
-        if stepsTotal > 0 { return min(1, Double(stepsDone) / Double(stepsTotal)) }
-        return typesTotal == 0 ? 0 : Double(typesDone) / Double(typesTotal)
-    }
-    var historyComplete: Bool { typesTotal > 0 && typesDone >= typesTotal }
+    var fraction: Double { stepsTotal > 0 ? min(1, Double(stepsDone) / Double(stepsTotal)) : 0 }
+    var historyComplete: Bool { stepsTotal > 0 && stepsDone >= stepsTotal }
 }
 
 /// Orchestrates reading Apple Health and uploading batches. Order is chosen so the AI becomes
-/// useful fast: last 30 days → all-history hourly totals → full raw history (newest data first
-/// was already sent by the recent pass).
+/// useful fast: recent workouts → daily context → all workout summaries → raw detail of every
+/// workout (newest first).
 actor SyncEngine {
     struct Config: Sendable {
-        /// Objects per anchored page for plain samples. Pages are split into ≤ 5 MB uploads anyway;
-        /// small pages only add round trips.
-        var pageLimit = 20_000
-        /// Cap for types whose objects carry large nested data (ECG voltages, heartbeat series, workouts).
-        var heavyPageLimit = 2_000
+        /// Workouts per anchored page. Pages are also split into ≤ 5 MB uploads.
+        var workoutPageLimit = 200
         var recentDays = 30
-        var statsIncrementalDays = 3
-        var statsFullEvery: TimeInterval = 7 * 86_400
+        var dailyIncrementalDays = 3
+        var dailyFullEvery: TimeInterval = 7 * 86_400
         var reconcileAfter: TimeInterval = 30 * 86_400
-        /// Data types synced at the same time (uploads are latency-bound, not bandwidth-bound).
-        var parallelTypes = 4
         var device = "iPhone"
         var appVersion = "1.0"
     }
@@ -57,7 +49,7 @@ actor SyncEngine {
     private let source: HealthSource
     private let uploader: Uploader
     private let outbox: Outbox
-    private let types: [SyncType]
+    private let scope: SyncScope
     private let config: Config
     private let now: @Sendable () -> Date
     private let timeZone: @Sendable () -> String
@@ -66,39 +58,22 @@ actor SyncEngine {
     private var progressHandler: (@Sendable (SyncProgress) -> Void)?
     private var phase = 0
     private var lastReported: [Int]?
-    /// Types checked with nothing new, reported together in one status batch.
+    private var deadline: Date?
+    /// Set when the workout type was checked with nothing new; reported in one status batch.
     private var statusPending: [String: Date] = [:]
-    private var typeErrors: [Error] = []
+    private var stepErrors: [Error] = []
     private var lastUploadMs: Int?
-    /// Set when an upload fails (offline, server down): every type would fail the same way, so
-    /// the whole run stops instead of isolating the error to one type.
+    /// Set when an upload fails (offline, server down): the whole run stops instead of trying the rest.
     private var uploadFailed = false
+    private var lastEmptyCheck: [String: Date] = [:]
 
-    /// Most-asked types first, so answers are useful while the rest syncs.
-    static let priority = [
-        "HKQuantityTypeIdentifierStepCount", "HKCategoryTypeIdentifierSleepAnalysis", "HKQuantityTypeIdentifierHeartRate",
-        "HKWorkoutTypeIdentifier", "HKQuantityTypeIdentifierActiveEnergyBurned", "HKQuantityTypeIdentifierRestingHeartRate",
-        "HKQuantityTypeIdentifierHeartRateVariabilitySDNN", "HKQuantityTypeIdentifierDistanceWalkingRunning",
-        "HKQuantityTypeIdentifierBodyMass", "HKQuantityTypeIdentifierVO2Max", "HKQuantityTypeIdentifierAppleExerciseTime",
-        "HKQuantityTypeIdentifierBasalEnergyBurned", "HKQuantityTypeIdentifierWalkingHeartRateAverage",
-        "HKQuantityTypeIdentifierOxygenSaturation", "HKQuantityTypeIdentifierRespiratoryRate", "HKQuantityTypeIdentifierFlightsClimbed",
-    ]
-
-    /// Stable sort: priority types first (in priority order), everything else keeps its order.
-    static func prioritized(_ types: [SyncType]) -> [SyncType] {
-        let rank = Dictionary(uniqueKeysWithValues: priority.enumerated().map { ($1, $0) })
-        return types.enumerated()
-            .sorted { (rank[$0.element.id] ?? priority.count, $0.offset) < (rank[$1.element.id] ?? priority.count, $1.offset) }
-            .map(\.element)
-    }
-
-    init(source: HealthSource, uploader: Uploader, outbox: Outbox, types: [SyncType], config: Config = Config(),
+    init(source: HealthSource, uploader: Uploader, outbox: Outbox, scope: SyncScope, config: Config = Config(),
          now: @escaping @Sendable () -> Date = Date.init, timeZone: @escaping @Sendable () -> String = { TimeZone.current.identifier },
          telemetry: Telemetry = NoTelemetry()) {
         self.source = source
         self.uploader = uploader
         self.outbox = outbox
-        self.types = SyncEngine.prioritized(types)
+        self.scope = scope
         self.config = config
         self.now = now
         self.timeZone = timeZone
@@ -111,23 +86,22 @@ actor SyncEngine {
         report(syncing: running)
     }
 
+    private var workoutId: String { scope.workout?.id ?? HealthTypes.workoutId }
+
     var progress: SyncProgress {
         let s = outbox.state
-        let anchored = types.filter(\.isAnchored)
-        let quantity = types.filter { if case .quantity = $0.kind { return true } else { return false } }
-        let caughtUp = anchored.filter { s.caughtUp.contains($0.id) }.count
-        // The full-history phase takes longest, so it counts double.
-        let done = anchored.filter { s.recentDone.contains($0.id) }.count + quantity.filter { s.statsFullAt[$0.id] != nil }.count + 2 * caughtUp
-        return SyncProgress(typesDone: caughtUp, typesTotal: anchored.count, isSyncing: running,
-                            stepsDone: done, stepsTotal: 3 * anchored.count + quantity.count, phase: running ? phase : 0,
-                            recentReady: !anchored.isEmpty && anchored.allSatisfy { s.recentDone.contains($0.id) })
+        let detailTotal = max(s.workoutTotal, s.detailsDone.count)
+        let done = (s.recentDone.contains(workoutId) ? 1 : 0) + (s.dailyFullAt != nil ? 1 : 0) + (s.caughtUp.contains(workoutId) ? 1 : 0) + s.detailsDone.count
+        return SyncProgress(detailsDone: s.detailsDone.count, detailsTotal: detailTotal, isSyncing: running,
+                            stepsDone: done, stepsTotal: 3 + detailTotal, phase: running ? phase : 0,
+                            recentReady: s.recentDone.contains(workoutId) && s.dailyFullAt != nil)
     }
 
     /// Notifies the UI only when something visible changes (whole percent, step, flags).
     private func report(syncing: Bool) {
         var p = progress
         p.isSyncing = syncing
-        let key = [Int(p.fraction * 100), p.phase, p.isSyncing ? 1 : 0, p.recentReady ? 1 : 0, p.historyComplete ? 1 : 0]
+        let key = [Int(p.fraction * 100), p.phase, p.isSyncing ? 1 : 0, p.recentReady ? 1 : 0, p.historyComplete ? 1 : 0, p.detailsDone]
         guard key != lastReported else { return }
         lastReported = key
         progressHandler?(p)
@@ -135,213 +109,166 @@ actor SyncEngine {
 
     enum Outcome: Equatable, Sendable { case finished, outOfTime, alreadyRunning }
 
+    private struct OutOfTime: Error {}
+
+    private func checkTime() throws {
+        if let deadline, now() >= deadline { throw OutOfTime() }
+    }
+
     /// Full sync. `deadline` bounds background runs; everything is resumable.
     @discardableResult
     func run(deadline: Date? = nil) async throws -> Outcome {
         guard !running else { return .alreadyRunning }
         running = true
+        self.deadline = deadline
         report(syncing: true)
         defer {
             running = false
+            self.deadline = nil
             report(syncing: false)
         }
-        let outOfTime: @Sendable () -> Bool = { [now] in deadline.map { now() >= $0 } ?? false }
 
         try await flush()
         try startReconcileIfNeeded()
-        try await syncProfile()
 
-        typeErrors = []
+        stepErrors = []
         uploadFailed = false
         do {
-            let anchored = types.filter(\.isAnchored)
+            var index: [WorkoutRef] = []
+            try await step { index = try await self.refreshWorkoutIndex() }
             phase = 1
-            try await eachType(anchored.filter { !outbox.state.recentDone.contains($0.id) }) { engine, t in
-                if outOfTime() { throw OutOfTime() }
-                try await engine.recent(t)
-            }
+            try await step { try await self.recentWorkouts() }
             phase = 2
-            try await eachType(types.filter { if case .quantity = $0.kind { return true } else { return false } }) { engine, t in
-                if outOfTime() { throw OutOfTime() }
-                try await engine.stats(t)
-            }
-            for t in types where t.kind == .activitySummary {
-                try await activity(t)
-            }
-            for t in types where t.kind == .correlation {
-                try await correlation(t)
-            }
+            try await step { try await self.dailyContext() }
             phase = 3
-            try await eachType(anchored) { engine, t in
+            try await step {
+                guard let wt = self.scope.workout else { return }
                 while true {
-                    if outOfTime() { throw OutOfTime() }
-                    if try await engine.anchoredPage(t) { break }
-                    await engine.report(syncing: true)
+                    try self.checkTime()
+                    if try await self.anchoredPage(wt) { break }
+                    self.report(syncing: true)
                 }
             }
+            phase = 4
+            try await step { try await self.uploadDetails(index) }
             try await sendStatus()
         } catch is OutOfTime {
             try? await sendStatus()
             return .outOfTime
         }
-        // A type that failed (e.g. one HealthKit query error) didn't stop the others; report the
-        // run as failed so it is retried, but everything else is already synced.
-        if let first = typeErrors.first { throw first }
+        // A step that failed (e.g. one HealthKit query error) didn't stop the others; report the run
+        // as failed so it is retried, but everything else is already synced.
+        if let first = stepErrors.first { throw first }
         try outbox.update { $0.lastSyncAt = now() }
         return .finished
     }
 
-    private struct OutOfTime: Error {}
-
-    /// Runs `body` for each type, `config.parallelTypes` at a time. Each type's uploads stay in
-    /// order (one task per type); different types are independent on the server.
-    private func eachType(_ list: [SyncType], _ body: @escaping @Sendable (SyncEngine, SyncType) async throws -> Void) async throws {
-        var queue = list[...]
-        let parallel = max(1, config.parallelTypes)
-        // One type's failure is recorded and the others continue; running out of time or
-        // cancellation stops everything.
-        let isolated: @Sendable (SyncType) async throws -> Void = { t in
-            do {
-                try await body(self, t)
-            } catch let e where e is OutOfTime || e is CancellationError {
-                throw e
-            } catch {
-                if await self.uploadFailed { throw error }
-                await self.noteFailure(t, error)
-            }
-        }
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            for _ in 0..<parallel {
-                guard let t = queue.popFirst() else { break }
-                group.addTask { try await isolated(t) }
-            }
-            while try await group.next() != nil {
-                await self.report(syncing: true)
-                if let t = queue.popFirst() { group.addTask { try await isolated(t) } }
-            }
+    /// Runs one phase. A failure is recorded and the next phase still runs; running out of time,
+    /// cancellation and upload failures (which would fail the same way everywhere) stop everything.
+    private func step(_ body: () async throws -> Void) async throws {
+        do {
+            try await body()
+        } catch let e where e is OutOfTime || e is CancellationError {
+            throw e
+        } catch {
+            if uploadFailed { throw error }
+            stepErrors.append(error)
+            telemetry.nonFatal("sync.step", code: (error as NSError).code)
         }
     }
 
-    private func noteFailure(_ t: SyncType, _ error: Error) {
-        typeErrors.append(error)
-        telemetry.nonFatal("sync.type", code: (error as NSError).code)
-    }
-
-    /// Quick incremental sync of specific types (HealthKit background observers).
-    func runTypes(_ ids: Set<String>, deadline: Date) async throws {
-        // Only types whose history is already in: HealthKit calls every observer once at launch, and a
-        // type that is still syncing belongs to the main run (which orders and reports it). Taking the
-        // engine for one of those would keep the main run from starting.
-        let eligible = types.filter { ids.contains($0.id) && outbox.state.caughtUp.contains($0.id) }
-        guard !running, !eligible.isEmpty else { return }
+    /// Quick incremental sync after HealthKit reports a new workout (background delivery).
+    func runWorkoutChanges(deadline: Date) async throws {
+        // Only once the full history is in: HealthKit calls every observer once at launch, and the
+        // main run orders and reports that first sync. Taking the engine here would block it.
+        guard !running, let wt = scope.workout, outbox.state.caughtUp.contains(wt.id) else { return }
         running = true
-        defer { running = false }
+        self.deadline = deadline
+        defer {
+            running = false
+            self.deadline = nil
+        }
         try await flush()
-        for t in eligible {
+        do {
             while now() < deadline {
-                if try await anchoredPage(t) { break }
+                if try await anchoredPage(wt) { break }
             }
-            if case .quantity = t.kind, outbox.state.statsFullAt[t.id] != nil { try await stats(t) }
+            let index = try await refreshWorkoutIndex()
+            try await uploadDetails(index)
+            try checkTime()
+            try await dailyContext()
+        } catch is OutOfTime {
+            // Everything is resumable; the next run continues.
         }
         try await sendStatus()
     }
 
     // MARK: Steps
 
-    private func recent(_ t: SyncType) async throws {
+    private func refreshWorkoutIndex() async throws -> [WorkoutRef] {
+        let index = try await source.workoutIndex()
+        try outbox.update { $0.workoutTotal = index.count }
+        report(syncing: true)
+        return index
+    }
+
+    private func recentWorkouts() async throws {
+        guard let wt = scope.workout, !outbox.state.recentDone.contains(wt.id) else { return }
         let end = now()
         let start = end.addingTimeInterval(-Double(config.recentDays) * 86_400)
         let started = Date()
-        let records = try await source.samples(t, from: start, to: end)
+        let records = try await source.workouts(from: start, to: end)
         let readMs = Self.ms(since: started)
         if records.isEmpty {
-            // Nothing recent: skip the upload. The full-history pass reports this type (and its
-            // coverage) to the server anyway, so an empty batch here only costs a round trip.
-            try outbox.update { $0.recentDone.insert(t.id) }
+            // Nothing recent: skip the upload. The full-history pass reports the type anyway.
+            try outbox.update { $0.recentDone.insert(wt.id) }
             return
         }
-        let header = BatchHeader(type: t.id, mode: .recent, seq: try outbox.nextSeq(t.id), window: (start, end), checkedAt: end)
-        try await send(t.id, header: header, records: records, anchor: nil, completes: .recentDone, readMs: readMs)
+        let header = BatchHeader(type: wt.id, mode: .recent, seq: try outbox.nextSeq(wt.id), window: (start, end), checkedAt: end)
+        try await send(wt.id, header: header, records: records, anchor: nil, completes: .recentDone, readMs: readMs)
     }
 
-    private func stats(_ t: SyncType) async throws {
+    /// Daily context: the whole history the first time (and once a week, so older data added
+    /// later is included), otherwise just the last few days.
+    private func dailyContext() async throws {
+        guard !scope.dailyMetrics.isEmpty else { return }
         let end = now()
-        let full = outbox.state.statsFullAt[t.id].map { end.timeIntervalSince($0) > config.statsFullEvery } ?? true
+        let full = outbox.state.dailyFullAt.map { end.timeIntervalSince($0) > config.dailyFullEvery } ?? true
         var start: Date
         if full {
-            // Re-read every full recompute: older data added later (e.g. imported from another app)
-            // must be included in the merged totals.
-            if let e = try await source.earliestSampleDate(t), outbox.state.earliest[t.id] != e {
-                try outbox.update { $0.earliest[t.id] = e }
-            }
-            guard let earliest = outbox.state.earliest[t.id] else {
-                // No data at all for this type: nothing to summarize yet.
-                try outbox.update { $0.statsFullAt[t.id] = end }
-                return
-            }
-            start = Calendar(identifier: .gregorian).dateInterval(of: .hour, for: earliest)?.start ?? earliest
+            start = try await source.earliestDailyDate() ?? end.addingTimeInterval(-365 * 86_400)
         } else {
-            start = end.addingTimeInterval(-Double(config.statsIncrementalDays) * 86_400)
-            start = Calendar(identifier: .gregorian).dateInterval(of: .hour, for: start)?.start ?? start
+            start = end.addingTimeInterval(-Double(config.dailyIncrementalDays) * 86_400)
         }
+        let cal = Calendar.current
+        start = cal.startOfDay(for: start)
         // One year per batch set keeps memory and batch sizes bounded.
         var chunkStart = start
         while chunkStart < end {
-            let chunkEnd = min(Calendar(identifier: .gregorian).date(byAdding: .year, value: 1, to: chunkStart) ?? end, end)
+            try checkTime()
+            let chunkEnd = min(cal.date(byAdding: .year, value: 1, to: chunkStart) ?? end, end)
             let started = Date()
-            let records = try await source.hourlyStats(t, from: chunkStart, to: chunkEnd)
+            let records = try await source.dailyContext(from: chunkStart, to: chunkEnd)
             let readMs = Self.ms(since: started)
-            let header = BatchHeader(type: t.id, mode: .stats, seq: try outbox.nextSeq(t.id), window: (chunkStart, chunkEnd), checkedAt: end)
+            let header = BatchHeader(type: HealthTypes.dailyId, mode: .stats, seq: try outbox.nextSeq(HealthTypes.dailyId), window: (chunkStart, chunkEnd), checkedAt: end)
             let last = chunkEnd >= end
-            try await send(t.id, header: header, records: records, anchor: nil, completes: last && full ? .statsFull(end) : nil, readMs: readMs)
+            try await send(HealthTypes.dailyId, header: header, records: records, anchor: nil, completes: last && full ? .dailyFull(end) : nil, readMs: readMs)
             chunkStart = chunkEnd
         }
     }
 
-    private func activity(_ t: SyncType) async throws {
-        let end = now()
-        let initial = !outbox.state.activityInitialDone
-        let start = initial ? (end.addingTimeInterval(-15 * 365 * 86_400)) : end.addingTimeInterval(-7 * 86_400)
-        let records = try await source.activitySummaries(from: start, to: end)
-        let header = BatchHeader(type: t.id, mode: .recent, seq: try outbox.nextSeq(t.id), window: (start, end), checkedAt: end)
-        try await send(t.id, header: header, records: records, anchor: nil, completes: initial ? .activityInitial : nil)
-    }
-
-    private func correlation(_ t: SyncType) async throws {
-        let end = now()
-        let initial = !outbox.state.correlationInitialDone.contains(t.id)
-        let start = initial ? Date(timeIntervalSince1970: 0) : end.addingTimeInterval(-7 * 86_400)
-        let records = try await source.correlations(t, from: start, to: end)
-        let header = BatchHeader(type: t.id, mode: .recent, seq: try outbox.nextSeq(t.id), window: (start, end), checkedAt: end)
-        try await send(t.id, header: header, records: records, anchor: nil, completes: initial ? .correlationInitial : nil)
-    }
-
-    private func syncProfile() async throws {
-        guard let profile = source.profile() else { return }
-        // Sorted keys: dictionary order can differ between instances, which would change the hash
-        // and re-upload an unchanged profile.
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .sortedKeys
-        let data = try encoder.encode(profile)
-        let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        guard hash != outbox.state.profileHash else { return }
-        let header = BatchHeader(type: HealthTypes.profileId, mode: .profile, seq: try outbox.nextSeq(HealthTypes.profileId), checkedAt: now())
-        try await send(HealthTypes.profileId, header: header, records: [profile], anchor: nil, completes: .profile(hash))
-    }
-
-    /// One anchored page. Returns true when the type is caught up.
+    /// One anchored page of workout summaries. Returns true when caught up.
     private func anchoredPage(_ t: SyncType) async throws -> Bool {
         let reconcileId = outbox.state.reconcile[t.id]
         let anchor = outbox.state.anchors[t.id]
         let checked = now()
-        let limit = pageLimit(for: t)
+        let limit = config.workoutPageLimit
         let started = Date()
         let page = try await source.anchoredPage(t, anchor: anchor, limit: limit)
         let readMs = Self.ms(since: started)
         let caughtUp = page.objectCount < limit
         if page.objectCount == 0 && reconcileId == nil {
-            // Nothing new (or no data at all). Instead of one upload per type, it goes into a
-            // single status batch; already-synced types are re-reported at most once an hour.
+            // Nothing new: reported in a status batch, at most once an hour once caught up.
             if outbox.state.caughtUp.contains(t.id), let last = lastEmptyCheck[t.id], checked.timeIntervalSince(last) < 3600 { return true }
             lastEmptyCheck[t.id] = checked
             statusPending[t.id] = checked
@@ -355,11 +282,32 @@ actor SyncEngine {
         return caughtUp
     }
 
-    private func pageLimit(for t: SyncType) -> Int {
-        switch t.kind {
-        case .quantity, .category: return config.pageLimit
-        default: return min(config.pageLimit, config.heavyPageLimit)
+    /// Reads and uploads the raw data of every workout that has none on the server yet, newest first.
+    private func uploadDetails(_ index: [WorkoutRef]) async throws {
+        for ref in index where !outbox.state.detailsDone.contains(ref.id) {
+            try checkTime()
+            try await uploadDetail(ref)
+            report(syncing: true)
         }
+    }
+
+    private func uploadDetail(_ ref: WorkoutRef) async throws {
+        let started = Date()
+        let gen = now().msValue
+        guard let records = try await source.workoutDetail(id: ref.id, gen: gen) else {
+            // The workout no longer exists: nothing to send.
+            try outbox.update { $0.detailsDone.insert(ref.id) }
+            return
+        }
+        let readMs = Self.ms(since: started)
+        // Only the closing marker: this workout has no raw data (e.g. a manually logged one).
+        if records.count <= 1 {
+            try outbox.update { $0.detailsDone.insert(ref.id) }
+            return
+        }
+        let id = HealthTypes.streamId
+        let header = BatchHeader(type: id, mode: .workoutdata, seq: try outbox.nextSeq(id), checkedAt: now())
+        try await send(id, header: header, records: records, anchor: nil, completes: .detailDone(ref.id), readMs: readMs)
     }
 
     /// Sends every pending "checked, nothing new" type in one batch.
@@ -376,18 +324,14 @@ actor SyncEngine {
 
     private static func ms(since start: Date) -> Int { Int(Date().timeIntervalSince(start) * 1000) }
 
-    private var lastEmptyCheck: [String: Date] = [:]
-
     private func startReconcileIfNeeded() throws {
-        guard let last = outbox.state.lastSyncAt, now().timeIntervalSince(last) > config.reconcileAfter else { return }
-        // Deletions made while we were away may have expired from HealthKit: re-read everything
+        guard let last = outbox.state.lastSyncAt, now().timeIntervalSince(last) > config.reconcileAfter, let wt = scope.workout else { return }
+        // Deletions made while we were away may have expired from HealthKit: re-read every workout
         // and let the server remove what no longer exists.
         try outbox.update { s in
-            for t in types where t.isAnchored {
-                s.reconcile[t.id] = UUID().uuidString.lowercased()
-                s.anchors[t.id] = nil
-                s.caughtUp.remove(t.id)
-            }
+            s.reconcile[wt.id] = UUID().uuidString.lowercased()
+            s.anchors[wt.id] = nil
+            s.caughtUp.remove(wt.id)
         }
         telemetry.event("reconcile_started")
     }

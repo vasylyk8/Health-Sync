@@ -21,28 +21,54 @@ final class Outbox: @unchecked Sendable {
 
     enum Completion: Codable, Equatable {
         case recentDone
-        case statsFull(Date)
         case caughtUp
         /// A status batch confirmed these types are fully synced.
         case caughtUpMany([String])
         case reconcileDone
-        case activityInitial
-        case correlationInitial
-        case profile(String)
+        /// A full recompute of the daily context reached `Date`.
+        case dailyFull(Date)
+        /// The raw data of this workout (its HealthKit uuid) is on the server.
+        case detailDone(String)
     }
 
     struct State: Codable, Equatable {
+        /// 1 = the app that synced every Health type; 2 = workouts and daily context only.
+        static let currentSchema = 2
+
+        var schemaVersion = State.currentSchema
         var anchors: [String: Data] = [:]
         var seq: [String: Int64] = [:]
         var recentDone: Set<String> = []
         var caughtUp: Set<String> = []
-        var statsFullAt: [String: Date] = [:]
-        var earliest: [String: Date] = [:]
         var reconcile: [String: String] = [:]
-        var activityInitialDone = false
-        var correlationInitialDone: Set<String> = []
-        var profileHash: String?
+        var dailyFullAt: Date?
+        /// Workouts whose raw data has been uploaded.
+        var detailsDone: Set<String> = []
+        /// Workouts found on this iPhone at the last check (for progress).
+        var workoutTotal = 0
         var lastSyncAt: Date?
+
+        init() {}
+
+        private enum CodingKeys: String, CodingKey {
+            case schemaVersion, anchors, seq, recentDone, caughtUp, reconcile, dailyFullAt, detailsDone, workoutTotal, lastSyncAt
+        }
+
+        /// Tolerant decoding: a state file written by an older app version (missing or extra keys)
+        /// still loads; a missing schemaVersion means version 1.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+            anchors = try c.decodeIfPresent([String: Data].self, forKey: .anchors) ?? [:]
+            seq = try c.decodeIfPresent([String: Int64].self, forKey: .seq) ?? [:]
+            recentDone = try c.decodeIfPresent(Set<String>.self, forKey: .recentDone) ?? []
+            caughtUp = try c.decodeIfPresent(Set<String>.self, forKey: .caughtUp) ?? []
+            reconcile = try c.decodeIfPresent([String: String].self, forKey: .reconcile) ?? [:]
+            dailyFullAt = try c.decodeIfPresent(Date.self, forKey: .dailyFullAt)
+            detailsDone = try c.decodeIfPresent(Set<String>.self, forKey: .detailsDone) ?? []
+            workoutTotal = try c.decodeIfPresent(Int.self, forKey: .workoutTotal) ?? 0
+            lastSyncAt = try c.decodeIfPresent(Date.self, forKey: .lastSyncAt)
+        }
     }
 
     let root: URL
@@ -54,10 +80,29 @@ final class Outbox: @unchecked Sendable {
 
     init(root: URL) {
         self.root = root
-        try? FileManager.default.createDirectory(at: root.appendingPathComponent("batches"), withIntermediateDirectories: true)
-        try? FileManager.default.createDirectory(at: root.appendingPathComponent("pending"), withIntermediateDirectories: true)
-        if let data = try? Data(contentsOf: root.appendingPathComponent("state.json")), let s = try? JSONDecoder().decode(State.self, from: data) {
-            state = s
+        let fm = FileManager.default
+        try? fm.createDirectory(at: root.appendingPathComponent("batches"), withIntermediateDirectories: true)
+        try? fm.createDirectory(at: root.appendingPathComponent("pending"), withIntermediateDirectories: true)
+        let stateURL = root.appendingPathComponent("state.json")
+        if let data = try? Data(contentsOf: stateURL), let old = try? JSONDecoder().decode(State.self, from: data) {
+            if old.schemaVersion < State.currentSchema {
+                // Upgrade from the app that synced every Health type: only workouts and daily context
+                // sync now, and every workout is re-read with its full detail. Sequence numbers are kept
+                // (the server keeps the highest one per record, so a reset would let old rows win);
+                // queued batches of the old format are dropped.
+                var fresh = State()
+                fresh.seq = old.seq
+                for dir in ["batches", "pending"] {
+                    let url = root.appendingPathComponent(dir)
+                    for f in (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? [] { try? fm.removeItem(at: f) }
+                }
+                if let encoded = try? JSONEncoder().encode(fresh) {
+                    try? encoded.write(to: stateURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                }
+                state = fresh
+            } else {
+                state = old
+            }
         } else {
             state = State()
         }
@@ -124,15 +169,13 @@ final class Outbox: @unchecked Sendable {
             if let anchor = entry.anchor { s.anchors[entry.typeId] = anchor }
             switch entry.completes {
             case .recentDone: s.recentDone.insert(entry.typeId)
-            case .statsFull(let at): s.statsFullAt[entry.typeId] = at
             case .caughtUp: s.caughtUp.insert(entry.typeId)
             case .caughtUpMany(let ids): s.caughtUp.formUnion(ids)
             case .reconcileDone:
                 s.caughtUp.insert(entry.typeId)
                 s.reconcile[entry.typeId] = nil
-            case .activityInitial: s.activityInitialDone = true
-            case .correlationInitial: s.correlationInitialDone.insert(entry.typeId)
-            case .profile(let hash): s.profileHash = hash
+            case .dailyFull(let at): s.dailyFullAt = at
+            case .detailDone(let id): s.detailsDone.insert(id)
             case nil: break
             }
         }

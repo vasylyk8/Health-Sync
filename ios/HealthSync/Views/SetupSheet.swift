@@ -45,8 +45,8 @@ struct SetupSheet: View {
                         Spacer(minLength: 0)
                         Image(systemName: "lock.shield.fill").font(.system(size: 56)).foregroundStyle(provider.tint.gradient)
                             .accessibilityHidden(true)
-                        Text("Share your Health data with \(provider.name)?").font(.title2.bold()).multilineTextAlignment(.center)
-                        Text("You'll get a private link. With it, \(provider.name) can read your Health data whenever you ask it a question. \(provider.company) processes that data under its own terms. You can disconnect at any time.")
+                        Text("Share your workouts with \(provider.name)?").font(.title2.bold()).multilineTextAlignment(.center)
+                        Text("You'll get a private link. With it, \(provider.name) can read your workouts (including detailed measurements and GPS routes) and daily summaries whenever you ask it a question. \(provider.company) processes that data under its own terms. You can disconnect at any time.")
                             .multilineTextAlignment(.center).foregroundStyle(.secondary)
                         Spacer(minLength: 0)
                     }
@@ -164,7 +164,7 @@ struct SetupSheet: View {
             Image(systemName: "checkmark.circle.fill").font(.system(size: 64)).foregroundStyle(.green)
                 .accessibilityHidden(true)
             Text("\(provider.name) is set up").font(.title2.bold())
-            Text("Ask \(provider.name) about your sleep, workouts, heart rate and more. It reads your Health data only when you ask.")
+            Text("Ask \(provider.name) about your runs, rides, heart rate zones, pace and recovery. It reads your workout data only when you ask.")
                 .multilineTextAlignment(.center).foregroundStyle(.secondary)
             Spacer()
             Button("Disconnect \(provider.name)", role: .destructive) { confirmDisconnect = true }

@@ -23,7 +23,7 @@ final class AppModelTests: XCTestCase {
     private func makeModel(_ backend: StubBackend) -> AppModel {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let defaults = UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!
-        return AppModel(backend: backend, source: ScriptedSource(), outbox: Outbox(root: root), types: [], telemetry: NoTelemetry(), defaults: defaults)
+        return AppModel(backend: backend, source: ScriptedSource(), outbox: Outbox(root: root), scope: .empty, telemetry: NoTelemetry(), defaults: defaults)
     }
 
     func testOfflineSyncShowsAnIssueThatClearsOnSuccess() async {
@@ -60,14 +60,14 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.busy)
     }
 
-    /// The same objects the -uiTesting app uses (fake backend and HealthKit, the full type list).
+    /// The same objects the -uiTesting app uses (fake backend and HealthKit, the real coverage file).
     func testUITestingStackReconnectsAfterDelete() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let defaults = UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!
         defaults.set(true, forKey: "healthConnected")
-        let types = HealthTypes.resolve(HealthTypes.loadCoverage())
-        XCTAssertFalse(types.isEmpty)
-        let model = AppModel(backend: FakeBackend(), source: FakeHealthSource(), outbox: Outbox(root: root), types: types, telemetry: NoTelemetry(), defaults: defaults)
+        let scope = HealthTypes.scope(HealthTypes.loadCoverage())
+        XCTAssertNotNil(scope.workout)
+        let model = AppModel(backend: FakeBackend(), source: FakeHealthSource(), outbox: Outbox(root: root), scope: scope, telemetry: NoTelemetry(), defaults: defaults)
         XCTAssertEqual(model.phase, .home)
         model.start()
         try await Task.sleep(for: .milliseconds(300))

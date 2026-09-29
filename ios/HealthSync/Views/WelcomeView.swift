@@ -29,7 +29,7 @@ struct WelcomeView: View {
                 .font(.largeTitle.bold())
                 .accessibilityAddTraits(.isHeader)
                 .padding(.top, 20)
-            Text("Ask Claude or ChatGPT about your Apple Health data.")
+            Text("Ask Claude or ChatGPT about your Apple Health workouts.")
                 .font(.title3)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
@@ -37,7 +37,7 @@ struct WelcomeView: View {
                 .padding(.horizontal, 32)
             Spacer()
             VStack(spacing: 4) {
-                Text("Your Health data is copied securely to our servers in the EU so the assistants you connect can read it. Nothing is shared until you connect one.")
+                Text("Your workouts, with their detailed measurements and GPS routes, and a daily summary (sleep, resting heart rate and similar) are copied securely to our servers in the EU so the assistants you connect can read them. Nothing is shared until you connect one.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

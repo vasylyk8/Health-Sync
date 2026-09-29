@@ -534,21 +534,21 @@
    "agg": "sum"
   },
   {
-   "key": "sodiumMg",
+   "key": "sodiumG",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierDietarySodium",
    "unit": "g",
    "agg": "sum"
   },
   {
-   "key": "waterMl",
+   "key": "waterL",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierDietaryWater",
    "unit": "L",
    "agg": "sum"
   },
   {
-   "key": "caffeineMg",
+   "key": "caffeineG",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierDietaryCaffeine",
    "unit": "g",

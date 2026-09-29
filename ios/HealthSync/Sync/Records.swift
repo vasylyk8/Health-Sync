@@ -50,8 +50,9 @@ extension Optional where Wrapped == String {
 }
 
 enum BatchMode: String, Codable, Sendable {
-    /// `status`: one batch reporting many types that had nothing new (type "_status").
-    case anchored, recent, stats, profile, reconcile, status
+    /// `status`: one batch reporting types that had nothing new (type "_status").
+    /// `workoutdata`: raw streams of workouts (type "_wstream"). `stats`: daily context (type "_daily").
+    case anchored, recent, stats, reconcile, status, workoutdata
 }
 
 struct BatchHeader: Sendable {
@@ -69,7 +70,7 @@ struct BatchHeader: Sendable {
 
     func record(batchId: String, now: Date, tz: String, device: String, appVersion: String) -> Record {
         var r: Record = [
-            "kind": "header", "schema": 1, "batchId": .string(batchId), "type": .string(type), "seq": .int(seq),
+            "kind": "header", "schema": 2, "batchId": .string(batchId), "type": .string(type), "seq": .int(seq),
             "device": .string(device), "appVersion": .string(appVersion), "tz": .string(tz),
             "createdAt": now.ms, "mode": .string(mode.rawValue), "checkedAt": checkedAt.ms,
         ]

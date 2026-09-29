@@ -1,3 +1,4 @@
+import BackgroundTasks
 import SwiftUI
 import UIKit
 
@@ -9,7 +10,7 @@ struct HealthSyncApp: App {
     init() {
         let args = ProcessInfo.processInfo.arguments
         let uiTesting = args.contains("-uiTesting")
-        let types = HealthTypes.resolve(HealthTypes.loadCoverage())
+        let scope = HealthTypes.scope(HealthTypes.loadCoverage())
         let backend: Backend
         let source: HealthSource
         let telemetry: Telemetry
@@ -19,15 +20,28 @@ struct HealthSyncApp: App {
             telemetry = NoTelemetry()
         } else {
             backend = FirebaseBackend()
-            source = HealthKitSource()
+            source = HealthKitSource(scope: scope)
             telemetry = FirebaseTelemetry()
         }
         let defaults = uiTesting ? UserDefaults(suiteName: "uitest-\(UUID().uuidString)")! : .standard
         if uiTesting && args.contains("-onboarded") { defaults.set(true, forKey: "healthConnected") }
         let outboxRoot = uiTesting ? FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) : Outbox.defaultRoot()
-        let model = AppModel(backend: backend, source: source, outbox: Outbox(root: outboxRoot), types: types, telemetry: telemetry, defaults: defaults)
+        let model = AppModel(backend: backend, source: source, outbox: Outbox(root: outboxRoot), scope: scope, telemetry: telemetry, defaults: defaults)
         // HealthKit background delivery can relaunch the app without ever showing a scene.
         model.startObservers()
+        // Lets iOS give the app time to finish uploading workout details in the background.
+        if !uiTesting {
+            BGTaskScheduler.shared.register(forTaskWithIdentifier: AppModel.backgroundTaskId, using: nil) { task in
+                let work = Task { @MainActor in
+                    await model.syncNow()
+                    task.setTaskCompleted(success: true)
+                }
+                task.expirationHandler = {
+                    work.cancel()
+                    task.setTaskCompleted(success: false)
+                }
+            }
+        }
         _model = StateObject(wrappedValue: model)
     }
 

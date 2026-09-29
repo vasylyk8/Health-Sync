@@ -47,18 +47,17 @@ final class FakeBackend: Backend, @unchecked Sendable {
     }
 }
 
-/// Health source with a little synthetic data (UI tests, simulator demos).
+/// Health source with no data (UI tests, simulator demos).
 final class FakeHealthSource: HealthSource, @unchecked Sendable {
     var isAvailable: Bool { true }
-    func requestAuthorization(types: [SyncType]) async throws {}
-    func samples(_ type: SyncType, from: Date, to: Date) async throws -> [Record] { [] }
+    func requestAuthorization(scope: SyncScope) async throws {}
+    func workouts(from: Date, to: Date) async throws -> [Record] { [] }
     func anchoredPage(_ type: SyncType, anchor: Data?, limit: Int) async throws -> AnchoredPage {
         AnchoredPage(records: [], newAnchor: Data("a".utf8), objectCount: 0)
     }
-    func hourlyStats(_ type: SyncType, from: Date, to: Date) async throws -> [Record] { [] }
-    func earliestSampleDate(_ type: SyncType) async throws -> Date? { nil }
-    func activitySummaries(from: Date, to: Date) async throws -> [Record] { [] }
-    func correlations(_ type: SyncType, from: Date, to: Date) async throws -> [Record] { [] }
-    func profile() -> Record? { nil }
-    func observeChanges(types: [SyncType], onChange: @escaping @Sendable (SyncType, @escaping @Sendable () -> Void) -> Void) {}
+    func workoutIndex() async throws -> [WorkoutRef] { [] }
+    func workoutDetail(id: String, gen: Int64) async throws -> [Record]? { nil }
+    func dailyContext(from: Date, to: Date) async throws -> [Record] { [] }
+    func earliestDailyDate() async throws -> Date? { nil }
+    func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {}
 }

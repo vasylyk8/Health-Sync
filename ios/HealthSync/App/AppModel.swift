@@ -1,3 +1,4 @@
+import BackgroundTasks
 import SwiftUI
 import UIKit
 
@@ -8,7 +9,7 @@ final class AppModel: ObservableObject {
 
     @Published var phase: Phase
     @Published var status: ServerStatus = .empty
-    @Published var progress = SyncProgress(typesDone: 0, typesTotal: 0, isSyncing: false) {
+    @Published var progress = SyncProgress(detailsDone: 0, detailsTotal: 0, isSyncing: false) {
         didSet { keepScreenAwakeDuringFirstSync() }
     }
     @Published var errorMessage: String?
@@ -21,23 +22,23 @@ final class AppModel: ObservableObject {
     private let source: HealthSource
     private let engine: SyncEngine
     private let outbox: Outbox
-    private let types: [SyncType]
+    private let scope: SyncScope
     private let telemetry: Telemetry
     private let defaults: UserDefaults
     private var started = false
     private var observing = false
 
-    init(backend: Backend, source: HealthSource, outbox: Outbox, types: [SyncType], telemetry: Telemetry, defaults: UserDefaults = .standard) {
+    init(backend: Backend, source: HealthSource, outbox: Outbox, scope: SyncScope, telemetry: Telemetry, defaults: UserDefaults = .standard) {
         self.backend = backend
         self.source = source
         self.outbox = outbox
-        self.types = types
+        self.scope = scope
         self.telemetry = telemetry
         self.defaults = defaults
         var config = SyncEngine.Config()
         config.device = UIDevice.current.model
         config.appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
-        engine = SyncEngine(source: source, uploader: backend, outbox: outbox, types: types, config: config, telemetry: telemetry)
+        engine = SyncEngine(source: source, uploader: backend, outbox: outbox, scope: scope, config: config, telemetry: telemetry)
         phase = defaults.bool(forKey: "healthConnected") ? .home : .welcome
     }
 
@@ -60,7 +61,7 @@ final class AppModel: ObservableObject {
             }
             // HealthKit never reveals which read permissions were granted; we proceed either way
             // and show "No readable Health data found" later if nothing arrives.
-            try await source.requestAuthorization(types: types)
+            try await source.requestAuthorization(scope: scope)
             _ = try await backend.signIn()
             try await backend.registerDevice(timeZone: TimeZone.current.identifier)
             defaults.set(true, forKey: "healthConnected")
@@ -90,9 +91,9 @@ final class AppModel: ObservableObject {
         guard phase == .home, !observing else { return }
         observing = true
         let engine = self.engine
-        source.observeChanges(types: types) { type, done in
+        source.observeWorkouts { done in
             Task {
-                try? await engine.runTypes([type.id], deadline: Date().addingTimeInterval(20))
+                try? await engine.runWorkoutChanges(deadline: Date().addingTimeInterval(20))
                 done()
             }
         }
@@ -116,15 +117,29 @@ final class AppModel: ObservableObject {
             }
             await refreshStatus()
             syncIssue = nil
+            scheduleBackgroundSyncIfNeeded()
         } catch is CancellationError {
             return
         } catch {
+            scheduleBackgroundSyncIfNeeded()
             telemetry.nonFatal("sync", code: (error as NSError).code)
             syncIssue = (error as NSError).domain == NSURLErrorDomain
                 ? "You're offline. KROK will sync again when you're connected."
                 : "Sync paused. Pull down to try again."
         }
     }
+
+    /// While workout details are still uploading, ask iOS for background time to continue. (HealthKit
+    /// data is only readable while the phone is unlocked, so this helps only when iOS runs it then.)
+    func scheduleBackgroundSyncIfNeeded() {
+        guard phase == .home, !progress.historyComplete else { return }
+        let request = BGProcessingTaskRequest(identifier: AppModel.backgroundTaskId)
+        request.requiresNetworkConnectivity = true
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        try? BGTaskScheduler.shared.submit(request)
+    }
+
+    static let backgroundTaskId = "app.healthsync.sync"
 
     func refreshStatus() async {
         if let s = try? await backend.status() { status = s }

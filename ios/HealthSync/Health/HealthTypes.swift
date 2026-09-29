@@ -1,118 +1,175 @@
 import Foundation
 import HealthKit
 
-/// One entry of shared/coverage.json.
+/// One entry of `types` in shared/coverage.json.
 struct CoverageEntry: Decodable, Sendable {
     let id: String
     let kind: String
-    let agg: String?
-    let unit: String?
     let group: String
     let record: String
 }
 
-/// A data type this device can sync, resolved from the coverage matrix.
+/// A quantity type read for every workout (raw series and Apple's statistics).
+struct WorkoutQuantitySpec: Decodable, Sendable {
+    let id: String
+    let unit: String
+    let agg: String
+}
+
+/// One daily-context metric (see docs/DATA_CONTRACT.md §2).
+struct DailyMetricSpec: Decodable, Sendable {
+    let key: String
+    let kind: String
+    let id: String
+    let unit: String?
+    let agg: String?
+    let mode: String?
+    let outputs: [String]?
+}
+
+struct CoverageFile: Decodable, Sendable {
+    let types: [CoverageEntry]
+    let workoutQuantityTypes: [WorkoutQuantitySpec]
+    let dailyMetrics: [DailyMetricSpec]
+}
+
+/// A batch type this app syncs: workouts (anchored) or the daily context pseudo-type.
 struct SyncType: @unchecked Sendable, Hashable {
-    enum Kind: Hashable {
-        case quantity(cumulative: Bool)
-        case category, workout, ecg, heartbeat, activitySummary, correlation, stateOfMind, audiogram, characteristics
-    }
+    enum Kind: Hashable { case workout, daily }
 
     let id: String
     let kind: Kind
-    /// Sample type for sample-based kinds (nil for activity summaries and characteristics).
+    /// Sample type for workouts (nil for the daily-context pseudo-type).
     let sampleType: HKSampleType?
-    let unit: HKUnit?
 
     static func == (a: SyncType, b: SyncType) -> Bool { a.id == b.id }
     func hash(into h: inout Hasher) { h.combine(id) }
 
-    var isAnchored: Bool {
-        switch kind {
-        case .quantity, .category, .workout, .ecg, .heartbeat, .stateOfMind, .audiogram: return true
-        default: return false
-        }
+    var isAnchored: Bool { kind == .workout }
+}
+
+/// A quantity type that is read for each workout.
+struct WorkoutQuantity: @unchecked Sendable {
+    let id: String
+    /// Short name used as the stream name on the server (e.g. "HeartRate").
+    let name: String
+    let type: HKQuantityType
+    let unit: HKUnit
+    let unitLabel: String
+    let cumulative: Bool
+}
+
+enum DailyAgg: String, Sendable { case sum, avg, min, max, last }
+enum CategoryMode: String, Sendable { case minutes, values }
+
+struct DailyMetric: @unchecked Sendable {
+    enum Kind {
+        case quantity(HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double)
+        case category(HKCategoryType, CategoryMode)
+        case sleep(HKCategoryType)
+        case rings
+        case stateOfMind
     }
 
-    var quantityType: HKQuantityType? { sampleType as? HKQuantityType }
+    let key: String
+    let kind: Kind
+}
+
+/// Everything this device can sync, resolved from the coverage file for the running iOS version.
+struct SyncScope: @unchecked Sendable {
+    var types: [SyncType]
+    var workoutQuantities: [WorkoutQuantity]
+    var dailyMetrics: [DailyMetric]
+
+    static let empty = SyncScope(types: [], workoutQuantities: [], dailyMetrics: [])
+
+    var workout: SyncType? { types.first { $0.kind == .workout } }
 }
 
 enum HealthTypes {
-    static let profileId = "_profile"
-    /// Batch type for "checked, nothing new" reports covering many types at once.
+    static let workoutId = "HKWorkoutTypeIdentifier"
+    /// Batch type for raw workout streams.
+    static let streamId = "_wstream"
+    /// Batch type for daily-context rows.
+    static let dailyId = "_daily"
+    /// Batch type for "checked, nothing new" reports.
     static let statusId = "_status"
+    static let quantityPrefix = "HKQuantityTypeIdentifier"
 
-    static func loadCoverage(bundle: Bundle = .main) -> [CoverageEntry] {
+    static func loadCoverage(bundle: Bundle = .main) -> CoverageFile? {
         guard let url = bundle.url(forResource: "coverage", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let file = try? JSONDecoder().decode(CoverageFile.self, from: data) else { return [] }
-        return file.types
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(CoverageFile.self, from: data)
     }
 
-    private struct CoverageFile: Decodable { let types: [CoverageEntry] }
-
-    /// Resolves every coverage entry available on this iOS version. Unknown or unavailable
-    /// identifiers are skipped, so new types simply start syncing on newer phones.
-    static func resolve(_ entries: [CoverageEntry]) -> [SyncType] {
-        entries.compactMap(resolve)
+    /// "HKQuantityTypeIdentifierHeartRate" -> "HeartRate".
+    static func shortName(_ id: String) -> String {
+        id.hasPrefix(quantityPrefix) ? String(id.dropFirst(quantityPrefix.count)) : id
     }
 
-    static func resolve(_ e: CoverageEntry) -> SyncType? {
-        switch e.kind {
+    /// Resolves the coverage file for this iOS version. Unknown or unavailable identifiers are
+    /// skipped, so new types simply start syncing on newer phones.
+    static func scope(_ file: CoverageFile?) -> SyncScope {
+        guard let file else { return .empty }
+        var types: [SyncType] = []
+        for e in file.types where e.kind == "workout" {
+            types.append(SyncType(id: e.id, kind: .workout, sampleType: HKObjectType.workoutType()))
+        }
+        let quantities: [WorkoutQuantity] = file.workoutQuantityTypes.compactMap { s in
+            guard let qt = HKObjectType.quantityType(forIdentifier: HKQuantityTypeIdentifier(rawValue: s.id)),
+                  let unit = unit(named: s.unit), qt.is(compatibleWith: unit) else { return nil }
+            return WorkoutQuantity(id: s.id, name: shortName(s.id), type: qt, unit: unit, unitLabel: s.unit, cumulative: s.agg == "cumulative")
+        }
+        let metrics: [DailyMetric] = file.dailyMetrics.compactMap(dailyMetric)
+        return SyncScope(types: types, workoutQuantities: quantities, dailyMetrics: metrics)
+    }
+
+    static func dailyMetric(_ s: DailyMetricSpec) -> DailyMetric? {
+        switch s.kind {
         case "quantity":
-            guard let qt = HKObjectType.quantityType(forIdentifier: HKQuantityTypeIdentifier(rawValue: e.id)),
-                  let unitName = e.unit, let unit = unit(named: unitName), qt.is(compatibleWith: unit) else { return nil }
-            return SyncType(id: e.id, kind: .quantity(cumulative: e.agg == "cumulative"), sampleType: qt, unit: unit)
+            guard let qt = HKObjectType.quantityType(forIdentifier: HKQuantityTypeIdentifier(rawValue: s.id)),
+                  let unitName = s.unit, let unit = unit(named: unitName), qt.is(compatibleWith: unit),
+                  let agg = DailyAgg(rawValue: s.agg ?? "") else { return nil }
+            // HealthKit percentages are fractions (0.97); the server stores 97.
+            return DailyMetric(key: s.key, kind: .quantity(qt, unit: unit, agg: agg, scale: unitName == "%" ? 100 : 1))
         case "category":
-            guard let ct = HKObjectType.categoryType(forIdentifier: HKCategoryTypeIdentifier(rawValue: e.id)) else { return nil }
-            return SyncType(id: e.id, kind: .category, sampleType: ct, unit: nil)
-        case "workout":
-            return SyncType(id: e.id, kind: .workout, sampleType: HKObjectType.workoutType(), unit: nil)
-        case "ecg":
-            return SyncType(id: e.id, kind: .ecg, sampleType: HKObjectType.electrocardiogramType(), unit: nil)
-        case "heartbeat":
-            return SyncType(id: e.id, kind: .heartbeat, sampleType: HKSeriesType.heartbeat(), unit: nil)
+            guard let ct = HKObjectType.categoryType(forIdentifier: HKCategoryTypeIdentifier(rawValue: s.id)),
+                  let mode = CategoryMode(rawValue: s.mode ?? "") else { return nil }
+            return DailyMetric(key: s.key, kind: .category(ct, mode))
+        case "sleep":
+            guard let ct = HKObjectType.categoryType(forIdentifier: HKCategoryTypeIdentifier(rawValue: s.id)) else { return nil }
+            return DailyMetric(key: s.key, kind: .sleep(ct))
         case "activitySummary":
-            return SyncType(id: e.id, kind: .activitySummary, sampleType: nil, unit: nil)
-        case "correlation":
-            guard let ct = HKObjectType.correlationType(forIdentifier: HKCorrelationTypeIdentifier(rawValue: e.id)) else { return nil }
-            return SyncType(id: e.id, kind: .correlation, sampleType: ct, unit: nil)
+            return DailyMetric(key: s.key, kind: .rings)
         case "stateOfMind":
-            if #available(iOS 18.0, *) {
-                return SyncType(id: e.id, kind: .stateOfMind, sampleType: HKObjectType.stateOfMindType(), unit: nil)
-            }
+            if #available(iOS 18.0, *) { return DailyMetric(key: s.key, kind: .stateOfMind) }
             return nil
-        case "audiogram":
-            return SyncType(id: e.id, kind: .audiogram, sampleType: HKObjectType.audiogramSampleType(), unit: nil)
-        case "characteristics":
-            return SyncType(id: e.id, kind: .characteristics, sampleType: nil, unit: nil)
         default:
             return nil
         }
     }
 
-    /// Everything the app asks permission to read. Correlation types cannot be requested
-    /// directly (HealthKit throws); they become readable through their component types.
-    static func readPermissions(for types: [SyncType]) -> Set<HKObjectType> {
+    /// Everything the app asks permission to read (all read-only). The route type is what
+    /// lets the app read a workout's GPS route through HealthKit.
+    static func readPermissions(for scope: SyncScope) -> Set<HKObjectType> {
         var set = Set<HKObjectType>()
-        for t in types {
-            switch t.kind {
-            case .correlation, .characteristics:
-                continue
-            case .activitySummary:
-                set.insert(HKObjectType.activitySummaryType())
-            default:
-                if let st = t.sampleType { set.insert(st) }
+        set.insert(HKObjectType.workoutType())
+        set.insert(HKSeriesType.workoutRoute())
+        for q in scope.workoutQuantities { set.insert(q.type) }
+        for m in scope.dailyMetrics {
+            switch m.kind {
+            case .quantity(let t, _, _, _): set.insert(t)
+            case .category(let t, _): set.insert(t)
+            case .sleep(let t): set.insert(t)
+            case .rings: set.insert(HKObjectType.activitySummaryType())
+            case .stateOfMind:
+                if #available(iOS 18.0, *) { set.insert(HKObjectType.stateOfMindType()) }
             }
-        }
-        let characteristics: [HKCharacteristicTypeIdentifier] = [.dateOfBirth, .biologicalSex, .bloodType, .fitzpatrickSkinType, .wheelchairUse, .activityMoveMode]
-        for id in characteristics {
-            if let c = HKObjectType.characteristicType(forIdentifier: id) { set.insert(c) }
         }
         return set
     }
 
-    /// Canonical units from the coverage matrix, built with HKUnit factory methods (never parsed
+    /// Canonical units from the coverage file, built with HKUnit factory methods (never parsed
     /// from strings, which raises an exception on unknown input).
     static func unit(named name: String) -> HKUnit? {
         switch name {
@@ -133,12 +190,7 @@ enum HealthTypes {
         case "%": return .percent()
         case "dBASPL": return .decibelAWeightedSoundPressureLevel()
         case "ml/(kg*min)": return HKUnit.literUnit(with: .milli).unitDivided(by: HKUnit.gramUnit(with: .kilo).unitMultiplied(by: .minute()))
-        case "mmHg": return .millimeterOfMercury()
-        case "mcS": return .siemenUnit(with: .micro)
-        case "mg/dL": return HKUnit.gramUnit(with: .milli).unitDivided(by: .literUnit(with: .deci))
         case "L": return .liter()
-        case "L/min": return .liter().unitDivided(by: .minute())
-        case "IU": return .internationalUnit()
         case "kg": return .gramUnit(with: .kilo)
         case "g": return .gram()
         default: return nil

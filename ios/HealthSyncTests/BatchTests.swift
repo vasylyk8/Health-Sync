@@ -17,15 +17,15 @@ final class BatchTests: XCTestCase {
     }
 
     func testBatchContainsHeaderThenRecords() throws {
-        let header = BatchHeader(type: "HKQuantityTypeIdentifierHeartRate", mode: .anchored, seq: 7, caughtUp: true, checkedAt: Date(timeIntervalSince1970: 1_700_000_000))
-        let records: [Record] = [["k": "s", "id": "a", "s": 1, "e": 1, "v": 60.5, "u": "count/min"], ["k": "d", "id": "b"]]
+        let header = BatchHeader(type: "HKWorkoutTypeIdentifier", mode: .anchored, seq: 7, caughtUp: true, checkedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let records: [Record] = [["k": "w", "id": "a", "s": 1, "e": 2, "act": 37, "dur": 60.5], ["k": "d", "id": "b"]]
         let batches = try BatchWriter.make(header: header, records: records, nextSeq: { 99 }, tz: "Europe/Kyiv", device: "iPhone", appVersion: "1.0")
         XCTAssertEqual(batches.count, 1)
         let lines = String(data: Gzip.decompress(batches[0].gz)!, encoding: .utf8)!.split(separator: "\n")
         XCTAssertEqual(lines.count, 3)
         let h = try JSONSerialization.jsonObject(with: Data(lines[0].utf8)) as! [String: Any]
         XCTAssertEqual(h["kind"] as? String, "header")
-        XCTAssertEqual(h["schema"] as? Int, 1)
+        XCTAssertEqual(h["schema"] as? Int, 2)
         XCTAssertEqual(h["batchId"] as? String, batches[0].id)
         XCTAssertEqual(h["seq"] as? Int, 7)
         XCTAssertEqual(h["caughtUp"] as? Bool, true)
@@ -37,9 +37,9 @@ final class BatchTests: XCTestCase {
     }
 
     func testLargeResultsSplitAndOnlyLastPartClaimsCompletion() throws {
-        var header = BatchHeader(type: "HKQuantityTypeIdentifierStepCount", mode: .recent, seq: 1, window: (Date(), Date()), caughtUp: true, checkedAt: Date())
+        var header = BatchHeader(type: "HKWorkoutTypeIdentifier", mode: .recent, seq: 1, window: (Date(), Date()), caughtUp: true, checkedAt: Date())
         header.caughtUp = true
-        let records: [Record] = (0..<(BatchWriter.maxRecords + 10)).map { ["k": "s", "id": .string("id\($0)"), "s": .int(Int64($0)), "e": .int(Int64($0)), "v": 1.0] }
+        let records: [Record] = (0..<(BatchWriter.maxRecords + 10)).map { ["k": "w", "id": .string("id\($0)"), "s": .int(Int64($0)), "e": .int(Int64($0)), "act": 37] }
         var seq: Int64 = 1
         let batches = try BatchWriter.make(header: header, records: records, nextSeq: { seq += 1; return seq }, tz: "UTC", device: "x", appVersion: "1")
         XCTAssertEqual(batches.count, 2)
@@ -55,24 +55,38 @@ final class BatchTests: XCTestCase {
         XCTAssertTrue(batches.allSatisfy { $0.gz.count <= BatchWriter.maxCompressedBytes })
     }
 
-    func testCoverageMatrixResolvesOnThisOS() {
-        let entries = HealthTypes.loadCoverage(bundle: Bundle(for: AppModel.self))
-        XCTAssertGreaterThan(entries.count, 150)
-        let types = HealthTypes.resolve(entries)
-        // Every quantity type's unit must be buildable and compatible, or it is dropped.
-        let quantities = entries.filter { $0.kind == "quantity" }
-        let resolvedQuantities = types.filter { if case .quantity = $0.kind { return true } else { return false } }
-        XCTAssertGreaterThan(Double(resolvedQuantities.count), Double(quantities.count) * 0.9, "too many quantity types failed to resolve")
-        for e in quantities where e.unit != "appleEffortScore" { XCTAssertNotNil(HealthTypes.unit(named: e.unit ?? ""), "no unit for \(e.id)") }
-        XCTAssertTrue(types.contains { $0.id == "HKWorkoutTypeIdentifier" })
-        XCTAssertFalse(HealthTypes.readPermissions(for: types).contains { $0 is HKCorrelationType })
+    func testCoverageResolvesOnThisOS() throws {
+        let file = try XCTUnwrap(HealthTypes.loadCoverage(bundle: Bundle(for: AppModel.self)))
+        XCTAssertEqual(file.types.map(\.id).sorted(), ["HKWorkoutTypeIdentifier", "_daily", "_wstream"])
+        let scope = HealthTypes.scope(file)
+        // Every unit must be buildable and compatible, or the type is dropped.
+        XCTAssertGreaterThan(Double(scope.workoutQuantities.count), Double(file.workoutQuantityTypes.count) * 0.9, "too many workout types failed to resolve")
+        XCTAssertGreaterThan(Double(scope.dailyMetrics.count), Double(file.dailyMetrics.count) * 0.9, "too many daily metrics failed to resolve")
+        for q in file.workoutQuantityTypes where q.unit != "appleEffortScore" { XCTAssertNotNil(HealthTypes.unit(named: q.unit), "no unit for \(q.id)") }
+        for m in file.dailyMetrics { if let u = m.unit, u != "appleEffortScore" { XCTAssertNotNil(HealthTypes.unit(named: u), "no unit for \(m.key)") } }
+        XCTAssertNotNil(scope.workout)
+        let perms = HealthTypes.readPermissions(for: scope)
+        XCTAssertTrue(perms.contains(HKObjectType.workoutType()))
+        XCTAssertTrue(perms.contains(HKSeriesType.workoutRoute()), "the GPS route type must be requested")
+        XCTAssertTrue(perms.contains(HKObjectType.quantityType(forIdentifier: .heartRate)!))
+        XCTAssertFalse(perms.contains { $0 is HKCorrelationType })
+        // Metric keys are unique: two metrics writing the same key would overwrite each other.
+        XCTAssertEqual(Set(file.dailyMetrics.map(\.key)).count, file.dailyMetrics.count)
+    }
+
+    func testCoverageDoesNotAskForUnrelatedHealthData() throws {
+        let file = try XCTUnwrap(HealthTypes.loadCoverage(bundle: Bundle(for: AppModel.self)))
+        let ids = Set(file.workoutQuantityTypes.map(\.id) + file.dailyMetrics.map(\.id))
+        for forbidden in ["SexualActivity", "Contraceptive", "Pregnancy", "Lactation", "BloodGlucose", "BloodPressure", "Electrocardiogram", "Medication", "HKClinical"] {
+            XCTAssertFalse(ids.contains { $0.contains(forbidden) }, "\(forbidden) must not be read")
+        }
     }
 
     /// HealthKit raises an exception (crash) for types that may not be requested. This catches
-    /// any such type in the coverage matrix before it reaches a user.
+    /// any such type in the coverage file before it reaches a user.
     func testReadPermissionsAreAcceptedByHealthKit() async throws {
         guard HKHealthStore.isHealthDataAvailable() else { throw XCTSkip("HealthKit unavailable") }
-        let types = HealthTypes.resolve(HealthTypes.loadCoverage(bundle: Bundle(for: AppModel.self)))
-        _ = try await HKHealthStore().statusForAuthorizationRequest(toShare: [], read: HealthTypes.readPermissions(for: types))
+        let scope = HealthTypes.scope(HealthTypes.loadCoverage(bundle: Bundle(for: AppModel.self)))
+        _ = try await HKHealthStore().statusForAuthorizationRequest(toShare: [], read: HealthTypes.readPermissions(for: scope))
     }
 }

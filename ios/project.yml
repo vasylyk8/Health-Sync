@@ -56,7 +56,7 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UIRequiredDeviceCapabilities: [healthkit]
-        NSHealthShareUsageDescription: "KROK reads your Health data so that the AI assistants you connect (Claude, ChatGPT) can answer questions about it. Nothing is shared until you connect an assistant."
+        NSHealthShareUsageDescription: "KROK reads your workouts from Apple Health, including their heart rate, other measurements and GPS routes, plus a daily summary of things like sleep and resting heart rate, so that the AI assistants you connect (Claude, ChatGPT) can answer questions about your training. Nothing is shared until you connect an assistant."
         NSHealthUpdateUsageDescription: "KROK never writes to Apple Health."
         UIBackgroundModes: [fetch, processing]
         BGTaskSchedulerPermittedIdentifiers: [app.healthsync.sync]
