@@ -11,6 +11,7 @@ struct ConnectView: View {
                 Section {
                     ForEach(model.providers) { provider in
                         Button { selected = provider } label: { ProviderRow(provider: provider, setUp: model.isSetUp(provider)) }
+                            .buttonStyle(.plain)
                             .accessibilityHint(model.isSetUp(provider) ? "Shows connection details" : "Opens setup steps")
                             .accessibilityIdentifier("provider.\(provider.id)")
                             .accessibilityValue(model.isSetUp(provider) ? "Set up" : "Not set up")
@@ -74,7 +75,7 @@ struct ProviderRow: View {
                 Label("Set up", systemImage: "checkmark.circle.fill")
                     .labelStyle(.titleAndIcon)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Theme.success)
                     .accessibilityIdentifier("setUp.\(provider.id)")
             } else {
                 Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
