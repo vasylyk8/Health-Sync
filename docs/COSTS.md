@@ -1,35 +1,35 @@
 # Running costs (measured, not guessed)
 
-Measured with `firebase/functions/bench/` on the real ingestion and query code. Prices are Google Cloud list prices for europe-west1 as I understand them in Sept 2026. Treat the totals as estimates and verify them against the billing console after launch.
+Measured with `firebase/functions/bench/bench.ts` on the real ingestion and query code (local machine, so network and Firestore latency are not included). Prices are Google Cloud list prices for europe-west1 as I understand them in Sept 2026. Treat totals as estimates and verify them against the billing console after launch.
 
-## Heavy user: 7 years of Apple Watch history
-| Metric | Measured |
-|---|---|
-| Records (heart rate every 5 min + hourly steps + stats) | 858,480 |
-| One-time upload | 23.8 MB gzipped |
-| Stored (Parquet) | **23 MB per user** (real Watch data with workout heart rate is likely 2–3× this) |
-| One-time ingestion compute | ~23 s |
-| "Monthly heart-rate average over 7 years" | 2.2 s |
-| "Weekly steps over 7 years" (merged totals) | 0.4 s |
-| Peak memory | 260 MB |
+## Workouts with raw data
+500 workouts of 90 minutes each, 7.1 million raw points in total (heart rate every 5 s, GPS at 1 Hz with 8 columns, running power at 1 Hz, speed, distance, steps and energy).
 
-## Ongoing cost per active Apple Watch user per month (estimate)
-Background sync sends roughly 10 small uploads per hour while the user is awake (one per changed data type), which is about **7,000 small uploads a month**.
+| Metric | Smooth synthetic data | With sensor-like noise (100 workouts) |
+|---|---|---|
+| Upload per workout (gzipped) | 117 KB | 351 KB |
+| Stored (Parquet) per workout | 111 KB | **309 KB** |
+| 500 workouts stored | 54 MB | ~150 MB |
+| Ingest per workout (compute) | 115 ms | 155 ms |
+| Any tool answer (list, series, route, zones, splits, best efforts) | 70–120 ms | 40–70 ms |
 
+Real workouts are shorter on average than the benchmark (45–60 min), and noise is the realistic case, so plan on **~150–300 KB per workout**: even 3,000 workouts is about 1 GB, which costs a few cents a month to store.
+
+Daily context is one small row per day (a few KB per year).
+
+## Ongoing cost for one active user (estimate)
 | Item | Estimate |
 |---|---|
-| Storage (~50 MB) | ~$0.001 |
-| Ingestion compute (~0.4 s billed each, 4 per instance) | ~$0.02 |
-| Firestore reads/writes (~6 per upload) | ~$0.05 |
-| Cloud Storage operations (~3 per upload) | ~$0.07 |
-| AI queries (a few dozen per month) | < $0.01 |
-| **Total** | **≈ $0.15 per active user per month** |
+| Storage (~200 MB) | ~$0.005 / month |
+| Ingestion: a workout is ~8 object writes and ~10 Firestore operations, once | < $0.001 per workout |
+| Daily-context uploads (a small batch on each sync) | ~$0.02 / month |
+| AI queries (a few dozen a month, each 40–120 ms compute) | < $0.01 |
+| **Total** | **well under $0.10 per user per month** |
+
+The previous design sent ~7,000 small uploads a month per Apple Watch user (about $0.15/user); this design sends one upload per workout plus one small daily upload per sync, so it is cheaper per user even though each workout carries far more data.
 
 Fixed costs: ~$0–20/month (no always-on instance unless cold starts prove a problem), plus weekly evals (~$1–5/month).
 
-**What this means:** the $100/month budget covers roughly **500–600 active Apple Watch users**. iPhone-only users cost a fraction of that.
-
-## Cost levers (not implemented yet; pick when needed)
-1. **Sync less often in the background** (e.g. every 3 hours instead of hourly): cuts ongoing cost ~3×, and data stays within "a few hours" fresh.
-2. **Combine all changed types into one upload per sync**: removes most per-upload Storage/Firestore overhead, ~2–3× cheaper. Needs a data-format version bump.
-3. Buffer tiny updates and write Parquet less often: the most savings, and the most complex.
+## Cost levers (not implemented yet)
+1. Send the daily context less often (e.g. once every few hours) to cut the small uploads.
+2. Keep raw route/series data only for the last N years (a retention setting), if storage ever matters.
