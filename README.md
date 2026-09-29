@@ -24,16 +24,17 @@ iPhone (HealthKit → durable outbox) → Storage incoming/ → ingestion → Pa
 | `docs/COVERAGE_MATRIX.md`, `shared/coverage.json` | Every HealthKit type synced, shared by app and server |
 | `ios/` | SwiftUI app (XcodeGen `project.yml`, fastlane). `bundle exec fastlane test` runs everything on a simulator |
 | `firebase/functions/` | TypeScript server. `npm test` (unit), `npm run test:emulator` (Firebase emulators), `npx tsx bench/bench.ts` |
-| `scripts/tasks/` | `preflight`, `provision`, `deploy`, `smoke`, `monitoring`, `testflight` (run by GitHub Actions) |
+| `scripts/tasks/` | `preflight`, `provision`, `deploy`, `smoke`, `monitoring`, `testflight`, `testers`, `evals`, `diag` (read-only diagnostics). Run by GitHub Actions |
 | `scripts/synthetic/`, `scripts/evals/` | Synthetic monitoring user with known answers; weekly real-AI evals |
 
 ### Automation
 - **server-ci**: lint, typecheck, unit tests and emulator integration tests on every change.
 - **ios-ci**: builds the app and runs unit and UI tests on GitHub's macOS machines. It also saves App Store screenshots.
 - **deploy**: provision (idempotent), deploy, seed the synthetic user, live smoke test, monitoring. Runs on `main` (and on the development branch until launch).
-- **testflight**: signs (fastlane match, certificates stored in a private EU bucket) and uploads to TestFlight.
+- **testflight**: builds the app unsigned, signs it ad-hoc with its entitlements, then exports through Apple's cloud-managed signing (no certificates created or stored), verifies the HealthKit/App Attest entitlements, uploads to TestFlight and adds testers (`testers`).
 - **evals**: every week, real Claude and ChatGPT must answer fixed questions correctly through the live connector.
-- **bootstrap** (on `main`): runs any `scripts/tasks/<task>.sh` on demand.
+- **bootstrap** (on `main`): runs any `scripts/tasks/<task>.sh` on demand, e.g. `diag` (ingestion logs, bucket contents, uptime-check results) or `smoke`.
+- Live endpoints: `https://<project>.web.app/health` (health check; `/healthz` is reserved by Google's front end) and `/mcp/<link>`.
 
 ### Key design choices
 - **Mirror, not live pull.** AI services can't reach a phone, and iOS locks HealthKit while the phone is locked.

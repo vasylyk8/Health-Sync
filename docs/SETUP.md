@@ -23,12 +23,12 @@ Screens at Apple/Google change occasionally. If a button has moved, look for the
    - Copy the **Apple ID** number shown under *App Information* as **ASC_APP_ID**.
 
 5. **Create an API key for automation.** App Store Connect → *Users and Access* → *Integrations* → *App Store Connect API* → *Team Keys* → **+**.
-   - Name: `Health Sync CI`. Access: **Admin** (needed so the automation can create signing certificates).
+   - Name: `Health Sync CI`. Access: **Admin** (needed for Apple's cloud-managed signing; the automation never creates, downloads or revokes certificates).
    - Download the `.p8` file (you can only download it **once**). Copy the **Key ID** and the **Issuer ID** (shown above the list).
 
-6. **Check the certificate limit.** https://developer.apple.com/account/resources/certificates. Apple allows only a few "Apple Distribution" certificates per team. If there are already 3 or more, tell me before starting, and don't delete any that Sniped uses.
+6. **Certificates: nothing to do.** Release builds use Apple's cloud-managed signing, so no new certificate is created and existing ones (e.g. Sniped's) are never touched.
 
-7. **Testers.** Make sure you and your second tester both appear in App Store Connect → *Users and Access* with any role (e.g. *Developer* or *Marketing*), and have accepted the invite email. Only people listed there can be internal TestFlight testers. Copy both Apple ID emails.
+7. **Testers.** Make sure you and your second tester both appear in App Store Connect → *Users and Access* with any role (e.g. *Developer* or *Marketing*), and have accepted the invite email. Only people listed there can be internal TestFlight testers, and their access must include this app ("All apps" or KROK). Otherwise Apple answers "Tester(s) cannot be assigned". Copy both Apple ID emails.
 
 8. **Team ID.** https://developer.apple.com/account → *Membership details* → copy the **Team ID** (10 characters).
 
