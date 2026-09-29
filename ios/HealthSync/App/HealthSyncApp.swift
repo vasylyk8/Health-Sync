@@ -24,7 +24,10 @@ struct HealthSyncApp: App {
         let defaults = uiTesting ? UserDefaults(suiteName: "uitest-\(UUID().uuidString)")! : .standard
         if uiTesting && args.contains("-onboarded") { defaults.set(true, forKey: "healthConnected") }
         let outboxRoot = uiTesting ? FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) : Outbox.defaultRoot()
-        _model = StateObject(wrappedValue: AppModel(backend: backend, source: source, outbox: Outbox(root: outboxRoot), types: types, telemetry: telemetry, defaults: defaults))
+        let model = AppModel(backend: backend, source: source, outbox: Outbox(root: outboxRoot), types: types, telemetry: telemetry, defaults: defaults)
+        // HealthKit background delivery can relaunch the app without ever showing a scene.
+        model.startObservers()
+        _model = StateObject(wrappedValue: model)
     }
 
     var body: some Scene {

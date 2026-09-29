@@ -46,4 +46,16 @@ final class AppModelTests: XCTestCase {
         await model.syncNow()
         XCTAssertEqual(model.syncIssue?.contains("Pull down"), true)
     }
+
+    func testCanConnectAgainAfterDeletingAllData() async {
+        let model = makeModel(StubBackend())
+        await model.connectHealth()
+        XCTAssertEqual(model.phase, .home)
+        await model.deleteAllData()
+        XCTAssertEqual(model.phase, .welcome)
+        XCTAssertFalse(model.busy, "the welcome button must not stay disabled after deletion")
+        await model.connectHealth()
+        XCTAssertEqual(model.phase, .home)
+        XCTAssertFalse(model.busy)
+    }
 }

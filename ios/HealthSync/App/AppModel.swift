@@ -69,17 +69,23 @@ final class AppModel: ObservableObject {
     func start() {
         guard phase == .home else { return }
         Task { await engine.onProgress { p in Task { @MainActor in self.progress = p } } }
-        if !observing {
-            observing = true
-            let engine = self.engine
-            source.observeChanges(types: types) { type, done in
-                Task {
-                    try? await engine.runTypes([type.id], deadline: Date().addingTimeInterval(20))
-                    done()
-                }
+        startObservers()
+        Task { await syncNow() }
+    }
+
+    /// Registers the HealthKit observers that let iOS wake the app for new data. Must also run when
+    /// iOS relaunches the app in the background (before any screen appears), so the app calls it
+    /// at launch, not only when a scene becomes active.
+    func startObservers() {
+        guard phase == .home, !observing else { return }
+        observing = true
+        let engine = self.engine
+        source.observeChanges(types: types) { type, done in
+            Task {
+                try? await engine.runTypes([type.id], deadline: Date().addingTimeInterval(20))
+                done()
             }
         }
-        Task { await syncNow() }
     }
 
     func syncNow() async {

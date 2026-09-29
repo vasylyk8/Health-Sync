@@ -11,6 +11,7 @@ struct SetupSheet: View {
     @State private var consented = false
     @State private var copied = false
     @State private var confirmDisconnect = false
+    @State private var linkError: String?
 
     var body: some View {
         NavigationStack {
@@ -44,11 +45,21 @@ struct SetupSheet: View {
             Text("You'll get a private link. With it, \(provider.name) can read your Health data whenever you ask it a question. \(provider.company) processes that data under its own terms. You can disconnect at any time.")
                 .multilineTextAlignment(.center).foregroundStyle(.secondary)
             Spacer()
+            if let linkError {
+                Label(linkError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote).foregroundStyle(.orange).multilineTextAlignment(.center)
+                    .accessibilityIdentifier("linkError")
+            }
             Button {
                 Task {
+                    linkError = nil
                     if let url = await model.link(for: provider) {
                         link = url
                         consented = true
+                    } else {
+                        // The app-level alert sits underneath this sheet, so show the reason here.
+                        linkError = model.errorMessage ?? "Something went wrong. Please try again."
+                        model.errorMessage = nil
                     }
                 }
             } label: {
@@ -72,7 +83,11 @@ struct SetupSheet: View {
                         switch index {
                         case 0:
                             Button {
-                                UIPasteboard.general.string = link
+                                if let link {
+                                    // The link is a credential: keep it off Universal Clipboard and let it expire.
+                                    UIPasteboard.general.setItems([["public.utf8-plain-text": link]],
+                                                                  options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(600)])
+                                }
                                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                                 copied = true
                                 Task {
