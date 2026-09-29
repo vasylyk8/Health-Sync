@@ -8,7 +8,9 @@ final class AppModel: ObservableObject {
 
     @Published var phase: Phase
     @Published var status: ServerStatus = .empty
-    @Published var progress = SyncProgress(typesDone: 0, typesTotal: 0, isSyncing: false)
+    @Published var progress = SyncProgress(typesDone: 0, typesTotal: 0, isSyncing: false) {
+        didSet { keepScreenAwakeDuringFirstSync() }
+    }
     @Published var errorMessage: String?
     @Published var busy = false
     /// Shown under the sync status when the last sync attempt failed; cleared by the next success.
@@ -37,6 +39,13 @@ final class AppModel: ObservableObject {
         config.appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
         engine = SyncEngine(source: source, uploader: backend, outbox: outbox, types: types, config: config, telemetry: telemetry)
         phase = defaults.bool(forKey: "healthConnected") ? .home : .welcome
+    }
+
+    /// The first sync only makes progress while the phone is unlocked (HealthKit data is unreadable
+    /// when it locks), so keep the screen on until the history is in. Normal syncs don't need this.
+    private func keepScreenAwakeDuringFirstSync() {
+        let firstSync = progress.isSyncing && !progress.historyComplete
+        if UIApplication.shared.isIdleTimerDisabled != firstSync { UIApplication.shared.isIdleTimerDisabled = firstSync }
     }
 
     // MARK: Onboarding

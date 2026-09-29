@@ -21,7 +21,7 @@ KROK copies the Apple Health data you allow it to read to our servers, so that t
 - We never sell your data, use it for advertising, or share it with anyone else.
 
 ## How long we keep it
-Until you delete it (Settings menu → Delete All My Data, completed within 24 hours), or automatically **one year after your last sync**. Access logs (which tool was used and when, no health values) are kept for 90 days.
+Until you delete it (••• menu → Delete All My Data, completed within 24 hours), or automatically **one year after your last sync**. Access logs (which tool was used and when, no health values) are kept for 90 days.
 
 ## Your rights
 You can access, correct, export or delete your data, withdraw consent, and complain to your data protection authority. Because we don't know who you are, the easiest way to delete is in the app. For anything else, email vasylyk@outlook.com.
