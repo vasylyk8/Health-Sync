@@ -60,12 +60,18 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
         let meta = StorageMetadata()
         meta.contentType = "application/gzip"
         meta.customMetadata = ["schema": "1", "sha256": sha256]
+        let attempts = UploadAttempts()
+        let retried = attempts.begin(batchId)
         do {
             _ = try await ref.putDataAsync(gz, metadata: meta)
+            attempts.finish(batchId)
         } catch let error as NSError where error.domain == StorageErrorDomain && error.code == StorageErrorCode.unauthorized.rawValue {
-            // Rules allow create-only: an "unauthorized" retry after a successful upload means
-            // the object already exists, i.e. the server already has this batch.
-            return
+            // Rules allow create-only, so an "unauthorized" retry of an interrupted upload means the
+            // object already exists. On a first attempt it is a real rejection: fail loudly (the batch
+            // stays queued and is retried) instead of moving the sync anchor past data the server lacks.
+            attempts.finish(batchId)
+            if retried { return }
+            throw error
         }
     }
 
