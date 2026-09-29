@@ -218,6 +218,27 @@ final class QAUITests: XCTestCase {
         XCTAssertTrue(app.buttons["copyLink"].waitForExistence(timeout: 5))
     }
 
+    /// After "Delete All My Data" the user must be able to connect again without restarting.
+    func testReonboardAfterDelete() {
+        let app = launchFresh()
+        let connect = app.buttons["connectHealth"]
+        let enabled = NSPredicate(format: "isEnabled == true")
+        let result = XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: enabled, object: connect)], timeout: 20)
+        print("QA-FLOW after delete: connectHealth enabled within 20 s = \(result == .completed)")
+        shot("qa-flow-after-delete-20s")
+        connect.tap()
+        let home = app.buttons["provider.claude"].waitForExistence(timeout: 10)
+        print("QA-FLOW after delete: reached home without relaunch = \(home)")
+        if !home {
+            app.terminate()
+            let again = launch()
+            XCTAssertTrue(again.buttons["connectHealth"].waitForExistence(timeout: 5))
+            again.buttons["connectHealth"].tap()
+            print("QA-FLOW after delete: reached home after relaunch = \(again.buttons["provider.claude"].waitForExistence(timeout: 10))")
+        }
+        XCTAssertTrue(home, "user can reconnect after deleting data, without restarting the app")
+    }
+
     func testHomeSyncStatusText() {
         let app = launch(["-onboarded"])
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))
