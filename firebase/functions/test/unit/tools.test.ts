@@ -215,6 +215,18 @@ describe('merged totals', () => {
   });
 });
 
+describe('getOverview daily average', () => {
+  it('is not diluted by days before the first data', async () => {
+    const env = makeEnv();
+    await upload(env, { type: STEPS, mode: 'stats', window: { start: Date.UTC(2023, 0, 1), end: env.now } }, [
+      { k: 'h', s: day(1, 9), e: day(1, 10), agg: 'sum', v: 1000, u: 'count' },
+      { k: 'h', s: day(2, 9), e: day(2, 10), agg: 'sum', v: 500, u: 'count' },
+    ]);
+    const r = await getOverview(deps(env), { days: 365 });
+    expect((r.metrics as { steps: unknown }).steps).toEqual({ dailyAverage: 50, total: 1500, daysCovered: 30 });
+  });
+});
+
 describe('getOverview', () => {
   it('returns every metric in a fixed order with per-metric results', async () => {
     const env = makeEnv();
@@ -224,8 +236,6 @@ describe('getOverview', () => {
       'steps', 'activeEnergyKcal', 'exerciseMinutes', 'restingHeartRateBpm', 'hrvSdnnMs', 'bodyMassKg', 'vo2Max', 'sleep', 'workouts',
     ]);
     expect((r.metrics as { steps: unknown }).steps).toEqual({ dailyAverage: 50, total: 1500, daysCovered: 30 });
-    const short = await getOverview(deps(env), { days: 365 });
-    expect((short.metrics as { steps: unknown }).steps).toEqual({ dailyAverage: 50, total: 1500, daysCovered: 30 });
     expect((r.metrics as { sleep: unknown }).sleep).toBe('no data');
     expect(r.period).toBe('2024-06-01..2024-06-30');
     expect(r.dataAsOf).not.toBeNull();
