@@ -16,7 +16,7 @@ import { ingestObject } from './ingest/ingest.js';
 import { compactType, finishReconcile } from './jobs/maintenance.js';
 import { handleMcp } from './mcp/server.js';
 import * as account from './account.js';
-import { AccountError, beginDeletion, parseProvider, purgeUserData } from './account.js';
+import { AccountError, beginDeletion, parseProvider, purgeUserData, sweepDeletions } from './account.js';
 import { log } from './log.js';
 
 // Values written to functions/.env by the deploy workflow (see scripts/tasks/deploy.sh).
@@ -124,7 +124,13 @@ export const disconnectProvider = onCall(callableOpts, wrap(async (req) => {
 export const deleteAllData = onCall(callableOpts, wrap(async (req) => {
   const uid = uidOf(req);
   await beginDeletion(deps().db, uid);
-  await getFunctions().taskQueue(`locations/${REGION}/functions/purgeUserTask`).enqueue({ uid });
+  // Access is already cut off. If queueing the purge fails, the account must not stay half-deleted with
+  // an error shown to the user: the sweep below finishes it within minutes.
+  try {
+    await getFunctions().taskQueue(`locations/${REGION}/functions/purgeUserTask`).enqueue({ uid });
+  } catch (err) {
+    log.error('purge enqueue failed; the sweep will finish the deletion', { code: (err as { code?: string }).code ?? 'internal' });
+  }
   return { ok: true };
 }));
 
@@ -139,6 +145,12 @@ export const purgeUserTask = onTaskDispatched(
 );
 
 // ---- Scheduled maintenance ------------------------------------------------------------------
+
+export const sweepStuckDeletions = onSchedule({ schedule: 'every 15 minutes', timeZone: 'UTC', memory: '512MiB', timeoutSeconds: 540 }, async () => {
+  const d = deps();
+  const res = await sweepDeletions({ db: d.db, incoming: d.incoming, data: d.data, deleteAuthUser: (u) => getAuth().deleteUser(u) });
+  if (res.purged || res.failed) log.info('deletion sweep', { job: 'sweepStuckDeletions', count: res.purged, failed: res.failed });
+});
 
 export const purgeInactive = onSchedule({ schedule: 'every day 02:17', timeZone: 'UTC', memory: '512MiB', timeoutSeconds: 540 }, async () => {
   const d = deps();

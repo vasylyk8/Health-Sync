@@ -3,7 +3,7 @@ import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { FirestoreMeta } from '../../src/store/firestore.js';
 import { emptyManifest } from '../../src/store/types.js';
-import { beginDeletion, createConnectorLink, disconnect, purgeUserData, registerDevice } from '../../src/account.js';
+import { beginDeletion, createConnectorLink, disconnect, purgeUserData, registerDevice, sweepDeletions } from '../../src/account.js';
 import { hashToken } from '../../src/auth/tokens.js';
 import { DirBlobs } from '../helpers/memory.js';
 
@@ -93,6 +93,42 @@ describe('accounts', () => {
     expect((await db.collection('users/u5/types').get()).empty).toBe(true);
     expect((await db.collection('accessLog').where('uid', '==', 'u5').get()).empty).toBe(true);
     expect(deleted).toEqual(['u5']);
+  });
+});
+
+describe('sweepDeletions', () => {
+  it('finishes accounts stuck in deleting and leaves others alone', async () => {
+    await registerDevice(db, 'stuck1', 'UTC');
+    await registerDevice(db, 'stuck2', 'UTC');
+    await registerDevice(db, 'healthy', 'UTC');
+    await beginDeletion(db, 'stuck1');
+    await beginDeletion(db, 'stuck2');
+    const incoming = new DirBlobs();
+    const data = new DirBlobs();
+    await data.write('data/stuck1/HR/2024-06/p1.parquet', Buffer.from('x'));
+    await data.write('data/healthy/HR/2024-06/p1.parquet', Buffer.from('x'));
+    const deleted: string[] = [];
+    const res = await sweepDeletions({ db, incoming, data, deleteAuthUser: async (u) => void deleted.push(u) });
+    expect(res).toEqual({ purged: 2, failed: 0 });
+    expect(deleted.sort()).toEqual(['stuck1', 'stuck2']);
+    expect((await db.doc('users/stuck1').get()).exists).toBe(false);
+    expect((await db.doc('users/healthy').get()).exists).toBe(true);
+    expect([...data.paths]).toEqual(['data/healthy/HR/2024-06/p1.parquet']);
+    // Nothing left to do on the next run.
+    expect(await sweepDeletions({ db, incoming, data, deleteAuthUser: async () => undefined })).toEqual({ purged: 0, failed: 0 });
+  });
+
+  it('keeps going when one account cannot be purged', async () => {
+    await registerDevice(db, 'bad1', 'UTC');
+    await registerDevice(db, 'good1', 'UTC');
+    await beginDeletion(db, 'bad1');
+    await beginDeletion(db, 'good1');
+    const res = await sweepDeletions({
+      db, incoming: new DirBlobs(), data: new DirBlobs(),
+      deleteAuthUser: async (u) => { if (u === 'bad1') throw Object.assign(new Error('boom'), { code: 'auth/internal-error' }); },
+    });
+    expect(res).toEqual({ purged: 1, failed: 1 });
+    expect((await db.doc('users/good1').get()).exists).toBe(false);
   });
 });
 

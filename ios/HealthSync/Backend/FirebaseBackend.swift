@@ -21,9 +21,22 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
     private var functions: Functions { Functions.functions(region: Self.region) }
 
     func signIn() async throws -> String {
-        if let user = Auth.auth().currentUser { return user.uid }
+        if let user = Auth.auth().currentUser {
+            do {
+                _ = try await user.getIDToken()
+                return user.uid
+            } catch let error as NSError where error.domain == AuthErrorDomain && Self.deadAccountCodes.contains(error.code) {
+                // The account was removed on the server (for example a deletion finished after the app
+                // was reinstalled). Start over with a new anonymous account instead of failing forever.
+                try? Auth.auth().signOut()
+            }
+        }
         return try await Auth.auth().signInAnonymously().user.uid
     }
+
+    /// FirebaseAuth error codes meaning the cached user no longer exists or can no longer be used:
+    /// userDisabled 17005, userNotFound 17011, invalidUserToken 17017, userTokenExpired 17021.
+    private static let deadAccountCodes: Set<Int> = [17005, 17011, 17017, 17021]
 
     func registerDevice(timeZone: String) async throws {
         _ = try await call("registerDevice", ["tz": timeZone])

@@ -50,6 +50,15 @@ grant "serviceAccount:service-$PN@gcp-sa-eventarc.iam.gserviceaccount.com" roles
 RUNTIME="${GCP_RUNTIME_SA:?GCP_RUNTIME_SA secret missing}"
 grant "serviceAccount:$RUNTIME" roles/run.invoker
 grant "serviceAccount:$RUNTIME" roles/eventarc.eventReceiver
+# "Delete All My Data" queues a Cloud Task from a function running as this account, and the task runs as
+# the same account. Without these two the queue call fails with a 403 (iam.serviceAccounts.actAs) and the
+# account is left half-deleted.
+grant "serviceAccount:$RUNTIME" roles/cloudtasks.enqueuer
+if gcloud iam service-accounts add-iam-policy-binding "$RUNTIME" --member="serviceAccount:$RUNTIME" --role=roles/iam.serviceAccountUser --quiet >/dev/null 2>/tmp/iam.err; then
+  echo "granted roles/iam.serviceAccountUser on $RUNTIME to itself"
+else
+  echo "::warning::could not let $RUNTIME act as itself: $(tail -1 /tmp/iam.err)"
+fi
 # New projects build functions with the default compute account, which needs these roles.
 for role in roles/cloudbuild.builds.builder roles/logging.logWriter roles/artifactregistry.writer roles/storage.objectViewer; do
   grant "serviceAccount:$PN-compute@developer.gserviceaccount.com" "$role"

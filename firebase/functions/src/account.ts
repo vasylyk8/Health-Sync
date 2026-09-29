@@ -164,3 +164,24 @@ export async function batchExists(deps: { meta: MetaStore; incoming: BlobStore }
   if ((await deps.meta.batchState(uid, batchId)) !== null) return true;
   return deps.incoming.exists(`incoming/${uid}/${batchId}.ndjson.gz`);
 }
+
+/**
+ * Finishes deletions that never completed: accounts marked `deleting` whose background purge did not
+ * run (the task could not be queued, or kept failing). Purging is idempotent, so this is safe to run
+ * repeatedly and alongside the normal purge task. One account failing does not stop the others.
+ */
+export async function sweepDeletions(deps: PurgeDeps, limit = 20): Promise<{ purged: number; failed: number }> {
+  const snap = await deps.db.collection('users').where('deleting', '==', true).limit(limit).get();
+  let purged = 0;
+  let failed = 0;
+  for (const doc of snap.docs) {
+    try {
+      await purgeUserData(deps, doc.id);
+      purged++;
+    } catch (err) {
+      failed++;
+      log.error('sweep purge failed', { uid: doc.id, code: (err as { code?: string }).code ?? 'internal' });
+    }
+  }
+  return { purged, failed };
+}
