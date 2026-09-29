@@ -11,6 +11,7 @@ struct ConnectView: View {
                 Section {
                     ForEach(model.providers) { provider in
                         Button { selected = provider } label: { ProviderRow(provider: provider, setUp: model.isSetUp(provider)) }
+                            .accessibilityHint(model.isSetUp(provider) ? "Shows connection details" : "Opens setup steps")
                             .accessibilityIdentifier("provider.\(provider.id)")
                             .accessibilityValue(model.isSetUp(provider) ? "Set up" : "Not set up")
                     }

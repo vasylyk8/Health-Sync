@@ -39,6 +39,7 @@ struct SetupSheet: View {
         VStack(spacing: 20) {
             Spacer()
             Image(systemName: "lock.shield.fill").font(.system(size: 56)).foregroundStyle(provider.tint.gradient)
+                .accessibilityHidden(true)
             Text("Share your Health data with \(provider.name)?").font(.title2.bold()).multilineTextAlignment(.center)
             Text("You'll get a private link. With it, \(provider.name) can read your Health data whenever you ask it a question. \(provider.company) processes that data under its own terms. You can disconnect at any time.")
                 .multilineTextAlignment(.center).foregroundStyle(.secondary)
@@ -133,6 +134,7 @@ struct SetupSheet: View {
         VStack(spacing: 18) {
             Spacer()
             Image(systemName: "checkmark.circle.fill").font(.system(size: 64)).foregroundStyle(.green)
+                .accessibilityHidden(true)
             Text("\(provider.name) is set up").font(.title2.bold())
             Text("Ask \(provider.name) about your sleep, workouts, heart rate and more. It reads your Health data only when you ask.")
                 .multilineTextAlignment(.center).foregroundStyle(.secondary)
@@ -169,6 +171,8 @@ private struct StepCard<Actions: View>: View {
                     .background(tint, in: Circle())
                 Text(step.title).font(.headline)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
             Text(step.detail).font(.subheadline).foregroundStyle(.secondary)
             IllustrationView(kind: step.illustration, tint: tint)
             actions()

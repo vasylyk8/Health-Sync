@@ -22,6 +22,7 @@ struct WelcomeView: View {
                 .accessibilityHidden(true)
             Text("KROK")
                 .font(.largeTitle.bold())
+                .accessibilityAddTraits(.isHeader)
                 .padding(.top, 20)
             Text("Ask Claude or ChatGPT about your Apple Health data.")
                 .font(.title3)
