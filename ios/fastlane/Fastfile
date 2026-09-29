@@ -109,7 +109,7 @@ platform :ios do
   end
 
   # Refuse to upload an app whose signature lost its HealthKit entitlement.
-  private_lane :verify_entitlements do |ipa|
+  def verify_entitlements(ipa)
     Dir.mktmpdir do |dir|
       sh("unzip -q #{ipa.shellescape} -d #{dir.shellescape}")
       app = Dir[File.join(dir, "Payload", "*.app")].first
