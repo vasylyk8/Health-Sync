@@ -215,6 +215,8 @@ export function parseBatch(gz: Buffer): ParsedBatch {
         const s = Date.UTC(y, m - 1, d);
         if (new Date(s).toISOString().slice(0, 10) !== rec.day) throw new BatchError(`line ${i}: impossible date ${rec.day}`);
         push(monthKey(s), { ...base, k: 'day', id: rec.day, s, e: s + 86_400_000, v: null, c: null, u: null, agg: null, src: null, bid: null, dev: null, tz: null, extra: JSON.stringify({ m: rec.m }) });
+        min = Math.min(min, s);
+        max = Math.max(max, s + 86_400_000);
         continue;
       }
       case 'c':

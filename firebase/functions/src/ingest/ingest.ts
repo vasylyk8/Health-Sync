@@ -288,7 +288,7 @@ export function applyBatch(man: TypeManifest, parsed: ParsedBatch, written: Reco
     // The anchored pass has now delivered everything up to the moment it was read.
     cov.intervals = addInterval(cov.intervals, [0, header.checkedAt ?? header.createdAt]);
   }
-  if (span && !statsOnly) {
+  if (span) {
     cov.earliest = cov.earliest === null ? span.start : Math.min(cov.earliest, span.start);
     cov.latest = cov.latest === null ? span.end : Math.max(cov.latest, span.end);
   }

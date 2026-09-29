@@ -111,6 +111,8 @@ describe('daily context ingest', () => {
     await upload(env, { type: '_daily', mode: 'stats', window: { start: 0, end: env.now } }, [{ k: 'day', day: '2024-06-20', m: { restingHr: 49 } }]);
     const man = await env.meta.getManifest(env.uid, '_daily');
     expect(man?.records).toBe(3);
+    expect(man?.coverage.earliest).toBe(Date.UTC(2024, 5, 19));
+    expect(man?.coverage.latest).toBe(Date.UTC(2024, 5, 21));
     expect(Object.keys(man!.files)).toEqual(['2024-06']);
   });
 

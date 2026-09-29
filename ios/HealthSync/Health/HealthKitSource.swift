@@ -93,6 +93,11 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             }
         }
 
+        // Workouts saved by other apps often carry only these totals, not statistics (deprecated on
+        // newer iOS, but still filled in for them).
+        if r["en"] == nil, let e = w.totalEnergyBurned { r["en"] = .double(e.doubleValue(for: .kilocalorie())) }
+        if r["dist"] == nil, let d = w.totalDistance { r["dist"] = .double(d.doubleValue(for: .meter())) }
+
         if let events = w.workoutEvents, !events.isEmpty {
             r["ev"] = .array(events.prefix(2_000).map { e in
                 .object(["t": e.dateInterval.start.ms, "type": .int(Int64(e.type.rawValue)), "dur": .double(e.dateInterval.duration)])
@@ -339,16 +344,21 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     private func dailyCategory(_ type: HKCategoryType, mode: CategoryMode, from: Date, to: Date, calendar: Calendar) async throws -> [(String, RecordValue)] {
         let predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: .strictStartDate)
         let found = try await fetch(type, predicate: predicate, sort: nil).compactMap { $0 as? HKCategorySample }
+        var out: [(String, RecordValue)] = []
         switch mode {
         case .minutes:
             var minutes: [String: Double] = [:]
             for s in found { minutes[SleepNights.dayKey(s.startDate, calendar: calendar), default: 0] += s.endDate.timeIntervalSince(s.startDate) / 60 }
-            return minutes.map { ($0.key, .double(($0.value * 10).rounded() / 10)) }
+            for (day, total) in minutes { out.append((day, RecordValue.double((total * 10).rounded() / 10))) }
         case .values:
             var values: [String: Set<Int>] = [:]
             for s in found { values[SleepNights.dayKey(s.startDate, calendar: calendar), default: []].insert(s.value) }
-            return values.map { ($0.key, .array($0.value.sorted().map { .int(Int64($0)) })) }
+            for (day, set) in values {
+                let list: [RecordValue] = set.sorted().map { RecordValue.int(Int64($0)) }
+                out.append((day, RecordValue.array(list)))
+            }
         }
+        return out
     }
 
     private func sleepSegments(_ type: HKCategoryType, from: Date, to: Date) async throws -> [SleepSegment] {
@@ -394,9 +404,12 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let found = try await fetch(HKObjectType.stateOfMindType(), predicate: predicate, sort: nil).compactMap { $0 as? HKStateOfMind }
         var byDay: [String: [Double]] = [:]
         for m in found { byDay[SleepNights.dayKey(m.startDate, calendar: calendar), default: []].append(m.valence) }
-        return byDay.map { day, values in
-            (day, ["moodValenceAvg": .double(values.reduce(0, +) / Double(values.count)), "moodEntries": .int(Int64(values.count))])
+        var out: [(String, [String: RecordValue])] = []
+        for (day, values) in byDay {
+            let mean = values.reduce(0, +) / Double(values.count)
+            out.append((day, ["moodValenceAvg": RecordValue.double(mean), "moodEntries": RecordValue.int(Int64(values.count))]))
         }
+        return out
     }
 
     // MARK: Background delivery

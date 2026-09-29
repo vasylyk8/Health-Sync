@@ -13,6 +13,8 @@
     { "collectionGroup": "types", "fieldPath": "fragmented", "indexes": [{ "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }] },
     { "collectionGroup": "types", "fieldPath": "files", "indexes": [] },
     { "collectionGroup": "types", "fieldPath": "coverage", "indexes": [] },
+    { "collectionGroup": "workouts", "fieldPath": "streams", "indexes": [] },
+    { "collectionGroup": "workouts", "fieldPath": "expected", "indexes": [] },
     { "collectionGroup": "rateLimits", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
     { "collectionGroup": "accessLog", "fieldPath": "expireAt", "ttl": true, "indexes": [{ "order": "ASCENDING", "queryScope": "COLLECTION" }] },
     { "collectionGroup": "batches", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
