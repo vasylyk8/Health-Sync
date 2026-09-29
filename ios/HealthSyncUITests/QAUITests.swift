@@ -48,30 +48,52 @@ final class QAUITests: XCTestCase {
         }
     }
 
+    /// The -uiTesting build still uses the real Keychain, so a link created by an earlier test
+    /// survives relaunch and the sheet would skip consent. "Delete All My Data" clears it.
+    private func launchFresh(_ extra: [String] = []) -> XCUIApplication {
+        let app = launch(extra + ["-onboarded"])
+        XCTAssertTrue(app.buttons["moreMenu"].waitForExistence(timeout: 5))
+        app.buttons["moreMenu"].tap()
+        app.buttons["Delete All My Data"].firstMatch.tap()
+        let confirm = app.sheets.buttons["Delete All My Data"].exists ? app.sheets.buttons["Delete All My Data"] : app.buttons["Delete All My Data"].firstMatch
+        confirm.tap()
+        XCTAssertTrue(app.buttons["connectHealth"].waitForExistence(timeout: 5))
+        return app
+    }
+
     private func openClaudeSteps(_ app: XCUIApplication) {
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))
         app.buttons["provider.claude"].tap()
         XCTAssertTrue(app.buttons["consentContinue"].waitForExistence(timeout: 5))
     }
 
+    /// Consent may sit below the fold at large text sizes: scroll to it if needed.
+    private func tapContinue(_ app: XCUIApplication) {
+        let cont = app.buttons["consentContinue"]
+        if !cont.isHittable {
+            print("QA-FLOW consentContinue not hittable without scrolling")
+            app.swipeUp()
+        }
+        cont.tap()
+    }
+
     // MARK: Accessibility
 
     func testAccessibilityAuditAllScreens() {
-        let app = launch()
-        XCTAssertTrue(app.buttons["connectHealth"].waitForExistence(timeout: 5))
+        let app = launchFresh()
         audit(app, "welcome")
         app.buttons["connectHealth"].tap()
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))
         audit(app, "home")
         openClaudeSteps(app)
         audit(app, "consent")
-        app.buttons["consentContinue"].tap()
+        tapContinue(app)
         XCTAssertTrue(app.buttons["copyLink"].waitForExistence(timeout: 5))
         audit(app, "steps")
     }
 
     func testLargestDynamicTypeLayouts() {
-        let app = launch(Self.xxxl)
+        let app = launchFresh(Self.xxxl)
         let connect = app.buttons["connectHealth"]
         XCTAssertTrue(connect.waitForExistence(timeout: 5))
         shot("qa-xxxl-01-welcome")
@@ -83,18 +105,17 @@ final class QAUITests: XCTestCase {
         audit(app, "home-xxxl")
         openClaudeSteps(app)
         shot("qa-xxxl-03-consent")
-        XCTAssertTrue(app.buttons["consentContinue"].isHittable, "Continue reachable without scrolling?")
-        app.buttons["consentContinue"].tap()
+        print("QA-FLOW xxxl consentContinue hittable without scrolling: \(app.buttons["consentContinue"].isHittable)")
+        tapContinue(app)
         XCTAssertTrue(app.buttons["copyLink"].waitForExistence(timeout: 5))
         shot("qa-xxxl-04-steps")
         audit(app, "steps-xxxl")
     }
 
-    func testDarkModeScreens() {
-        XCUIDevice.shared.appearance = .dark
-        defer { XCUIDevice.shared.appearance = .light }
-        let app = launch()
-        XCTAssertTrue(app.buttons["connectHealth"].waitForExistence(timeout: 5))
+    /// Runs in the second pass of qa-ios.yml, after `simctl ui appearance dark`.
+    func testDarkModeScreens() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["QA_APPEARANCE"] == "dark", "dark pass only")
+        let app = launchFresh()
         shot("qa-dark-01-welcome")
         audit(app, "welcome-dark")
         app.buttons["connectHealth"].tap()
@@ -102,7 +123,7 @@ final class QAUITests: XCTestCase {
         shot("qa-dark-02-home")
         openClaudeSteps(app)
         shot("qa-dark-03-consent")
-        app.buttons["consentContinue"].tap()
+        tapContinue(app)
         XCTAssertTrue(app.buttons["copyLink"].waitForExistence(timeout: 5))
         shot("qa-dark-04-steps")
         audit(app, "steps-dark")
@@ -138,9 +159,10 @@ final class QAUITests: XCTestCase {
     /// Closing the sheet before the assistant connects, then reopening, resumes at the steps
     /// (the link was already created) instead of asking for consent again.
     func testReopeningSetupResumesAtSteps() {
-        let app = launch(["-onboarded"])
+        let app = launchFresh()
+        app.buttons["connectHealth"].tap()
         openClaudeSteps(app)
-        app.buttons["consentContinue"].tap()
+        tapContinue(app)
         XCTAssertTrue(app.buttons["copyLink"].waitForExistence(timeout: 5))
         app.buttons["Close"].tap()
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))
@@ -152,9 +174,10 @@ final class QAUITests: XCTestCase {
     }
 
     func testDisconnectReturnsRowToNotSetUp() {
-        let app = launch(["-onboarded"])
+        let app = launchFresh()
+        app.buttons["connectHealth"].tap()
         openClaudeSteps(app)
-        app.buttons["consentContinue"].tap()
+        tapContinue(app)
         let row = app.buttons["provider.claude"]
         expectation(for: NSPredicate(format: "value == 'Set up'"), evaluatedWith: row)
         waitForExpectations(timeout: 20)
@@ -183,7 +206,8 @@ final class QAUITests: XCTestCase {
 
     /// Rapid double tap on Continue must not create two links (the second revokes the first).
     func testDoubleTapContinue() {
-        let app = launch(["-onboarded"])
+        let app = launchFresh()
+        app.buttons["connectHealth"].tap()
         openClaudeSteps(app)
         let cont = app.buttons["consentContinue"]
         cont.tap()

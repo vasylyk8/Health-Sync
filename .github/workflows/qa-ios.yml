@@ -48,11 +48,23 @@ jobs:
             -resultBundlePath qa.xcresult \
             CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= | tee qa.log | grep -E "QA-|Test Case|error:|passed|failed"
           exit ${PIPESTATUS[0]}
+      - name: QA UI tests (dark appearance)
+        if: always()
+        run: |
+          xcrun simctl boot "$SIM_DEVICE" || true
+          xcrun simctl ui booted appearance dark
+          TEST_RUNNER_QA_APPEARANCE=dark xcodebuild test -project HealthSync.xcodeproj -scheme HealthSync \
+            -destination "platform=iOS Simulator,name=$SIM_DEVICE" \
+            -only-testing:HealthSyncUITests/QAUITests/testDarkModeScreens \
+            -resultBundlePath qa-dark.xcresult \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= | tee qa-dark.log | grep -E "QA-|Test Case|error:"
+          exit ${PIPESTATUS[0]}
       - name: Export screenshots
         if: always()
         run: |
-          mkdir -p qa-screenshots
+          mkdir -p qa-screenshots qa-screenshots-dark
           xcrun xcresulttool export attachments --path qa.xcresult --output-path qa-screenshots || true
+          xcrun xcresulttool export attachments --path qa-dark.xcresult --output-path qa-screenshots-dark || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
