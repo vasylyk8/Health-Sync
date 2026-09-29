@@ -23,6 +23,7 @@ export type Stat = (typeof STATS)[number];
 
 const MAX_PERIOD_ROWS = 2000;
 const MAX_SAMPLE_ROWS = 500;
+const OVERVIEW_CONCURRENCY = 3;
 
 const FMT: Record<Period, string> = {
   hour: '%Y-%m-%d %H:00',
@@ -354,17 +355,15 @@ export async function getOverview(deps: QueryDeps, args: { days?: number; timezo
   const startMs = Date.parse(today + 'T00:00:00Z') - (days - 1) * 86_400_000;
   const start = new Date(startMs).toISOString().slice(0, 10);
   const base = { start_date: start, end_date: today, timezone: tz };
-  const metrics: Record<string, unknown> = {};
-  const coverage: CoverageInfo[] = [];
-  let complete = true;
+  const results: { name: string; value: unknown; coverage: CoverageInfo[]; complete: boolean }[] = [];
   const safe = async (name: string, fn: () => Promise<ToolResult>, pick: (r: ToolResult) => unknown) => {
+    const slot = results.length;
+    results.push({ name, value: undefined, coverage: [], complete: true });
     try {
       const res = await fn();
-      coverage.push(...res.coverage);
-      complete &&= res.complete;
-      metrics[name] = pick(res);
+      results[slot] = { name, value: pick(res), coverage: res.coverage, complete: res.complete };
     } catch (err) {
-      metrics[name] = err instanceof ToolError ? { unavailable: err.message } : { unavailable: 'error' };
+      results[slot]!.value = err instanceof ToolError ? { unavailable: err.message } : { unavailable: 'error' };
     }
   };
   const total = (r: ToolResult) => {
@@ -375,21 +374,31 @@ export async function getOverview(deps: QueryDeps, args: { days?: number; timezo
     const row = (r.rows as { value: number }[])[0];
     return row ? Math.round(row.value * 10) / 10 : 'no data';
   };
-  await safe('steps', () => summarize(deps, { ...base, type: 'StepCount', period: 'day' }), total);
-  await safe('activeEnergyKcal', () => summarize(deps, { ...base, type: 'ActiveEnergyBurned', period: 'day' }), total);
-  await safe('exerciseMinutes', () => summarize(deps, { ...base, type: 'AppleExerciseTime', period: 'day' }), total);
-  await safe('restingHeartRateBpm', () => summarize(deps, { ...base, type: 'RestingHeartRate', period: 'none' }), avg);
-  await safe('hrvSdnnMs', () => summarize(deps, { ...base, type: 'HeartRateVariabilitySDNN', period: 'none' }), avg);
-  await safe('bodyMassKg', () => summarize(deps, { ...base, type: 'BodyMass', period: 'none' }), avg);
-  await safe('vo2Max', () => summarize(deps, { ...base, type: 'VO2Max', period: 'none' }), avg);
-  await safe('sleep', () => getSleep(deps, base), (r) => {
-    const n = r.nights as { asleep_min: number }[];
-    return n.length ? { nights: n.length, averageAsleepHours: Math.round((n.reduce((a, x) => a + x.asleep_min, 0) / n.length / 60) * 10) / 10 } : 'no data';
-  });
-  await safe('workouts', () => getWorkouts(deps, base), (r) => {
-    const w = r.workouts as { duration_min: number }[];
-    return { count: w.length, totalMinutes: Math.round(w.reduce((a, x) => a + (x.duration_min ?? 0), 0)) };
-  });
+  // Independent queries: run a few at a time instead of one after another (each opens its own DuckDB).
+  const jobs: (() => Promise<void>)[] = [
+    () => safe('steps', () => summarize(deps, { ...base, type: 'StepCount', period: 'day' }), total),
+    () => safe('activeEnergyKcal', () => summarize(deps, { ...base, type: 'ActiveEnergyBurned', period: 'day' }), total),
+    () => safe('exerciseMinutes', () => summarize(deps, { ...base, type: 'AppleExerciseTime', period: 'day' }), total),
+    () => safe('restingHeartRateBpm', () => summarize(deps, { ...base, type: 'RestingHeartRate', period: 'none' }), avg),
+    () => safe('hrvSdnnMs', () => summarize(deps, { ...base, type: 'HeartRateVariabilitySDNN', period: 'none' }), avg),
+    () => safe('bodyMassKg', () => summarize(deps, { ...base, type: 'BodyMass', period: 'none' }), avg),
+    () => safe('vo2Max', () => summarize(deps, { ...base, type: 'VO2Max', period: 'none' }), avg),
+    () => safe('sleep', () => getSleep(deps, base), (r) => {
+      const n = r.nights as { asleep_min: number }[];
+      return n.length ? { nights: n.length, averageAsleepHours: Math.round((n.reduce((a, x) => a + x.asleep_min, 0) / n.length / 60) * 10) / 10 } : 'no data';
+    }),
+    () => safe('workouts', () => getWorkouts(deps, base), (r) => {
+      const w = r.workouts as { duration_min: number }[];
+      return { count: w.length, totalMinutes: Math.round(w.reduce((a, x) => a + (x.duration_min ?? 0), 0)) };
+    }),
+  ];
+  const queue = [...jobs];
+  await Promise.all(Array.from({ length: OVERVIEW_CONCURRENCY }, async () => {
+    for (let job = queue.shift(); job; job = queue.shift()) await job();
+  }));
+  const metrics = Object.fromEntries(results.map((r) => [r.name, r.value]));
+  const coverage = results.flatMap((r) => r.coverage);
+  const complete = results.every((r) => r.complete);
   const env = envelope(deps, [], complete);
   if (coverage.some((cv) => cv.stale)) {
     env.notes.unshift('Some of this data was last synced more than a day ago. Suggest the user opens the KROK app on their iPhone to refresh.');

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { deps, makeEnv, upload, type Env } from '../helpers/memory.js';
-import { getProfile, getSamples, getSleep, getWorkouts, listAvailableData, summarize } from '../../src/query/tools.js';
+import { getOverview, getProfile, getSamples, getSleep, getWorkouts, listAvailableData, summarize } from '../../src/query/tools.js';
 import { ToolError } from '../../src/query/context.js';
 
 const STEPS = 'HKQuantityTypeIdentifierStepCount';
@@ -178,5 +178,19 @@ describe('series samples', () => {
     await upload(env, { type: HR }, [{ k: 'd', id: 'S1' }]);
     const r = await summarize(deps(env), { type: 'HeartRate', start_date: '2024-06-01', end_date: '2024-06-01', period: 'none', stat: 'count' });
     expect((r.rows as { value: number }[])[0]!.value).toBe(1);
+  });
+});
+
+describe('getOverview', () => {
+  it('returns every metric in a fixed order with per-metric results', async () => {
+    const env = makeEnv();
+    await seedSteps(env);
+    const r = await getOverview(deps(env), { days: 30 });
+    expect(Object.keys(r.metrics as object)).toEqual([
+      'steps', 'activeEnergyKcal', 'exerciseMinutes', 'restingHeartRateBpm', 'hrvSdnnMs', 'bodyMassKg', 'vo2Max', 'sleep', 'workouts',
+    ]);
+    expect((r.metrics as { steps: unknown }).steps).toEqual({ dailyAverage: 50, total: 1500 });
+    expect((r.metrics as { sleep: unknown }).sleep).toBe('no data');
+    expect(r.period).toBe('2024-06-01..2024-06-30');
   });
 });
