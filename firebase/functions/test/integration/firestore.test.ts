@@ -29,6 +29,19 @@ describe('FirestoreMeta.publish', () => {
     expect((await meta.getManifest('u1', 'HR'))!.files['2024-06']).toHaveLength(1);
   });
 
+  it('round-trips coverage intervals (Firestore forbids nested arrays)', async () => {
+    await registerDevice(db, 'u3', 'UTC');
+    const mutate = (m: ReturnType<typeof emptyManifest>) => ({
+      ...add(m, 'p1'),
+      coverage: { ...m.coverage, intervals: [[0, 1000], [2000, 3000]] as [number, number][], statsIntervals: [[0, 5000]] as [number, number][], earliest: 1 },
+    });
+    expect(await meta.publish({ uid: 'u3', type: 'HR', batchId: 'b1', generation: 1, mutate })).toBe('published');
+    const man = (await meta.getManifest('u3', 'HR'))!;
+    expect(man.coverage.intervals).toEqual([[0, 1000], [2000, 3000]]);
+    expect(man.coverage.statsIntervals).toEqual([[0, 5000]]);
+    expect((await meta.listManifests('u3'))[0]!.coverage.intervals).toHaveLength(2);
+  });
+
   it('handles concurrent publishes without losing files', async () => {
     await registerDevice(db, 'u2', 'UTC');
     await Promise.all(Array.from({ length: 8 }, (_, i) =>

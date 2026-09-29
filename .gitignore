@@ -5,3 +5,4 @@ ios/fastlane/report.xml
 ios/HealthSync/GoogleService-Info.plist
 ios/Gemfile.lock
 .DS_Store
+*-debug.log

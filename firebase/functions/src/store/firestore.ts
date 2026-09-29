@@ -1,9 +1,26 @@
 import { FieldPath, type Firestore } from 'firebase-admin/firestore';
 import { COMPACT_THRESHOLD } from '../ingest/ingest.js';
-import { emptyManifest, type BatchState, type BlobStore, type FileRef, type MetaStore, type TypeManifest, type UserDoc } from './types.js';
+import { emptyManifest, type BatchState, type BlobStore, type FileRef, type Interval, type MetaStore, type TypeManifest, type UserDoc } from './types.js';
 
 /** Firestore document ids cannot contain '/'; HealthKit ids never do, but guard anyway. */
 const typeDocId = (type: string) => type.replace(/\//g, '_');
+
+// Firestore rejects arrays nested in arrays, so intervals are stored as {s, e} objects.
+type StoredInterval = { s: number; e: number };
+const packIntervals = (list: Interval[]): StoredInterval[] => list.map(([s, e]) => ({ s, e }));
+const unpackIntervals = (list: (StoredInterval | Interval)[] | undefined): Interval[] =>
+  (list ?? []).map((iv) => (Array.isArray(iv) ? iv : [iv.s, iv.e]));
+
+export function toDoc(man: TypeManifest): Record<string, unknown> {
+  const { intervals, statsIntervals } = man.coverage;
+  return { ...man, coverage: { ...man.coverage, intervals: packIntervals(intervals), statsIntervals: packIntervals(statsIntervals) } };
+}
+
+export function fromDoc(data: Record<string, unknown>): TypeManifest {
+  const man = data as unknown as TypeManifest;
+  const cov = man.coverage as unknown as { intervals?: StoredInterval[]; statsIntervals?: StoredInterval[] };
+  return { ...man, coverage: { ...man.coverage, intervals: unpackIntervals(cov.intervals), statsIntervals: unpackIntervals(cov.statsIntervals) } };
+}
 
 export class FirestoreMeta implements MetaStore {
   constructor(private readonly db: Firestore) {}
@@ -19,12 +36,12 @@ export class FirestoreMeta implements MetaStore {
 
   async getManifest(uid: string, type: string): Promise<TypeManifest | null> {
     const snap = await this.user(uid).collection('types').doc(typeDocId(type)).get();
-    return snap.exists ? (snap.data() as TypeManifest) : null;
+    return snap.exists ? fromDoc(snap.data()!) : null;
   }
 
   async listManifests(uid: string): Promise<TypeManifest[]> {
     const snap = await this.user(uid).collection('types').get();
-    return snap.docs.map((d) => d.data() as TypeManifest);
+    return snap.docs.map((d) => fromDoc(d.data()));
   }
 
   async batchState(uid: string, batchId: string): Promise<BatchState | null> {
@@ -50,8 +67,8 @@ export class FirestoreMeta implements MetaStore {
       const user = userSnap.data() as UserDoc | undefined;
       if (!user || user.deleting || user.generation !== generation) return 'discarded';
       if (batchSnap.get('state') === 'published') return 'duplicate';
-      const current = manSnap.exists ? (manSnap.data() as TypeManifest) : emptyManifest(type);
-      tx.set(manRef, mutate(current));
+      const current = manSnap.exists ? fromDoc(manSnap.data()!) : emptyManifest(type);
+      tx.set(manRef, toDoc(mutate(current)));
       tx.set(batchRef, { state: 'published', at: Date.now(), expireAt: new Date(Date.now() + 30 * 86_400_000) });
       if (userPatch && Object.keys(userPatch).length) tx.update(userRef, userPatch);
       return 'published';
@@ -63,7 +80,7 @@ export class FirestoreMeta implements MetaStore {
     return this.db.runTransaction(async (tx) => {
       const snap = await tx.get(manRef);
       if (!snap.exists) return false;
-      const man = snap.data() as TypeManifest;
+      const man = fromDoc(snap.data()!);
       const list = man.files[partition] ?? [];
       const paths = new Set(list.map((f) => f.path));
       if (!removed.every((p) => paths.has(p))) return false;
