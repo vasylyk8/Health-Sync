@@ -36,8 +36,14 @@ else:
     print("created internal group 'Team' (all builds)")
 gid = group["id"]
 
+_, members = call("GET", f"/betaGroups/{gid}/betaTesters?limit=200")
+in_group = {m["attributes"].get("email", "").lower() for m in members.get("data", [])}
+
 failed = 0
 for n, email in enumerate(e.strip() for e in os.environ.get("TESTER_EMAILS", "").split(",") if e.strip()):
+    if email.lower() in in_group:
+        print(f"tester {n + 1}: already in the group")
+        continue
     _, found = call("GET", "/betaTesters?" + urllib.parse.urlencode({"filter[email]": email}))
     if found.get("data"):
         code, doc = call("POST", f"/betaGroups/{gid}/relationships/betaTesters", {"data": [{"type": "betaTesters", "id": found["data"][0]["id"]}]})
