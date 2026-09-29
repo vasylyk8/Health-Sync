@@ -67,7 +67,7 @@ struct ProviderRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(provider.name).font(.headline).foregroundStyle(.primary)
                 if let subtitle = provider.subtitle {
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                    Text(subtitle).font(.caption).foregroundStyle(Theme.mutedText)
                 }
             }
             Spacer()
@@ -103,18 +103,18 @@ struct SyncStatusView: View {
                         .font(.footnote)
                 }
                 Text("Keep the app open while your workouts sync. You can connect an assistant meanwhile.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(Theme.mutedText)
             } else if let last = status.lastVisibleDate {
                 Label {
                     Text("Synced \(last, format: .relative(presentation: .named))")
                 } icon: {
-                    Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(.secondary)
+                    Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(Theme.mutedText)
                 }
                 .font(.subheadline)
             } else if progress.historyComplete && status.typesWithData == 0 && status.registered {
                 Text("No readable Health data found").font(.subheadline.weight(.medium))
                 Text("Check Settings › Health › Data Access & Devices › KROK and turn on Workouts, Workout Routes and the other categories you want to share.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(Theme.mutedText)
             } else {
                 Label("Getting ready…", systemImage: "hourglass").font(.subheadline)
             }
@@ -126,7 +126,7 @@ struct SyncStatusView: View {
             }
             if let start = status.historyStart {
                 Text("History synced back to \(start, format: .dateTime.month(.abbreviated).year())")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(Theme.mutedText)
             }
         }
         .fixedSize(horizontal: false, vertical: true)
