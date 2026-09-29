@@ -160,3 +160,7 @@ Use together with `docs/RELEASE_SOAK.md`.
 - `firebase/functions/test/unit/qa-findings.test.ts`: 9 `it.fails` tests (S-1 to S-6, V-1 to V-3). They pass today *because* the bugs exist. Once a bug is fixed its test shows as "unexpectedly passing"; then change `it.fails` to `it`.
 - `ios/HealthSyncTests/QAFindingsTests.swift`: 3 `XCTExpectFailure` tests (I-3, I-4, I-6).
 - `ios/HealthSyncUITests/QAUITests.swift` and `.github/workflows/qa-ios.yml`: accessibility audit, Dynamic Type, dark mode, launch time and flow tests, run on the smallest iPhone simulator.
+
+
+## Open item carried forward (workouts release)
+- **M11 (Home status text layout):** at large text sizes the Home status text still clips and does not fully scale. The Home accessibility audit in `AuditUITests` exempts exactly these two finding types (`dynamicType`, `textClipped`), on the Home screen only. Fix the layout, then remove the exemption.
