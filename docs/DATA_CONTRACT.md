@@ -74,7 +74,7 @@ If the anchor is lost/invalid, after a permission change, or after 30+ days with
 `users/{uid}/types/{type}`:
 ```
 { version, files: { "2024-03": ["…parquet", …], "_stats/2024": […], "_tombstones": […] },
-  coverage: { intervals: [[start,end],…], caughtUp: bool, earliest, latest, checkedAt, visibleAt },
+  coverage: { intervals: [[start,end],…] (stored in Firestore as [{s,e},…], which forbids nested arrays), statsIntervals, caughtUp: bool, earliest, latest, checkedAt, visibleAt },
   counts: { records } }
 ```
 `users/{uid}`: `{ generation, deleting: bool, lastVisibleAt, connections{…}, rate{…} }`.
