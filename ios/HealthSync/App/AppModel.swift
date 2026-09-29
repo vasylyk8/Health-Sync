@@ -188,9 +188,21 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func friendly(_ error: Error) -> String {
+    /// Turns an error into something a person can act on.
+    static func message(for error: Error) -> String {
         if let e = error as? LocalizedError, let d = e.errorDescription { return d }
-        if (error as NSError).domain == NSURLErrorDomain { return "You appear to be offline. Try again when you're connected." }
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain { return "You appear to be offline. Try again when you're connected." }
+        if ns.domain == "com.firebase.functions" {
+            switch ns.code {
+            case 8: return "Too many attempts. Please wait a while and try again."
+            case 9: return ns.localizedDescription  // e.g. "This account is being deleted."
+            case 14: return "KROK's servers can't be reached right now. Try again in a moment."
+            default: break
+            }
+        }
         return "Something went wrong. Please try again."
     }
+
+    private func friendly(_ error: Error) -> String { Self.message(for: error) }
 }

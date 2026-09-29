@@ -252,6 +252,7 @@ export async function getWorkouts(deps: QueryDeps, args: { start_date: string; e
         json_extract(extra, '$.acts') AS segments, src AS source
       FROM w WHERE ${filters.join(' AND ')} ORDER BY s LIMIT ${cap + 1}`);
     if (out.length > cap) throw new ToolError('too_large', `More than ${cap} workouts in that range. Use a shorter range or summarize.`);
+    for (const row of out) row.segments = readableSegments(row.segments, r.tz);
     return {
       ...envelope(deps, [[WORKOUT, man]], isComplete(man, startUtc, endUtc, deps.now())),
       timezone: r.tz, count: out.length,
@@ -259,6 +260,28 @@ export async function getWorkouts(deps: QueryDeps, args: { start_date: string; e
       workouts: out,
     };
   });
+}
+
+/** Workout segments as local times with consecutive identical activities merged; null when there is nothing to add. */
+function readableSegments(raw: unknown, tz: string): { activity: string; start: string; minutes: number }[] | null {
+  if (typeof raw !== 'string') return null;
+  let list: { s: number; e: number; actName?: string }[];
+  try {
+    list = JSON.parse(raw) as typeof list;
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(list)) return null;
+  const clock = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+  const merged: { activity: string; startMs: number; endMs: number }[] = [];
+  for (const seg of list) {
+    const activity = seg.actName ?? 'Unknown';
+    const last = merged[merged.length - 1];
+    if (last && last.activity === activity) last.endMs = seg.e;
+    else merged.push({ activity, startMs: seg.s, endMs: seg.e });
+  }
+  if (merged.length < 2) return null;
+  return merged.map((m) => ({ activity: m.activity, start: clock.format(new Date(m.startMs)), minutes: Math.round((m.endMs - m.startMs) / 60_000) }));
 }
 
 // ---------------------------------------------------------------------------------------------

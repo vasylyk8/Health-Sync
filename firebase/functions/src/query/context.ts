@@ -1,6 +1,6 @@
 import type { DuckDBConnection } from '@duckdb/node-api';
 import { join } from 'node:path';
-import { LIMITS, resolveType, shortName, type CoverageEntry } from '../config.js';
+import { COVERAGE, LIMITS, resolveType, shortName, type CoverageEntry } from '../config.js';
 import { covers, type BlobStore, type MetaStore, type TypeManifest } from '../store/types.js';
 import { lit } from './duck.js';
 
@@ -42,10 +42,26 @@ export function parseDate(value: string, field: string): string {
   return value;
 }
 
+/** Everyday names an assistant is likely to use, mapped to the real type names. */
+const ALIASES: Record<string, string> = {
+  steps: 'StepCount', stepcount: 'StepCount', heartrate: 'HeartRate', pulse: 'HeartRate', restinghr: 'RestingHeartRate',
+  hrv: 'HeartRateVariabilitySDNN', heartratevariability: 'HeartRateVariabilitySDNN', sleep: 'SleepAnalysis',
+  weight: 'BodyMass', bodyweight: 'BodyMass', calories: 'ActiveEnergyBurned', activeenergy: 'ActiveEnergyBurned',
+  activecalories: 'ActiveEnergyBurned', distance: 'DistanceWalkingRunning', exercise: 'AppleExerciseTime',
+  exerciseminutes: 'AppleExerciseTime', vo2: 'VO2Max', vo2max: 'VO2Max', bloodoxygen: 'OxygenSaturation', spo2: 'OxygenSaturation',
+};
+
+const squash = (name: string) => name.toLowerCase().replace(/[\s_-]+/g, '');
+
 export function resolveKnownType(name: string): CoverageEntry {
-  const t = resolveType(name);
-  if (!t) throw new ToolError('not_found', `Unknown data type "${name}". Call list_available_data to see valid names.`);
-  return t;
+  const found = resolveType(name) ?? (ALIASES[squash(name)] ? resolveType(ALIASES[squash(name)]!) : undefined);
+  if (found) return found;
+  const q = squash(name);
+  const similar = q.length >= 3
+    ? COVERAGE.types.map((t) => shortName(t.id)).filter((n) => squash(n).includes(q) || q.includes(squash(n))).slice(0, 5)
+    : [];
+  const hint = similar.length ? ` Did you mean ${similar.join(', ')}?` : '';
+  throw new ToolError('not_found', `Unknown data type "${name}".${hint} Call list_available_data to see valid names.`);
 }
 
 export interface CoverageInfo {

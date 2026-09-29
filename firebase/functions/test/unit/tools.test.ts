@@ -152,6 +152,28 @@ describe('getWorkouts / profile / list', () => {
     expect(r.workouts).toMatchObject([{ start: '2024-06-03 07:00', activity: 'Running', duration_min: 50, active_kcal: 500.2, distance_km: 10.123 }]);
   });
 
+  it('shows workout segments as local times and merges repeats', async () => {
+    const env = makeEnv();
+    const seg = (s: number, e: number, actName: string) => ({ s, e, act: 1, actName });
+    const at = (d: number, h: number, m: number) => day(d, h) + m * 60_000;
+    await upload(env, { type: 'HKWorkoutTypeIdentifier', mode: 'recent', window: { start: day(1), end: env.now } }, [
+      { k: 'w', id: 'w1', s: day(3, 7), e: day(3, 8), act: 82, actName: 'Multisport', dur: 3600, acts: [seg(day(3, 7), at(3, 7, 20), 'Running'), seg(at(3, 7, 20), at(3, 7, 40), 'Running'), seg(at(3, 7, 40), day(3, 8), 'Cycling')], src: 'Watch' },
+      { k: 'w', id: 'w2', s: day(4, 7), e: day(4, 8), act: 37, actName: 'Running', dur: 3600, acts: [seg(day(4, 7), at(4, 7, 30), 'Running'), seg(at(4, 7, 30), day(4, 8), 'Running')], src: 'Watch' },
+    ]);
+    const r = await getWorkouts(deps(env), { start_date: '2024-06-01', end_date: '2024-06-30' });
+    const [multi, single] = r.workouts as { segments: unknown }[];
+    expect(multi!.segments).toEqual([{ activity: 'Running', start: '07:00', minutes: 40 }, { activity: 'Cycling', start: '07:40', minutes: 20 }]);
+    expect(single!.segments).toBeNull();
+  });
+
+  it('understands everyday names and suggests close matches', async () => {
+    const env = makeEnv();
+    await upload(env, { type: STEPS, mode: 'stats', window: { start: day(1), end: env.now } }, [{ k: 'h', s: day(1, 9), e: day(1, 10), agg: 'sum', v: 1000, u: 'count' }]);
+    const r = await summarize(deps(env), { type: 'Steps', start_date: '2024-06-01', end_date: '2024-06-01', period: 'day' });
+    expect(r.type).toBe('StepCount');
+    await expect(summarize(deps(env), { type: 'Heartrat', start_date: '2024-06-01', end_date: '2024-06-01', period: 'day' })).rejects.toThrow(/Did you mean HeartRate/);
+  });
+
   it('computes age from the profile', async () => {
     const env = makeEnv();
     await upload(env, { type: '_profile', mode: 'profile' }, [{ k: 'p', dob: '1990-07-15', sex: 'female', blood: 'A+' }]);

@@ -83,4 +83,12 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .home)
         XCTAssertFalse(model.busy)
     }
+
+    func testErrorMessagesAreActionable() {
+        XCTAssertTrue(AppModel.message(for: URLError(.notConnectedToInternet)).contains("offline"))
+        XCTAssertTrue(AppModel.message(for: NSError(domain: "com.firebase.functions", code: 8)).contains("Too many"))
+        XCTAssertEqual(AppModel.message(for: NSError(domain: "com.firebase.functions", code: 9, userInfo: [NSLocalizedDescriptionKey: "This account is being deleted."])), "This account is being deleted.")
+        XCTAssertEqual(AppModel.message(for: BackendError.notSignedIn), "Could not sign in. Check your internet connection.")
+        XCTAssertEqual(AppModel.message(for: NSError(domain: "x", code: 1)), "Something went wrong. Please try again.")
+    }
 }
