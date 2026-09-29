@@ -11,7 +11,14 @@ struct SyncProgress: Equatable, Sendable {
     var typesDone: Int
     var typesTotal: Int
     var isSyncing: Bool
-    var fraction: Double { typesTotal == 0 ? 0 : Double(typesDone) / Double(typesTotal) }
+    /// Work units across all phases (last 30 days, hourly totals, full history), so the bar moves
+    /// from the start instead of only in the final phase.
+    var stepsDone = 0
+    var stepsTotal = 0
+    var fraction: Double {
+        if stepsTotal > 0 { return min(1, Double(stepsDone) / Double(stepsTotal)) }
+        return typesTotal == 0 ? 0 : Double(typesDone) / Double(typesTotal)
+    }
     var historyComplete: Bool { typesTotal > 0 && typesDone >= typesTotal }
 }
 
@@ -25,6 +32,8 @@ actor SyncEngine {
         var statsIncrementalDays = 3
         var statsFullEvery: TimeInterval = 7 * 86_400
         var reconcileAfter: TimeInterval = 30 * 86_400
+        /// Data types synced at the same time (uploads are latency-bound, not bandwidth-bound).
+        var parallelTypes = 4
         var device = "iPhone"
         var appVersion = "1.0"
     }
@@ -59,8 +68,14 @@ actor SyncEngine {
     }
 
     var progress: SyncProgress {
+        let s = outbox.state
         let anchored = types.filter(\.isAnchored)
-        return SyncProgress(typesDone: anchored.filter { outbox.state.caughtUp.contains($0.id) }.count, typesTotal: anchored.count, isSyncing: running)
+        let quantity = types.filter { if case .quantity = $0.kind { return true } else { return false } }
+        let caughtUp = anchored.filter { s.caughtUp.contains($0.id) }.count
+        // The full-history phase takes longest, so it counts double.
+        let done = anchored.filter { s.recentDone.contains($0.id) }.count + quantity.filter { s.statsFullAt[$0.id] != nil }.count + 2 * caughtUp
+        return SyncProgress(typesDone: caughtUp, typesTotal: anchored.count, isSyncing: running,
+                            stepsDone: done, stepsTotal: 3 * anchored.count + quantity.count)
     }
 
     private func report(syncing: Bool) {
@@ -81,37 +96,59 @@ actor SyncEngine {
             running = false
             report(syncing: false)
         }
-        let outOfTime = { [now] in deadline.map { now() >= $0 } ?? false }
+        let outOfTime: @Sendable () -> Bool = { [now] in deadline.map { now() >= $0 } ?? false }
 
         try await flush()
         try startReconcileIfNeeded()
         try await syncProfile()
 
-        let anchored = types.filter(\.isAnchored)
-        for t in anchored where !outbox.state.recentDone.contains(t.id) {
-            if outOfTime() { return .outOfTime }
-            try await recent(t)
-        }
-        for t in types {
-            if outOfTime() { return .outOfTime }
-            if case .quantity = t.kind { try await stats(t) }
-        }
-        for t in types where t.kind == .activitySummary {
-            try await activity(t)
-        }
-        for t in types where t.kind == .correlation {
-            try await correlation(t)
-        }
-        for t in anchored {
-            while true {
-                if outOfTime() { return .outOfTime }
-                let done = try await anchoredPage(t)
-                report(syncing: true)
-                if done { break }
+        do {
+            let anchored = types.filter(\.isAnchored)
+            try await eachType(anchored.filter { !outbox.state.recentDone.contains($0.id) }) { engine, t in
+                if outOfTime() { throw OutOfTime() }
+                try await engine.recent(t)
             }
+            try await eachType(types.filter { if case .quantity = $0.kind { return true } else { return false } }) { engine, t in
+                if outOfTime() { throw OutOfTime() }
+                try await engine.stats(t)
+            }
+            for t in types where t.kind == .activitySummary {
+                try await activity(t)
+            }
+            for t in types where t.kind == .correlation {
+                try await correlation(t)
+            }
+            try await eachType(anchored) { engine, t in
+                while true {
+                    if outOfTime() { throw OutOfTime() }
+                    if try await engine.anchoredPage(t) { break }
+                    await engine.report(syncing: true)
+                }
+            }
+        } catch is OutOfTime {
+            return .outOfTime
         }
         try outbox.update { $0.lastSyncAt = now() }
         return .finished
+    }
+
+    private struct OutOfTime: Error {}
+
+    /// Runs `body` for each type, `config.parallelTypes` at a time. Each type's uploads stay in
+    /// order (one task per type); different types are independent on the server.
+    private func eachType(_ list: [SyncType], _ body: @escaping @Sendable (SyncEngine, SyncType) async throws -> Void) async throws {
+        var queue = list[...]
+        let parallel = max(1, config.parallelTypes)
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0..<parallel {
+                guard let t = queue.popFirst() else { break }
+                group.addTask { try await body(self, t) }
+            }
+            while try await group.next() != nil {
+                await self.report(syncing: true)
+                if let t = queue.popFirst() { group.addTask { try await body(self, t) } }
+            }
+        }
     }
 
     /// Quick incremental sync of specific types (HealthKit background observers).
@@ -134,6 +171,12 @@ actor SyncEngine {
         let end = now()
         let start = end.addingTimeInterval(-Double(config.recentDays) * 86_400)
         let records = try await source.samples(t, from: start, to: end)
+        if records.isEmpty {
+            // Nothing recent: skip the upload. The full-history pass reports this type (and its
+            // coverage) to the server anyway, so an empty batch here only costs a round trip.
+            try outbox.update { $0.recentDone.insert(t.id) }
+            return
+        }
         let header = BatchHeader(type: t.id, mode: .recent, seq: try outbox.nextSeq(t.id), window: (start, end), checkedAt: end)
         try await send(t.id, header: header, records: records, anchor: nil, completes: .recentDone)
     }
@@ -240,12 +283,13 @@ actor SyncEngine {
             header: header, records: records, nextSeq: { (try? outbox.nextSeq(typeId)) ?? header.seq },
             now: now(), tz: timeZone(), device: config.device, appVersion: config.appVersion)
         _ = try outbox.enqueue(typeId: typeId, batches: batches, anchor: anchor, completes: completes)
-        try await flush()
+        try await flush(typeId: typeId)
     }
 
-    /// Uploads everything pending, in order. Stops at the first failure (retried next run).
-    func flush() async throws {
-        for var entry in outbox.pending() {
+    /// Uploads everything pending (or only one type's entries), in order. Stops at the first
+    /// failure (retried next run).
+    func flush(typeId: String? = nil) async throws {
+        for var entry in outbox.pending() where typeId == nil || entry.typeId == typeId {
             for id in entry.batchIds where !entry.uploaded.contains(id) {
                 guard let gz = outbox.batchData(id) else {
                     // Missing file (should not happen): treat as uploaded rather than block forever.

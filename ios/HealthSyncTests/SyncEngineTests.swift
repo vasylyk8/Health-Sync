@@ -12,7 +12,9 @@ final class ScriptedSource: HealthSource, @unchecked Sendable {
     var isAvailable: Bool { true }
     func requestAuthorization(types: [SyncType]) async throws {}
     func samples(_ type: SyncType, from: Date, to: Date) async throws -> [Record] { recent[type.id] ?? [] }
+    private let lock = NSLock()
     func anchoredPage(_ type: SyncType, anchor: Data?, limit: Int) async throws -> AnchoredPage {
+        lock.lock(); defer { lock.unlock() }
         anchorsSeen[type.id, default: []].append(anchor)
         var list = pages[type.id] ?? []
         guard !list.isEmpty else { return AnchoredPage(records: [], newAnchor: anchor, objectCount: 0) }
@@ -31,12 +33,29 @@ final class ScriptedSource: HealthSource, @unchecked Sendable {
 final class RecordingUploader: Uploader, @unchecked Sendable {
     var uploaded: [(id: String, type: String, header: [String: Any], records: Int)] = []
     var failAfter: Int?
+    /// Simulated network latency, so parallel uploads overlap.
+    var delay: UInt64 = 0
+    private(set) var maxInFlight = 0
+    private var inFlight = 0
+    private let lock = NSLock()
     struct Offline: Error {}
     func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {
-        if let n = failAfter, uploaded.count >= n { throw Offline() }
+        try locked {
+            if let n = failAfter, uploaded.count >= n { throw Offline() }
+            inFlight += 1
+            maxInFlight = max(maxInFlight, inFlight)
+        }
+        if delay > 0 { try await Task.sleep(nanoseconds: delay) }
         let lines = String(data: Gzip.decompress(gz)!, encoding: .utf8)!.split(separator: "\n")
         let header = try JSONSerialization.jsonObject(with: Data(lines[0].utf8)) as! [String: Any]
-        uploaded.append((batchId, typeId, header, lines.count - 1))
+        locked {
+            inFlight -= 1
+            uploaded.append((batchId, typeId, header, lines.count - 1))
+        }
+    }
+    private func locked<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock(); defer { lock.unlock() }
+        return try body()
     }
 }
 
@@ -81,7 +100,7 @@ final class SyncEngineTests: XCTestCase {
         let source = ScriptedSource()
         source.pages[hr.id] = [AnchoredPage(records: [sample("a1")], newAnchor: Data("A1".utf8), objectCount: 1)]
         let up = RecordingUploader()
-        up.failAfter = 2 // profile + recent succeed, then the network drops
+        up.failAfter = 1 // profile succeeds (no recent data, so no recent upload), then the network drops
         let outbox = Outbox(root: root)
         let engine = SyncEngine(source: source, uploader: up, outbox: outbox, types: [hr], config: .init(pageLimit: 5))
         do {
@@ -98,6 +117,43 @@ final class SyncEngineTests: XCTestCase {
         let reloaded = Outbox(root: root)
         XCTAssertTrue(reloaded.pending().isEmpty)
         XCTAssertTrue(reloaded.state.caughtUp.contains(hr.id))
+    }
+
+    func testSyncsTypesInParallelSkipsEmptyRecentAndReportsAllPhases() async throws {
+        let types = (0..<6).map { SyncType(id: "T\($0)", kind: .quantity(cumulative: false), sampleType: nil, unit: .count()) }
+        let source = ScriptedSource()
+        source.recent["T0"] = [sample("r0")]
+        for t in types {
+            source.pages[t.id] = [AnchoredPage(records: [sample("\(t.id)-a")], newAnchor: Data("\(t.id)".utf8), objectCount: 1)]
+        }
+        let up = RecordingUploader()
+        up.delay = 20_000_000
+        let outbox = Outbox(root: root)
+        let engine = SyncEngine(source: source, uploader: up, outbox: outbox, types: types, config: .init(pageLimit: 5, parallelTypes: 4))
+        let outcome = try await engine.run()
+        XCTAssertEqual(outcome, .finished)
+        XCTAssertGreaterThan(up.maxInFlight, 1, "different types upload at the same time")
+        XCTAssertLessThanOrEqual(up.maxInFlight, 4)
+        let recentTypes = up.uploaded.filter { $0.header["mode"] as? String == "recent" }.map(\.type)
+        XCTAssertEqual(recentTypes, ["T0"], "types without recent data skip the recent upload")
+        for t in types {
+            let seqs = up.uploaded.filter { $0.type == t.id }.map { $0.header["seq"] as! Int }
+            XCTAssertEqual(seqs, seqs.sorted(), "each type's batches stay in order")
+            XCTAssertEqual(outbox.state.anchors[t.id], Data("\(t.id)".utf8))
+        }
+        let progress = await engine.progress
+        XCTAssertEqual(progress.stepsTotal, 6 * 3 + 6)
+        XCTAssertEqual(progress.fraction, 1)
+        XCTAssertTrue(progress.historyComplete)
+        XCTAssertTrue(outbox.pending().isEmpty)
+    }
+
+    func testProgressMovesBeforeFullHistoryStarts() {
+        var p = SyncProgress(typesDone: 0, typesTotal: 10, isSyncing: true)
+        p.stepsDone = 10
+        p.stepsTotal = 40
+        XCTAssertEqual(p.fraction, 0.25)
+        XCTAssertFalse(p.historyComplete)
     }
 
     func testDeadlineStopsCleanly() async throws {
