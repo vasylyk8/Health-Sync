@@ -58,4 +58,29 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .home)
         XCTAssertFalse(model.busy)
     }
+
+    /// The same objects the -uiTesting app uses (fake backend and HealthKit, the full type list).
+    func testUITestingStackReconnectsAfterDelete() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let defaults = UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!
+        defaults.set(true, forKey: "healthConnected")
+        let types = HealthTypes.resolve(HealthTypes.loadCoverage())
+        XCTAssertFalse(types.isEmpty)
+        let model = AppModel(backend: FakeBackend(), source: FakeHealthSource(), outbox: Outbox(root: root), types: types, telemetry: NoTelemetry(), defaults: defaults)
+        XCTAssertEqual(model.phase, .home)
+        model.start()
+        try await Task.sleep(for: .milliseconds(300))
+        await model.deleteAllData()
+        XCTAssertEqual(model.phase, .welcome)
+        XCTAssertFalse(model.busy)
+
+        let done = expectation(description: "connect finishes")
+        Task { @MainActor in
+            await model.connectHealth()
+            done.fulfill()
+        }
+        await fulfillment(of: [done], timeout: 15)
+        XCTAssertEqual(model.phase, .home)
+        XCTAssertFalse(model.busy)
+    }
 }
