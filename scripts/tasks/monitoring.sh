@@ -24,10 +24,17 @@ gcloud logging metrics describe hs_batch_rejected >/dev/null 2>&1 || gcloud logg
   --description="Rejected upload batches" --log-filter='resource.type="cloud_run_revision" AND jsonPayload.message="batch rejected"'
 
 policy() { # name json
-  if [[ -z "$(gcloud alpha monitoring policies list --filter="displayName=\"$1\"" --format='value(name)' | head -1)" ]]; then
+  if ! gcloud alpha monitoring policies list --format='value(displayName)' | grep -qFx "$1"; then
     echo "$2" > /tmp/policy.json
-    gcloud alpha monitoring policies create --policy-from-file=/tmp/policy.json >/dev/null
-    echo "created alert: $1"
+    # New log-based metrics take up to 10 minutes to become usable in alert policies.
+    for attempt in $(seq 1 12); do
+      if gcloud alpha monitoring policies create --policy-from-file=/tmp/policy.json >/dev/null 2>/tmp/policy.err; then
+        echo "created alert: $1"; return 0
+      fi
+      grep -q "Cannot find metric" /tmp/policy.err || { cat /tmp/policy.err; return 1; }
+      echo "  waiting for the metric behind \"$1\" (attempt $attempt)"; sleep 60
+    done
+    cat /tmp/policy.err; return 1
   fi
 }
 uptime_policy() { # display check
