@@ -19,6 +19,7 @@ export class DirBlobs implements BlobStore {
   }
   async download(path: string, local: string) { await copyFile(join(this.root, path), local); }
   async delete(path: string) { this.paths.delete(path); }
+  async exists(path: string) { return this.paths.has(path); }
   async deletePrefix(prefix: string) { for (const p of [...this.paths]) if (p.startsWith(prefix)) this.paths.delete(p); }
 }
 

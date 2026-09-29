@@ -21,7 +21,7 @@ Verified by CI: server unit tests, and the iOS unit and UI tests on the newest i
 | H1 observers only registered when a scene is active | **Fixed**: registered at process launch (`HealthSyncApp.init`). Needs the phone-restart check (D-3) on a device. |
 | H2 / S-1 merged totals lost after a later check | **Fixed**: merged totals are judged against their own window (up to 6 h behind the latest check). |
 | H2 / S-2 overview hides the double-counting warning | **Fixed**: raw sums that may double count are reported as unavailable; sub-call notes are kept. |
-| H3.1 upload `unauthorized` treated as success | **Fixed on the phone**: it only counts as "already uploaded" when an earlier attempt of the same batch was interrupted; a rejection on a first attempt now fails loudly and is retried. Residual risk: an interrupted first attempt followed by a real rejection. A server-side "does this batch exist" check would close that. |
+| H3.1 upload `unauthorized` treated as success | **Fixed**: on `unauthorized` the phone asks a new server callable (`batchExists`) whether the batch is already there (processed or waiting in the incoming bucket). Only then does it count as uploaded; otherwise the sync fails visibly and retries. If the server can't be asked, it falls back to trusting an interrupted retry only. Deploy the server before shipping the build that uses it. |
 | H3.3 missing batch file | **Fixed**: the entry is dropped without moving the anchor, so the data is read again. |
 | H3.2 a bad record rejects a whole batch | **Open**. |
 | H4 / S-3, S-4 deleted hours and reinstall ordering | **Open** (needs a Parquet schema or ordering change). Repro tests remain expected-fail. |

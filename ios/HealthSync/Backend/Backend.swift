@@ -24,6 +24,8 @@ protocol Backend: Uploader {
     func disconnect(provider: String) async throws
     func deleteAllData() async throws
     func status() async throws -> ServerStatus
+    /// Whether the server already has this upload batch (processed, or waiting to be processed).
+    func batchExists(batchId: String) async throws -> Bool
     func signOut() async
 }
 

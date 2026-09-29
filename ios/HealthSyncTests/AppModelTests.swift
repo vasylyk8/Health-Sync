@@ -13,6 +13,7 @@ final class StubBackend: Backend, @unchecked Sendable {
     func disconnect(provider: String) async throws {}
     func deleteAllData() async throws {}
     func status() async throws -> ServerStatus { .empty }
+    func batchExists(batchId: String) async throws -> Bool { true }
     func signOut() async {}
     func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {}
 }

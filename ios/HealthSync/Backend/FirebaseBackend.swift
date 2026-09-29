@@ -49,6 +49,11 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
         return try JSONDecoder().decode(ServerStatus.self, from: json)
     }
 
+    func batchExists(batchId: String) async throws -> Bool {
+        let data = try await call("batchExists", ["batchId": batchId])
+        return (data as? [String: Any])?["exists"] as? Bool ?? false
+    }
+
     func signOut() async {
         try? Auth.auth().signOut()
     }
@@ -66,12 +71,18 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
             _ = try await ref.putDataAsync(gz, metadata: meta)
             attempts.finish(batchId)
         } catch let error as NSError where error.domain == StorageErrorDomain && error.code == StorageErrorCode.unauthorized.rawValue {
-            // Rules allow create-only, so an "unauthorized" retry of an interrupted upload means the
-            // object already exists. On a first attempt it is a real rejection: fail loudly (the batch
-            // stays queued and is retried) instead of moving the sync anchor past data the server lacks.
+            // Storage rules only allow creating an object once, so "unauthorized" is either a retry of an
+            // upload that already arrived (fine) or a real rejection (rules, App Check), which must not be
+            // mistaken for success or the sync anchor would move past data the server never received.
             attempts.finish(batchId)
-            if retried { return }
-            throw error
+            switch try? await batchExists(batchId: batchId) {
+            case .some(true): return
+            case .some(false): throw error
+            case .none:
+                // The server could not be asked (offline, or an older server): only trust an interrupted retry.
+                if retried { return }
+                throw error
+            }
         }
     }
 
