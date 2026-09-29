@@ -39,46 +39,73 @@ platform :ios do
   end
 
   desc "Build, sign with Apple's cloud-managed distribution certificate, verify, upload to TestFlight"
-  # No certificate is created, imported or revoked: the archive is signed locally with an ad-hoc
-  # identity ("-"), then `xcodebuild -exportArchive` re-signs it through Apple's cloud signing using
-  # the App Store Connect API key (Admin role). SIGNING_MODE=xcode lets Xcode manage signing
-  # entirely (may create an "Apple Development" certificate) if cloud export of an ad-hoc archive
-  # is refused.
+  # No certificate is created, imported or revoked. The archive is built unsigned (Xcode refuses
+  # ad-hoc signing for device SDKs), then signed ad-hoc with `codesign` so it carries the app's
+  # entitlements, and `xcodebuild -exportArchive` re-signs it through Apple's cloud signing using the
+  # App Store Connect API key (Admin role). SIGNING_MODE=xcode lets Xcode manage signing entirely
+  # (may create an "Apple Development" certificate) if cloud export is refused.
   lane :beta do
     key = api_key
     bundle = ENV.fetch("BUNDLE_ID")
     team = ENV.fetch("APPLE_TEAM_ID")
     setup_ci
     generate
-    key_path = File.expand_path("../build/AuthKey.p8", __dir__)
-    FileUtils.mkdir_p(File.dirname(key_path))
+    root = File.expand_path("..", __dir__)
+    build_dir = File.join(root, "build")
+    archive = File.join(build_dir, "KROK.xcarchive")
+    key_path = File.join(build_dir, "AuthKey.p8")
+    FileUtils.mkdir_p(build_dir)
     File.write(key_path, ENV.fetch("ASC_KEY_P8"))
-    auth = "-allowProvisioningUpdates -authenticationKeyPath #{key_path} -authenticationKeyID #{ENV.fetch('ASC_KEY_ID')} -authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')}"
+    auth = "-allowProvisioningUpdates -authenticationKeyPath #{key_path.shellescape} -authenticationKeyID #{ENV.fetch('ASC_KEY_ID')} -authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')}"
 
     latest = latest_testflight_build_number(api_key: key, app_identifier: bundle, initial_build_number: 0)
     increment_build_number(xcodeproj: PROJECT, build_number: latest + 1)
 
-    archive_args = if ENV["SIGNING_MODE"] == "xcode"
-      "#{auth} DEVELOPMENT_TEAM=#{team} CODE_SIGN_STYLE=Automatic"
+    if ENV["SIGNING_MODE"] == "xcode"
+      build_app(
+        project: PROJECT, scheme: SCHEME, configuration: "Release", export_method: "app-store",
+        export_options: { signingStyle: "automatic", teamID: team, uploadSymbols: true, manageAppVersionAndBuildNumber: false },
+        xcargs: "#{auth} DEVELOPMENT_TEAM=#{team} CODE_SIGN_STYLE=Automatic", export_xcargs: auth,
+        skip_profile_detection: true, output_directory: build_dir
+      )
+      ipa = lane_context[SharedValues::IPA_OUTPUT_PATH]
     else
-      "CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=#{team} PROVISIONING_PROFILE_SPECIFIER="
+      build_app(
+        project: PROJECT, scheme: SCHEME, configuration: "Release",
+        archive_path: archive, skip_package_ipa: true, skip_profile_detection: true,
+        xcargs: "CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM=#{team}"
+      )
+      sign_archive_adhoc(archive, File.join(root, "HealthSync", "HealthSync.entitlements"))
+      options = File.join(build_dir, "ExportOptions.plist")
+      File.write(options, <<~PLIST)
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+          <key>method</key><string>app-store-connect</string>
+          <key>destination</key><string>export</string>
+          <key>signingStyle</key><string>automatic</string>
+          <key>teamID</key><string>#{team}</string>
+          <key>uploadSymbols</key><true/>
+          <key>manageAppVersionAndBuildNumber</key><false/>
+        </dict></plist>
+      PLIST
+      sh("xcodebuild -exportArchive -archivePath #{archive.shellescape} -exportPath #{build_dir.shellescape} -exportOptionsPlist #{options.shellescape} #{auth}")
+      ipa = Dir[File.join(build_dir, "*.ipa")].first or UI.user_error!("Export produced no .ipa")
     end
-    build_app(
-      project: PROJECT,
-      scheme: SCHEME,
-      configuration: "Release",
-      export_method: "app-store",
-      export_options: { signingStyle: "automatic", teamID: team, uploadSymbols: true, manageAppVersionAndBuildNumber: false },
-      xcargs: archive_args,
-      export_xcargs: auth,
-      skip_profile_detection: true,
-      output_directory: "build"
-    )
-    verify_entitlements(lane_context[SharedValues::IPA_OUTPUT_PATH])
-    upload_to_testflight(api_key: key, app_identifier: bundle, skip_waiting_for_build_processing: false, distribute_external: false)
+    verify_entitlements(ipa)
+    upload_to_testflight(api_key: key, ipa: ipa, app_identifier: bundle, skip_waiting_for_build_processing: false, distribute_external: false)
     add_internal_testers(key)
   ensure
     File.delete(key_path) if key_path && File.exist?(key_path)
+  end
+
+  # Signs the archived app ad-hoc (nested code first) so the archive records its entitlements.
+  def sign_archive_adhoc(archive, entitlements)
+    app = Dir[File.join(archive, "Products", "Applications", "*.app")].first or UI.user_error!("No .app in archive")
+    nested = Dir[File.join(app, "Frameworks", "*.{framework,dylib}")] + Dir[File.join(app, "PlugIns", "*.appex")]
+    nested.each { |path| sh("codesign --force --sign - --timestamp=none #{path.shellescape}") }
+    sh("codesign --force --sign - --timestamp=none --generate-entitlement-der --entitlements #{entitlements.shellescape} #{app.shellescape}")
+    sh("codesign -d --entitlements :- #{app.shellescape}")
   end
 
   # Refuse to upload an app whose signature lost its HealthKit entitlement.
