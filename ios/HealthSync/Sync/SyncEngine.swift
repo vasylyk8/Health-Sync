@@ -265,7 +265,9 @@ actor SyncEngine {
         let full = outbox.state.statsFullAt[t.id].map { end.timeIntervalSince($0) > config.statsFullEvery } ?? true
         var start: Date
         if full {
-            if outbox.state.earliest[t.id] == nil, let e = try await source.earliestSampleDate(t) {
+            // Re-read every full recompute: older data added later (e.g. imported from another app)
+            // must be included in the merged totals.
+            if let e = try await source.earliestSampleDate(t), outbox.state.earliest[t.id] != e {
                 try outbox.update { $0.earliest[t.id] = e }
             }
             guard let earliest = outbox.state.earliest[t.id] else {

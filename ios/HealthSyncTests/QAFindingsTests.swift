@@ -22,7 +22,6 @@ final class QAFindingsTests: XCTestCase {
         let outbox = Outbox(root: root)
         let engine = SyncEngine(source: source, uploader: RecordingUploader(), outbox: outbox, types: types, config: .init(pageLimit: 5, parallelTypes: 1))
         _ = try? await engine.run()
-        XCTExpectFailure("I-4: the whole sync aborts at the first failing type; T1…T5 never reach caughtUp")
         XCTAssertEqual(outbox.state.caughtUp, Set(types.dropFirst().map(\.id)))
     }
 
@@ -36,7 +35,6 @@ final class QAFindingsTests: XCTestCase {
         let uploader = ResettingUploader(outbox: outbox, resetOnType: hr.id)
         let engine = SyncEngine(source: source, uploader: uploader, outbox: outbox, types: [hr], config: .init(pageLimit: 5))
         _ = try? await engine.run()
-        XCTExpectFailure("I-3: complete() re-writes the anchor into the freshly reset state")
         XCTAssertNil(outbox.state.anchors[hr.id])
         XCTAssertNil(Outbox(root: root).state.anchors[hr.id], "persisted state.json too")
     }
@@ -61,7 +59,6 @@ final class QAFindingsTests: XCTestCase {
         _ = try await engine.run()
         let firstStats = up.uploaded[before...].first { $0.header["mode"] as? String == "stats" }
         let windowStart = ((firstStats?.header["window"] as? [String: Any])?["start"] as? Int) ?? .max
-        XCTExpectFailure("I-6: stats start at the cached earliest date; the imported history never gets merged totals")
         XCTAssertLessThanOrEqual(windowStart, Int(imported.timeIntervalSince1970 * 1000))
     }
 }

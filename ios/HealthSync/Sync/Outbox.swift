@@ -13,6 +13,10 @@ final class Outbox: @unchecked Sendable {
         var anchor: Data?
         /// State changes to apply on completion (e.g. mark the recent pass done).
         var completes: Completion?
+        /// Outbox generation this copy belongs to (not persisted). After `reset()` older copies are stale.
+        var generation = 0
+
+        private enum CodingKeys: String, CodingKey { case id, typeId, batchIds, uploaded, anchor, completes }
     }
 
     enum Completion: Codable, Equatable {
@@ -43,6 +47,9 @@ final class Outbox: @unchecked Sendable {
 
     let root: URL
     private(set) var state: State
+    /// Bumped by `reset()`. Entries read or created earlier must not write state afterwards
+    /// (an upload that was in flight when the user deleted everything).
+    private var generation = 0
     private let fm = FileManager.default
 
     init(root: URL) {
@@ -87,7 +94,7 @@ final class Outbox: @unchecked Sendable {
         for b in batches { try write(b.gz, to: batchURL(b.id)) }
         // Sortable id: entries are always retried in the order they were created.
         let id = String(format: "%016llu-%@", UInt64(Date().timeIntervalSince1970 * 1_000_000), UUID().uuidString)
-        let entry = Entry(id: id, typeId: typeId, batchIds: batches.map(\.id), uploaded: [], anchor: anchor, completes: completes)
+        let entry = Entry(id: id, typeId: typeId, batchIds: batches.map(\.id), uploaded: [], anchor: anchor, completes: completes, generation: generation)
         try save(entry)
         return entry
     }
@@ -98,11 +105,13 @@ final class Outbox: @unchecked Sendable {
         return files
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
             .compactMap { url in (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(Entry.self, from: $0) } }
+            .map { var e = $0; e.generation = generation; return e }
     }
 
     func batchData(_ id: String) -> Data? { try? Data(contentsOf: batchURL(id)) }
 
     func markUploaded(_ entry: inout Entry, batchId: String) throws {
+        guard entry.generation == generation else { return }
         entry.uploaded.append(batchId)
         try save(entry)
         try? fm.removeItem(at: batchURL(batchId))
@@ -110,6 +119,7 @@ final class Outbox: @unchecked Sendable {
 
     /// Applies the entry's anchor/state change and removes it. Called only when fully uploaded.
     func complete(_ entry: Entry) throws {
+        guard entry.generation == generation else { return }
         try update { s in
             if let anchor = entry.anchor { s.anchors[entry.typeId] = anchor }
             switch entry.completes {
@@ -131,6 +141,7 @@ final class Outbox: @unchecked Sendable {
 
     /// Deletes everything (used by "Delete all my data").
     func reset() {
+        generation += 1
         try? fm.removeItem(at: root)
         try? fm.createDirectory(at: root.appendingPathComponent("batches"), withIntermediateDirectories: true)
         try? fm.createDirectory(at: root.appendingPathComponent("pending"), withIntermediateDirectories: true)
