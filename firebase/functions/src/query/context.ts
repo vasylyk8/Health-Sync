@@ -21,6 +21,8 @@ export interface QueryDeps {
 
 export function validTz(tz: string): string {
   try {
+    // UTC offsets such as "+05:30" pass Intl but not the query engine; only named zones are supported.
+    if (/^[+-]/.test(tz)) throw new Error('offset');
     new Intl.DateTimeFormat('en-US', { timeZone: tz });
     return tz;
   } catch {
@@ -32,7 +34,9 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Parses YYYY-MM-DD (a local calendar date in the request timezone). */
 export function parseDate(value: string, field: string): string {
-  if (!DATE_RE.test(value) || Number.isNaN(Date.parse(value + 'T00:00:00Z'))) {
+  const ms = DATE_RE.test(value) ? Date.parse(value + 'T00:00:00Z') : NaN;
+  // Round-trip so impossible dates such as 2024-02-30 are rejected instead of rolling over.
+  if (Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== value) {
     throw new ToolError('bad_request', `${field} must be a date like 2024-03-31`);
   }
   return value;
@@ -182,9 +186,16 @@ export async function localRangeToUtc(c: DuckDBConnection, tz: string, startDate
 export function isComplete(man: TypeManifest | null, start: number, end: number, now: number, stats = false): boolean {
   const checked = man?.coverage.checkedAt;
   if (!man || !checked || now - checked > LIMITS.staleAfterMs) return false;
+  if (stats) {
+    // Hourly totals are refreshed by their own batches, which are usually a few minutes older than
+    // the latest anchored/empty check. Judge them against their own window, not `checkedAt`.
+    const window = man.coverage.statsIntervals.find(([a, b]) => a <= start && start <= b);
+    if (!window || checked - window[1] > LIMITS.statsMaxLagMs) return false;
+    return covers(man.coverage.statsIntervals, start, Math.min(end, window[1]));
+  }
   const until = Math.min(end, checked);
   if (until < start) return false;
-  return covers(stats ? man.coverage.statsIntervals : man.coverage.intervals, start, until);
+  return covers(man.coverage.intervals, start, until);
 }
 
 /** SQL expression: local wall-clock TIMESTAMP of epoch-ms column `col` in `tz`. */

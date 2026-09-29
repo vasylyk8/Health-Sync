@@ -25,6 +25,8 @@ export const LIMITS = {
   mcpRequestsPerMinute: 120,
   invalidTokenPerIpPerMinute: 30,
   staleAfterMs: 24 * 3600 * 1000,
+  /** Longest a merged-totals window may trail the latest check and still count as current. */
+  statsMaxLagMs: 6 * 3600 * 1000,
   purgeAfterMs: 365 * 24 * 3600 * 1000,
   accessLogTtlMs: 90 * 24 * 3600 * 1000,
 } as const;

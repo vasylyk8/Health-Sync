@@ -100,6 +100,9 @@ export async function summarize(deps: QueryDeps, args: SummarizeArgs): Promise<T
   const cumulative = t.agg === 'cumulative';
   const stat: Stat = args.stat ?? (cumulative ? 'sum' : t.kind === 'category' ? 'duration_min' : 'avg');
   if (!STATS.includes(stat)) throw new ToolError('bad_request', `stat must be one of ${STATS.join(', ')}`);
+  if (t.kind === 'quantity' && !cumulative && stat === 'sum') {
+    throw new ToolError('bad_request', `${shortName(t.id)} is a rate or level, so a sum is meaningless. Use avg, min, max or count.`);
+  }
   if (t.kind === 'quantity' && stat === 'duration_min') throw new ToolError('bad_request', 'duration_min applies to category types (e.g. MindfulSession)');
   if (t.kind !== 'quantity' && ['sum', 'avg', 'min', 'max'].includes(stat)) {
     throw new ToolError('bad_request', `${shortName(t.id)} has no numeric values; use stat "count" or "duration_min"`);
@@ -126,6 +129,7 @@ export async function summarize(deps: QueryDeps, args: SummarizeArgs): Promise<T
         const out = await rows(c, `SELECT ${bucket} AS period, ${fn}(v)::DOUBLE AS value, first(u) AS unit
           FROM (SELECT *, ${localTs('s', r.tz)} lt FROM st WHERE agg = '${agg}') WHERE ${within} GROUP BY 1 ORDER BY 1 LIMIT ${MAX_PERIOD_ROWS + 1}`);
         tooMany(out.length);
+        for (const row of out) if (typeof row.value === 'number') row.value = row.unit === 'count' ? Math.round(row.value) : Math.round(row.value * 100) / 100;
         if (!hasWholeHourOffset(r.tz, startUtc)) notes.push(`Hourly totals do not align exactly with local days in ${r.tz}; boundaries may be off by up to 30 minutes.`);
         return {
           ...envelope(deps, [[t.id, man]], true, notes),
@@ -355,18 +359,21 @@ export async function getOverview(deps: QueryDeps, args: { days?: number; timezo
   const startMs = Date.parse(today + 'T00:00:00Z') - (days - 1) * 86_400_000;
   const start = new Date(startMs).toISOString().slice(0, 10);
   const base = { start_date: start, end_date: today, timezone: tz };
-  const results: { name: string; value: unknown; coverage: CoverageInfo[]; complete: boolean }[] = [];
+  const results: { name: string; value: unknown; coverage: CoverageInfo[]; complete: boolean; notes: string[] }[] = [];
   const safe = async (name: string, fn: () => Promise<ToolResult>, pick: (r: ToolResult) => unknown) => {
     const slot = results.length;
-    results.push({ name, value: undefined, coverage: [], complete: true });
+    results.push({ name, value: undefined, coverage: [], complete: true, notes: [] });
     try {
       const res = await fn();
-      results[slot] = { name, value: pick(res), coverage: res.coverage, complete: res.complete };
+      results[slot] = { name, value: pick(res), coverage: res.coverage, complete: res.complete, notes: res.notes };
     } catch (err) {
       results[slot]!.value = err instanceof ToolError ? { unavailable: err.message } : { unavailable: 'error' };
     }
   };
   const total = (r: ToolResult) => {
+    if (r.method === 'raw_may_double_count') {
+      return { unavailable: 'Hourly totals are not fully synced yet, and adding raw readings would count iPhone and Apple Watch steps twice. Try again after the KROK app finishes syncing, or use summarize with a source filter.' };
+    }
     const v = (r.rows as { value: number }[]).reduce((n, x) => n + (x.value ?? 0), 0);
     return (r.rows as unknown[]).length ? { dailyAverage: Math.round((v / days) * 10) / 10, total: Math.round(v) } : 'no data';
   };
@@ -400,9 +407,11 @@ export async function getOverview(deps: QueryDeps, args: { days?: number; timezo
   const coverage = results.flatMap((r) => r.coverage);
   const complete = results.every((r) => r.complete);
   const env = envelope(deps, [], complete);
-  if (coverage.some((cv) => cv.stale)) {
-    env.notes.unshift('Some of this data was last synced more than a day ago. Suggest the user opens the KROK app on their iPhone to refresh.');
-  }
+  const checkedAt = coverage.map((cv) => cv.lastCheckedAt).filter((x): x is string => x !== null).sort();
+  env.dataAsOf = checkedAt[0] ?? null;
+  for (const n of results.flatMap((r) => r.notes)) if (!env.notes.includes(n)) env.notes.push(n);
+  const staleNote = 'Some of this data was last synced more than a day ago. Suggest the user opens the KROK app on their iPhone to refresh.';
+  if (coverage.some((cv) => cv.stale) && !env.notes.includes(staleNote)) env.notes.unshift(staleNote);
   return { ...env, coverage: dedupeCoverage(coverage), period: `${start}..${today}`, timezone: tz, metrics };
 }
 

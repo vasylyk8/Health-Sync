@@ -181,6 +181,18 @@ describe('series samples', () => {
   });
 });
 
+describe('merged totals', () => {
+  it('are rounded to whole counts', async () => {
+    const env = makeEnv();
+    await upload(env, { type: STEPS, mode: 'stats', window: { start: day(1), end: env.now } }, [
+      { k: 'h', s: day(1, 9), e: day(1, 10), agg: 'sum', v: 1000.4, u: 'count' },
+      { k: 'h', s: day(1, 10), e: day(1, 11), agg: 'sum', v: 500.4, u: 'count' },
+    ]);
+    const r = await summarize(deps(env), { type: 'StepCount', start_date: '2024-06-01', end_date: '2024-06-01', period: 'day' });
+    expect(r.rows).toEqual([{ period: '2024-06-01', value: 1501, unit: 'count' }]);
+  });
+});
+
 describe('getOverview', () => {
   it('returns every metric in a fixed order with per-metric results', async () => {
     const env = makeEnv();
@@ -192,5 +204,6 @@ describe('getOverview', () => {
     expect((r.metrics as { steps: unknown }).steps).toEqual({ dailyAverage: 50, total: 1500 });
     expect((r.metrics as { sleep: unknown }).sleep).toBe('no data');
     expect(r.period).toBe('2024-06-01..2024-06-30');
+    expect(r.dataAsOf).not.toBeNull();
   });
 });

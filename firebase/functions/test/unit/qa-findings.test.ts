@@ -36,7 +36,7 @@ async function seedDoubleSourceSteps(env: Env) {
 }
 
 describe('QA findings: totals', () => {
-  it.fails('S-1: merged stats stay in use after a later anchored batch advances checkedAt', async () => {
+  it('S-1: merged stats stay in use after a later anchored batch advances checkedAt', async () => {
     const env = makeEnv(day(30, 12));
     await seedDoubleSourceSteps(env);
     // The phone's run() does stats first, then the anchored pass: checkedAt moves past the stats window.
@@ -47,7 +47,7 @@ describe('QA findings: totals', () => {
     expect(r.rows).toEqual([expect.objectContaining({ value: 1000 })]);
   });
 
-  it.fails('S-2: get_health_overview must not report double-counted steps (and must keep the warning)', async () => {
+  it('S-2: get_health_overview must not report double-counted steps (and must keep the warning)', async () => {
     const env = makeEnv(day(30, 12));
     // Stats cover only the first half of the 30-day window, so the overview falls back to raw data.
     await send(env, 1, { type: STEPS, mode: 'recent', window: { start: day(1), end: env.now } }, [
@@ -118,17 +118,17 @@ describe('QA findings: input validation', () => {
     await expect(p).rejects.toBeInstanceOf(ToolError);
   };
 
-  it.fails('V-1: impossible calendar dates are a bad_request, not an internal error', async () => {
+  it('V-1: impossible calendar dates are a bad_request, not an internal error', async () => {
     const env = makeEnv();
     await expectBadRequest(summarize(deps(env), { type: 'StepCount', start_date: '2024-02-30', end_date: '2024-03-01', period: 'day' }));
   });
 
-  it.fails('V-2: UTC-offset timezones are rejected (or supported), not an internal error', async () => {
+  it('V-2: UTC-offset timezones are rejected (or supported), not an internal error', async () => {
     const env = makeEnv();
     await expectBadRequest(summarize(deps(env), { type: 'StepCount', start_date: '2024-06-01', end_date: '2024-06-01', period: 'day', timezone: '+05:30' }));
   });
 
-  it.fails('V-3: summing a discrete type (heart rate) is refused', async () => {
+  it('V-3: summing a discrete type (heart rate) is refused', async () => {
     const env = makeEnv();
     await expectBadRequest(summarize(deps(env), { type: 'HeartRate', start_date: '2024-06-01', end_date: '2024-06-01', period: 'none', stat: 'sum' }));
   });
