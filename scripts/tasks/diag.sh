@@ -13,3 +13,18 @@ gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.se
   --freshness=2h --limit=60 --format='value(timestamp,severity,textPayload,jsonPayload.message,jsonPayload.code,jsonPayload.err,httpRequest.status)' || true
 step "eventarc/pubsub delivery errors"
 gcloud logging read "(resource.type=\"eventarc.googleapis.com/Trigger\" OR resource.type=\"pubsub_subscription\") AND severity>=WARNING" --freshness=2h --limit=20 --format='value(timestamp,severity,textPayload,jsonPayload)' || true
+step "uptime check results (last 30 min)"
+START=$(date -u -d '-30 min' +%Y-%m-%dT%H:%M:%SZ); END=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+api GET "https://monitoring.googleapis.com/v3/projects/$P/timeSeries?filter=$(python3 -c 'import urllib.parse;print(urllib.parse.quote("metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\""))')&interval.startTime=$START&interval.endTime=$END" |
+  python3 -c '
+import json, sys, collections
+d = json.load(sys.stdin)
+res = collections.defaultdict(lambda: [0, 0])
+for ts in d.get("timeSeries", []):
+    cid = ts["metric"]["labels"].get("check_id", "?")
+    for p in ts.get("points", []):
+        res[cid][0 if p["value"].get("boolValue") else 1] += 1
+for cid, (ok, bad) in sorted(res.items()):
+    print(f"{cid}: {ok} passed, {bad} failed")
+if not res: print("no uptime results yet", json.dumps(d)[:300])
+'
