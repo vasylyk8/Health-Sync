@@ -326,6 +326,9 @@ actor SyncEngine {
 
     private func startReconcileIfNeeded() throws {
         guard let last = outbox.state.lastSyncAt, now().timeIntervalSince(last) > config.reconcileAfter, let wt = scope.workout else { return }
+        // A pass that was interrupted (out of time, offline) continues where it stopped: restarting it
+        // would re-read everything again and could never finish on a slow connection.
+        guard outbox.state.reconcile[wt.id] == nil else { return }
         // Deletions made while we were away may have expired from HealthKit: re-read every workout
         // and let the server remove what no longer exists.
         try outbox.update { s in
