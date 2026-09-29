@@ -31,7 +31,7 @@ describe('parseBatch', () => {
   it.each([
     ['invalid JSON', [JSON.stringify(header()), '{nope']],
     ['unknown type', [header({ type: 'HKQuantityTypeIdentifierMadeUp' })]],
-    ['wrong schema', [header({ schema: 2 })]],
+    ['wrong schema', [header({ schema: 3 })]],
     ['end before start', [header(), { k: 's', id: 'a', s: S, e: S - 1, v: 1 }]],
     ['non-finite value', [JSON.stringify(header()), '{"k":"s","id":"a","s":1,"e":1,"v":1e999}']],
     ['unknown record kind', [header(), { k: 'zz', id: 'a' }]],
