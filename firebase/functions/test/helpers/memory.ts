@@ -20,6 +20,7 @@ export class DirBlobs implements BlobStore {
   async download(path: string, local: string) { await copyFile(join(this.root, path), local); }
   async delete(path: string) { this.paths.delete(path); }
   async exists(path: string) { return this.paths.has(path); }
+  async list(prefix: string) { return [...this.paths].filter((p) => p.startsWith(prefix)).sort(); }
   async deletePrefix(prefix: string) { for (const p of [...this.paths]) if (p.startsWith(prefix)) this.paths.delete(p); }
 }
 
@@ -47,6 +48,7 @@ export class MemoryMeta implements MetaStore {
     Object.assign(user, effectiveUserPatch(user, userPatch));
     return 'published' as const;
   }
+  async deleteManifest(uid: string, type: string) { this.manifests.delete(`${uid}/${type}`); }
   async getWorkoutData(uid: string, wid: string) { return structuredClone(this.workoutData.get(`${uid}/${wid}`) ?? null); }
   async listWorkoutData(uid: string) { return [...this.workoutData.entries()].filter(([k]) => k.startsWith(uid + '/')).map(([, v]) => structuredClone(v)); }
   async publishWorkoutData({ uid, wid, batchId, generation, mutate, userPatch }: Parameters<MetaStore['publishWorkoutData']>[0]) {

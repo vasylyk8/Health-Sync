@@ -9,12 +9,20 @@ if [[ -z "$(exists_uptime hs-healthz)" ]]; then
   gcloud monitoring uptime create hs-healthz --resource-type=uptime-url --resource-labels=host="$P.web.app",project_id="$P" \
     --path=/health --protocol=https --period=5 --timeout=20 --matcher-content='"ok":true' >/dev/null
 fi
-if [[ -z "$(exists_uptime hs-mcp-synthetic)" ]]; then
-  gcloud monitoring uptime create hs-mcp-synthetic --resource-type=uptime-url --resource-labels=host="$P.web.app",project_id="$P" \
+# The check used tools that no longer exist (workouts-only): remove it and the alert that points at it,
+# so both are recreated below against the new check.
+OLD_CHECK=$(exists_uptime hs-mcp-synthetic)
+if [[ -n "$OLD_CHECK" ]]; then
+  OLD_POLICY=$(gcloud alpha monitoring policies list --filter='displayName="AI connector is failing"' --format='value(name)' 2>/dev/null | head -1 || true)
+  [[ -n "$OLD_POLICY" ]] && { gcloud alpha monitoring policies delete "$OLD_POLICY" --quiet || true; }
+  gcloud monitoring uptime delete "$OLD_CHECK" --quiet || true
+fi
+if [[ -z "$(exists_uptime hs-mcp-workouts)" ]]; then
+  gcloud monitoring uptime create hs-mcp-workouts --resource-type=uptime-url --resource-labels=host="$P.web.app",project_id="$P" \
     --path="/mcp/$TOKEN_RAW" --protocol=https --request-method=post --content-type=user-provided --custom-content-type=application/json \
     --headers='^;^Accept=application/json, text/event-stream' \
-    --body='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_available_data","arguments":{}}}' \
-    --period=5 --timeout=30 --matcher-content='StepCount' >/dev/null
+    --body='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_daily_context","arguments":{"start_date":"2024-03-01","end_date":"2024-03-01"}}}' \
+    --period=5 --timeout=30 --matcher-content='sleepAsleepMin' >/dev/null
 fi
 
 # Log-based metric: server errors (never contains health data; see src/log.ts).
@@ -45,7 +53,7 @@ uptime_policy() { # display check
       \"aggregations\":[{\"alignmentPeriod\":\"300s\",\"perSeriesAligner\":\"ALIGN_NEXT_OLDER\",\"crossSeriesReducer\":\"REDUCE_COUNT_FALSE\",\"groupByFields\":[\"resource.label.project_id\"]}]}}]}"
 }
 uptime_policy "Health Sync is down" "$(exists_uptime hs-healthz | sed 's#.*/##')"
-uptime_policy "AI connector is failing" "$(exists_uptime hs-mcp-synthetic | sed 's#.*/##')"
+uptime_policy "AI connector is failing" "$(exists_uptime hs-mcp-workouts | sed 's#.*/##')"
 log_policy() { # display metric threshold
   policy "$1" "{\"displayName\":\"$1\",\"combiner\":\"OR\",\"notificationChannels\":[\"$CHANNEL\"],
     \"conditions\":[{\"displayName\":\"$1\",\"conditionThreshold\":{

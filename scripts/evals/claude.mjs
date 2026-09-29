@@ -11,7 +11,7 @@ export async function askClaude(question, mcpUrl) {
     fallbacks: 'default',
     mcp_servers: [{ type: 'url', url: mcpUrl, name: 'health-sync' }],
     tools: [{ type: 'mcp_toolset', mcp_server_name: 'health-sync' }],
-    system: 'You are answering questions about the user\'s Apple Health data using the health-sync tools. Answer with the number requested.',
+    system: 'You are answering questions about the user\'s Apple Health workouts using the health-sync tools. Answer with the number requested.',
     messages: [{ role: 'user', content: question }],
   });
   if (response.stop_reason === 'refusal') return { text: '', refused: true };

@@ -24,7 +24,11 @@ await user.update({ 'links.claude': { tokenHash: hash, createdAt: Date.now() } }
 
 // Only upload data once (or when FORCE_RESEED=1): ingestion dedupes by record id anyway.
 const types = await user.collection('types').get();
-if (types.empty || process.env.FORCE_RESEED === '1') {
+// Data of the previous app version (other types) is replaced too.
+const have = new Set(types.docs.map((d) => d.id));
+const missing = !(have.has('HKWorkoutTypeIdentifier') && have.has('_daily'));
+if (missing) console.log('workouts or daily context missing: seeding');
+if (missing || process.env.FORCE_RESEED === '1') {
   const bucket = getStorage().bucket(`${project}-incoming`);
   for (const lines of batches()) {
     const gz = gzipSync(lines.map((l) => JSON.stringify(l)).join('\n'));

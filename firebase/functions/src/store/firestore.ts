@@ -76,6 +76,10 @@ export class FirestoreMeta implements MetaStore {
     });
   }
 
+  async deleteManifest(uid: string, type: string): Promise<void> {
+    await this.user(uid).collection('types').doc(typeDocId(type)).delete();
+  }
+
   private workoutRef(uid: string, wid: string) {
     return this.user(uid).collection('workouts').doc(wid);
   }
@@ -150,6 +154,7 @@ interface BucketLike {
     exists(): Promise<[boolean]>;
   };
   deleteFiles(opts: { prefix: string; force: boolean }): Promise<unknown>;
+  getFiles(opts: { prefix: string }): Promise<[{ name: string }[], ...unknown[]]>;
 }
 
 export class GcsBlobs implements BlobStore {
@@ -170,6 +175,10 @@ export class GcsBlobs implements BlobStore {
   async exists(path: string) {
     const [ok] = await this.bucket.file(path).exists();
     return ok;
+  }
+  async list(prefix: string) {
+    const [files] = await this.bucket.getFiles({ prefix });
+    return files.map((f) => f.name);
   }
   async deletePrefix(prefix: string) {
     await this.bucket.deleteFiles({ prefix, force: true });

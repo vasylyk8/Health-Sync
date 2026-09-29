@@ -6,6 +6,8 @@ export interface BlobStore {
   /** Downloads to a local file path (streams for large objects). */
   download(path: string, localPath: string): Promise<void>;
   deletePrefix(prefix: string): Promise<void>;
+  /** Object names starting with `prefix`. */
+  list(prefix: string): Promise<string[]>;
   delete(path: string): Promise<void>;
   exists(path: string): Promise<boolean>;
 }
@@ -122,6 +124,8 @@ export interface MetaStore {
     mutate: (d: WorkoutDataDoc) => WorkoutDataDoc;
     userPatch?: Partial<Pick<UserDoc, 'lastVisibleAt' | 'tz'>>;
   }): Promise<'published' | 'duplicate' | 'discarded'>;
+  /** Removes one type's manifest (used when a data type is no longer synced). */
+  deleteManifest(uid: string, type: string): Promise<void>;
   /** Removes the raw-data index of deleted workouts and returns the files it referenced. */
   deleteWorkoutData(uid: string, wids: string[]): Promise<FileRef[]>;
 }
