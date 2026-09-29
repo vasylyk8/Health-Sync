@@ -37,7 +37,7 @@ Verified by CI: server unit tests, and the iOS unit and UI tests on the newest i
 | S-5, S-6 sleep dating | **Fixed**: sleep is dated by the night it ends (before 18:00 counts for that day) in both `get_sleep` and `summarize`. |
 | M2 first sync locks the screen | **Partly fixed**: the screen stays awake during the first sync. Speed and a background task are still open. |
 | Privacy policy menu name | **Fixed** ("••• menu"). |
-| M3(c), M4, M7, M9, M10, M12 | **Open**. M4 needs a reliable "no data" signal; M7 is a log-sink setting; M9 and M10 are larger changes. |
+| M3(c), M4, M7, M9, M10, M12 | **Open**. M4 needs a reliable "no data" signal; M7 is a log-sink setting (runbook in `docs/LOG_HYGIENE.md`, needs a project owner to run it); M9 and M10 are larger changes. |
 
 ## What was tested, and how
 
