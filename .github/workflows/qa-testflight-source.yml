@@ -1,0 +1,65 @@
+name: qa-testflight-source
+on:
+  push:
+    branches: ['codex/qa-audit-20260929']
+    paths: ['.github/workflows/qa-testflight-source.yml']
+permissions:
+  contents: read
+jobs:
+  testflight-source:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      BUNDLE_ID: app.healthsync.dev
+      APPLE_TEAM_ID: ''
+      PUBLIC_BASE_URL: https://krok-1d60a.web.app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Use TestFlight 1.0 (1) source with diagnostic tests only
+        run: |
+          cp ios/HealthSyncTests/AuditRegressionTests.swift /tmp/AuditRegressionTests.swift
+          cp ios/HealthSyncUITests/AuditUITests.swift /tmp/AuditUITests.swift
+          git checkout 91ecdd301a4003304c8aa410d5635465dad950a5
+          cp /tmp/AuditRegressionTests.swift ios/HealthSyncTests/
+          cp /tmp/AuditUITests.swift ios/HealthSyncUITests/
+          git rev-parse HEAD
+      - run: |
+          brew install xcodegen
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          cd ios
+          xcodegen generate --spec project.yml
+          xcrun simctl list devices available -j > devices.json
+          python3 - <<'PY'
+          import json,os
+          devices=json.load(open('devices.json'))['devices']
+          candidates=next([x for x in devices[k] if x['name'].startswith('iPhone')] for k in sorted(devices,reverse=True) if 'iOS' in k and any(x['name'].startswith('iPhone') for x in devices[k]))
+          small=next((x for x in candidates if 'SE' in x['name'] or x['name'].endswith('e')),candidates[0])
+          large=next((x for x in candidates if 'Pro Max' in x['name']),candidates[-1])
+          with open(os.environ['GITHUB_ENV'],'a') as f:
+            f.write('QA_SMALL='+small['udid']+'\nQA_LARGE='+large['udid']+'\n')
+          print('Selected:',small['name'],large['name'])
+          PY
+      - name: Small phone full audit
+        continue-on-error: true
+        run: |
+          cd ios
+          xcodebuild test -project HealthSync.xcodeproj -scheme HealthSync -destination "platform=iOS Simulator,id=$QA_SMALL" -resultBundlePath qa-small.xcresult CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= > qa-small.log 2>&1
+      - name: Export evidence
+        if: always()
+        run: |
+          cd ios
+          for r in qa-*.xcresult; do
+            xcrun xcresulttool export attachments --path "$r" --output-path "${r%.xcresult}-screenshots" || true
+            xcrun xcresulttool get test-results summary --path "$r" > "${r%.xcresult}-summary.json" || true
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-testflight-source-evidence
+          path: |
+            ios/qa-*.log
+            ios/qa-*.json
+            ios/qa-*-screenshots
+            ios/devices.json
