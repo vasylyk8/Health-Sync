@@ -312,7 +312,11 @@ actor SyncEngine {
 
     private func syncProfile() async throws {
         guard let profile = source.profile() else { return }
-        let data = try JSONEncoder().encode(profile)
+        // Sorted keys: dictionary order can differ between instances, which would change the hash
+        // and re-upload an unchanged profile.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let data = try encoder.encode(profile)
         let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         guard hash != outbox.state.profileHash else { return }
         let header = BatchHeader(type: HealthTypes.profileId, mode: .profile, seq: try outbox.nextSeq(HealthTypes.profileId), checkedAt: now())

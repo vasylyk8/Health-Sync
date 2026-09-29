@@ -32,7 +32,9 @@ final class ScriptedSource: HealthSource, @unchecked Sendable {
     func earliestSampleDate(_ type: SyncType) async throws -> Date? { earliest }
     func activitySummaries(from: Date, to: Date) async throws -> [Record] { [] }
     func correlations(_ type: SyncType, from: Date, to: Date) async throws -> [Record] { [] }
-    func profile() -> Record? { ["k": "p", "sex": "female"] }
+    /// Rebuilt on every call so dictionary ordering can differ between calls, like real HealthKit reads.
+    var profileFields: [String: RecordValue] = ["k": "p", "sex": "female"]
+    func profile() -> Record? { Dictionary(uniqueKeysWithValues: profileFields.map { ($0.key, $0.value) }) }
     func observeChanges(types: [SyncType], onChange: @escaping @Sendable (SyncType, @escaping @Sendable () -> Void) -> Void) {}
 }
 
@@ -102,6 +104,18 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertEqual(seqs, seqs.sorted())
         XCTAssertEqual(Set(seqs).count, seqs.count)
         XCTAssertTrue(outbox.pending().isEmpty)
+    }
+
+    func testUnchangedProfileIsUploadedOnlyOnce() async throws {
+        let source = ScriptedSource()
+        for i in 0..<12 { source.profileFields["f\(i)"] = .string("value\(i)") }
+        let up = RecordingUploader()
+        let outbox = Outbox(root: root)
+        for _ in 0..<6 {
+            let engine = SyncEngine(source: source, uploader: up, outbox: outbox, types: [])
+            _ = try await engine.run()
+        }
+        XCTAssertEqual(up.uploaded.filter { $0.header["mode"] as? String == "profile" }.count, 1)
     }
 
     func testTypesWithNothingNewShareOneStatusUpload() async throws {
