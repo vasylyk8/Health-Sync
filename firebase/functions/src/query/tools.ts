@@ -406,8 +406,14 @@ export async function getOverview(deps: QueryDeps, args: { days?: number; timezo
     if (r.method === 'raw_may_double_count') {
       return { unavailable: 'Hourly totals are not fully synced yet, and adding raw readings would count iPhone and Apple Watch steps twice. Try again after the KROK app finishes syncing, or use summarize with a source filter.' };
     }
-    const v = (r.rows as { value: number }[]).reduce((n, x) => n + (x.value ?? 0), 0);
-    return (r.rows as unknown[]).length ? { dailyAverage: Math.round((v / days) * 10) / 10, total: Math.round(v) } : 'no data';
+    const list = r.rows as { period: string; value: number }[];
+    const v = list.reduce((n, x) => n + (x.value ?? 0), 0);
+    if (!list.length) return 'no data';
+    // Average over the days since the first day with data, so a short history is not diluted by
+    // days before the user had any.
+    const first = Date.parse(list[0]!.period + 'T00:00:00Z');
+    const elapsed = Number.isNaN(first) ? days : Math.min(days, Math.max(1, Math.round((Date.parse(today + 'T00:00:00Z') - first) / 86_400_000) + 1));
+    return { dailyAverage: Math.round((v / elapsed) * 10) / 10, total: Math.round(v), daysCovered: elapsed };
   };
   const avg = (r: ToolResult) => {
     const row = (r.rows as { value: number }[])[0];

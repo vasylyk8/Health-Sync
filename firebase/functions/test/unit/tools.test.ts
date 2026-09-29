@@ -223,7 +223,9 @@ describe('getOverview', () => {
     expect(Object.keys(r.metrics as object)).toEqual([
       'steps', 'activeEnergyKcal', 'exerciseMinutes', 'restingHeartRateBpm', 'hrvSdnnMs', 'bodyMassKg', 'vo2Max', 'sleep', 'workouts',
     ]);
-    expect((r.metrics as { steps: unknown }).steps).toEqual({ dailyAverage: 50, total: 1500 });
+    expect((r.metrics as { steps: unknown }).steps).toEqual({ dailyAverage: 50, total: 1500, daysCovered: 30 });
+    const short = await getOverview(deps(env), { days: 365 });
+    expect((short.metrics as { steps: unknown }).steps).toEqual({ dailyAverage: 50, total: 1500, daysCovered: 30 });
     expect((r.metrics as { sleep: unknown }).sleep).toBe('no data');
     expect(r.period).toBe('2024-06-01..2024-06-30');
     expect(r.dataAsOf).not.toBeNull();
