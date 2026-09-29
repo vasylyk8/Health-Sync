@@ -59,6 +59,7 @@ final class AppModel: ObservableObject {
             try await backend.registerDevice(timeZone: TimeZone.current.identifier)
             defaults.set(true, forKey: "healthConnected")
             telemetry.event("health_connected")
+            busy = false
             withAnimation { phase = .home }
             start()
         } catch {
@@ -174,6 +175,9 @@ final class AppModel: ObservableObject {
             defaults.removeObject(forKey: "healthConnected")
             status = .empty
             started = false
+            // Clear `busy` before the screen changes: the new welcome screen must never render (or
+            // miss an update to) a stale spinner with a disabled button.
+            busy = false
             withAnimation { phase = .welcome }
         } catch {
             errorMessage = friendly(error)
