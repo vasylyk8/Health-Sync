@@ -139,6 +139,13 @@ final class Outbox: @unchecked Sendable {
         try? fm.removeItem(at: pendingURL(entry.id))
     }
 
+    /// Drops an entry without applying its anchor or completion, so the data it carried is read again.
+    func discard(_ entry: Entry) throws {
+        guard entry.generation == generation else { return }
+        for id in entry.batchIds { try? fm.removeItem(at: batchURL(id)) }
+        try? fm.removeItem(at: pendingURL(entry.id))
+    }
+
     /// Deletes everything (used by "Delete all my data").
     func reset() {
         generation += 1

@@ -406,12 +406,11 @@ actor SyncEngine {
     /// failure (retried next run).
     func flush(typeId: String? = nil) async throws {
         for var entry in outbox.pending() where typeId == nil || entry.typeId == typeId {
+            var lost = false
             for id in entry.batchIds where !entry.uploaded.contains(id) {
                 guard let gz = outbox.batchData(id) else {
-                    // Missing file (should not happen): treat as uploaded rather than block forever.
-                    try outbox.markUploaded(&entry, batchId: id)
-                    telemetry.nonFatal("outbox.missingBatch", code: 1)
-                    continue
+                    lost = true
+                    break
                 }
                 let sha = SHA256.hash(data: gz).map { String(format: "%02x", $0) }.joined()
                 let started = Date()
@@ -423,6 +422,14 @@ actor SyncEngine {
                 }
                 lastUploadMs = Self.ms(since: started)
                 try outbox.markUploaded(&entry, batchId: id)
+            }
+            if lost {
+                // A batch file vanished (should not happen). Completing the entry would move the anchor
+                // past data the server never got, so drop it instead: the next run re-reads from the
+                // last committed anchor.
+                telemetry.nonFatal("outbox.missingBatch", code: 1)
+                try outbox.discard(entry)
+                continue
             }
             try outbox.complete(entry)
         }

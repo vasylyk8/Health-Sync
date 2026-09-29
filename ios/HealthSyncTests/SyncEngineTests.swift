@@ -106,6 +106,20 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertTrue(outbox.pending().isEmpty)
     }
 
+    func testLostBatchFileDoesNotAdvanceTheAnchor() async throws {
+        let outbox = Outbox(root: root)
+        let batch = Batch(id: "lost-batch", gz: Gzip.compress(Data("{}".utf8)))
+        _ = try outbox.enqueue(typeId: hr.id, batches: [batch], anchor: Data("A1".utf8), completes: .caughtUp)
+        try FileManager.default.removeItem(at: root.appendingPathComponent("batches/lost-batch.ndjson.gz"))
+        let up = RecordingUploader()
+        let engine = SyncEngine(source: ScriptedSource(), uploader: up, outbox: outbox, types: [hr])
+        try await engine.flush()
+        XCTAssertNil(outbox.state.anchors[hr.id], "data that never reached the server must be read again")
+        XCTAssertFalse(outbox.state.caughtUp.contains(hr.id))
+        XCTAssertTrue(outbox.pending().isEmpty)
+        XCTAssertTrue(up.uploaded.isEmpty)
+    }
+
     func testUnchangedProfileIsUploadedOnlyOnce() async throws {
         let source = ScriptedSource()
         for i in 0..<12 { source.profileFields["f\(i)"] = .string("value\(i)") }
