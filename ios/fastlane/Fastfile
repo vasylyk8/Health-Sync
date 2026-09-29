@@ -31,6 +31,8 @@ platform :ios do
       scheme: SCHEME,
       device: ENV.fetch("SIM_DEVICE", "iPhone 16 Pro"),
       result_bundle: true,
+      # The QA suite reproduces known findings and runs in the qa-ios workflow instead.
+      skip_testing: ["HealthSyncUITests/QAUITests"],
       output_directory: "fastlane/test_output",
       # Ad-hoc simulator signing keeps entitlements (HealthKit) without an Apple account.
       xcargs: "CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=",

@@ -11,6 +11,8 @@ struct ConnectView: View {
                 Section {
                     ForEach(model.providers) { provider in
                         Button { selected = provider } label: { ProviderRow(provider: provider, setUp: model.isSetUp(provider)) }
+                            .buttonStyle(.plain)
+                            .accessibilityHint(model.isSetUp(provider) ? "Shows connection details" : "Opens setup steps")
                             .accessibilityIdentifier("provider.\(provider.id)")
                             .accessibilityValue(model.isSetUp(provider) ? "Set up" : "Not set up")
                     }
@@ -20,7 +22,7 @@ struct ConnectView: View {
                     Text("Then ask it things like \"How did I sleep this week?\"")
                 }
                 Section {
-                    SyncStatusView(progress: model.progress, status: model.status)
+                    SyncStatusView(progress: model.progress, status: model.status, issue: model.syncIssue)
                 }
             }
             .navigationTitle("KROK")
@@ -73,7 +75,7 @@ struct ProviderRow: View {
                 Label("Set up", systemImage: "checkmark.circle.fill")
                     .labelStyle(.titleAndIcon)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Theme.success)
                     .accessibilityIdentifier("setUp.\(provider.id)")
             } else {
                 Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
@@ -87,6 +89,7 @@ struct ProviderRow: View {
 struct SyncStatusView: View {
     let progress: SyncProgress
     let status: ServerStatus
+    var issue: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -115,11 +118,18 @@ struct SyncStatusView: View {
             } else {
                 Label("Getting ready…", systemImage: "hourglass").font(.subheadline)
             }
+            if let issue {
+                Label(issue, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("syncIssue")
+            }
             if let start = status.historyStart {
                 Text("History synced back to \(start, format: .dateTime.month(.abbreviated).year())")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
         .padding(.vertical, 4)
     }
 }

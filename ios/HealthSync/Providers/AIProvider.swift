@@ -20,6 +20,8 @@ struct AIProvider: Identifiable, Hashable {
     let company: String
     let symbol: String
     let tint: Color
+    /// Darker variant of `tint` behind white text (step numbers), for 4.5:1 contrast.
+    let badgeTint: Color
     let setupURL: URL
     let websiteLabel: String
     let subtitle: String?
@@ -27,17 +29,17 @@ struct AIProvider: Identifiable, Hashable {
     let tip: String?
 
     static let claude = AIProvider(
-        id: "claude", name: "Claude", company: "Anthropic", symbol: "sparkle", tint: Color(red: 0.85, green: 0.47, blue: 0.34),
+        id: "claude", name: "Claude", company: "Anthropic", symbol: "sparkle", tint: Color(red: 0.85, green: 0.47, blue: 0.34), badgeTint: Color(red: 0.70, green: 0.34, blue: 0.22),
         setupURL: URL(string: "https://claude.ai/settings/connectors")!, websiteLabel: "claude.ai", subtitle: nil,
         steps: [
             Step(title: "Copy your private link", detail: "This link lets Claude read your Health data. Keep it private.", illustration: .copyLink),
-            Step(title: "Open Claude's settings", detail: "Sign in if asked. You'll land on the Connectors page.", illustration: .openSettings(site: "claude.ai", path: ["Settings", "Connectors"])),
-            Step(title: "Add the connector", detail: "Tap \"Add custom connector\", name it KROK, paste your link, then tap Add.", illustration: .addConnector(site: "claude.ai", button: "Add custom connector", fields: ["KROK", "https://…/mcp/…"])),
+            Step(title: "Open Claude's connectors", detail: "Sign in if asked. If you don't land on it, go to Customize, then Connectors.", illustration: .openSettings(site: "claude.ai", path: ["Customize", "Connectors"])),
+            Step(title: "Add the connector", detail: "Tap +, then \"Add custom connector\". Name it KROK, paste your link, then tap Add.", illustration: .addConnector(site: "claude.ai", button: "+ Add custom connector", fields: ["KROK", "https://…/mcp/…"])),
         ],
         tip: "On Claude's free plan you can have one custom connector. If you already have one, remove it first.")
 
     static let chatgpt = AIProvider(
-        id: "chatgpt", name: "ChatGPT", company: "OpenAI", symbol: "circle.hexagongrid", tint: Color(red: 0.06, green: 0.64, blue: 0.5),
+        id: "chatgpt", name: "ChatGPT", company: "OpenAI", symbol: "circle.hexagongrid", tint: Color(red: 0.06, green: 0.64, blue: 0.5), badgeTint: Color(red: 0.03, green: 0.45, blue: 0.35),
         setupURL: URL(string: "https://chatgpt.com/#settings/Connectors")!, websiteLabel: "chatgpt.com", subtitle: "Requires ChatGPT Plus",
         steps: [
             Step(title: "Copy your private link", detail: "This link lets ChatGPT read your Health data. Keep it private.", illustration: .copyLink),

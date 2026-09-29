@@ -7,6 +7,7 @@ export interface BlobStore {
   download(path: string, localPath: string): Promise<void>;
   deletePrefix(prefix: string): Promise<void>;
   delete(path: string): Promise<void>;
+  exists(path: string): Promise<boolean>;
 }
 
 export type Interval = [number, number];

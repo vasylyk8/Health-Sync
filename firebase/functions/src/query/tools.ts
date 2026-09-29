@@ -23,6 +23,15 @@ export type Stat = (typeof STATS)[number];
 
 const MAX_PERIOD_ROWS = 2000;
 const MAX_SAMPLE_ROWS = 500;
+const OVERVIEW_CONCURRENCY = 2;
+const SLEEP_TYPE = 'HKCategoryTypeIdentifierSleepAnalysis';
+
+/**
+ * Local date a sleep segment belongs to: the morning it ends. Segments ending before 18:00 count
+ * for that day, so a late sleeper who wakes after noon is not pushed into the next day's night.
+ * Both get_sleep and summarize(SleepAnalysis) use this, so the two tools agree.
+ */
+const nightOf = (endCol: string, tz: string) => `CAST(${localTs(endCol, tz)} - INTERVAL 18 HOUR AS DATE) + 1`;
 
 const FMT: Record<Period, string> = {
   hour: '%Y-%m-%d %H:00',
@@ -99,6 +108,9 @@ export async function summarize(deps: QueryDeps, args: SummarizeArgs): Promise<T
   const cumulative = t.agg === 'cumulative';
   const stat: Stat = args.stat ?? (cumulative ? 'sum' : t.kind === 'category' ? 'duration_min' : 'avg');
   if (!STATS.includes(stat)) throw new ToolError('bad_request', `stat must be one of ${STATS.join(', ')}`);
+  if (t.kind === 'quantity' && !cumulative && stat === 'sum') {
+    throw new ToolError('bad_request', `${shortName(t.id)} is a rate or level, so a sum is meaningless. Use avg, min, max or count.`);
+  }
   if (t.kind === 'quantity' && stat === 'duration_min') throw new ToolError('bad_request', 'duration_min applies to category types (e.g. MindfulSession)');
   if (t.kind !== 'quantity' && ['sum', 'avg', 'min', 'max'].includes(stat)) {
     throw new ToolError('bad_request', `${shortName(t.id)} has no numeric values; use stat "count" or "duration_min"`);
@@ -125,6 +137,7 @@ export async function summarize(deps: QueryDeps, args: SummarizeArgs): Promise<T
         const out = await rows(c, `SELECT ${bucket} AS period, ${fn}(v)::DOUBLE AS value, first(u) AS unit
           FROM (SELECT *, ${localTs('s', r.tz)} lt FROM st WHERE agg = '${agg}') WHERE ${within} GROUP BY 1 ORDER BY 1 LIMIT ${MAX_PERIOD_ROWS + 1}`);
         tooMany(out.length);
+        for (const row of out) if (typeof row.value === 'number') row.value = row.unit === 'count' ? Math.round(row.value) : Math.round(row.value * 100) / 100;
         if (!hasWholeHourOffset(r.tz, startUtc)) notes.push(`Hourly totals do not align exactly with local days in ${r.tz}; boundaries may be off by up to 30 minutes.`);
         return {
           ...envelope(deps, [[t.id, man]], true, notes),
@@ -136,7 +149,8 @@ export async function summarize(deps: QueryDeps, args: SummarizeArgs): Promise<T
       notes.push('Merged hourly statistics do not cover this whole range yet, so raw samples were used instead.');
     }
 
-    // Raw path.
+    // Raw path. Sleep is grouped by the night it belongs to (as get_sleep does), not by segment start.
+    const ltExpr = t.id === SLEEP_TYPE && args.period !== 'hour' ? `(${nightOf('e', r.tz)})::TIMESTAMP` : localTs('s', r.tz);
     const man = await loadType(c, dir, deps, t.id, rough, 'raw', { what: 'raw', budget });
     const filters = [within];
     if (args.source) filters.push(`(src ILIKE ${lit('%' + args.source + '%')} OR dev ILIKE ${lit('%' + args.source + '%')})`);
@@ -151,7 +165,7 @@ export async function summarize(deps: QueryDeps, args: SummarizeArgs): Promise<T
     };
     const out = await rows(c, `SELECT ${bucket} AS period, ${expr[stat]} AS value, count(*)::INTEGER AS samples,
         count(DISTINCT coalesce(src, '?'))::INTEGER AS sources
-      FROM (SELECT *, ${localTs('s', r.tz)} lt FROM raw) WHERE ${filters.join(' AND ')}
+      FROM (SELECT *, ${ltExpr} lt FROM raw) WHERE ${filters.join(' AND ')}
       GROUP BY 1 ORDER BY 1 LIMIT ${MAX_PERIOD_ROWS + 1}`);
     tooMany(out.length);
     const multiSource = out.some((row) => (row.sources as number) > 1);
@@ -238,6 +252,7 @@ export async function getWorkouts(deps: QueryDeps, args: { start_date: string; e
         json_extract(extra, '$.acts') AS segments, src AS source
       FROM w WHERE ${filters.join(' AND ')} ORDER BY s LIMIT ${cap + 1}`);
     if (out.length > cap) throw new ToolError('too_large', `More than ${cap} workouts in that range. Use a shorter range or summarize.`);
+    for (const row of out) row.segments = readableSegments(row.segments, r.tz);
     return {
       ...envelope(deps, [[WORKOUT, man]], isComplete(man, startUtc, endUtc, deps.now())),
       timezone: r.tz, count: out.length,
@@ -247,9 +262,31 @@ export async function getWorkouts(deps: QueryDeps, args: { start_date: string; e
   });
 }
 
+/** Workout segments as local times with consecutive identical activities merged; null when there is nothing to add. */
+function readableSegments(raw: unknown, tz: string): { activity: string; start: string; minutes: number }[] | null {
+  if (typeof raw !== 'string') return null;
+  let list: { s: number; e: number; actName?: string }[];
+  try {
+    list = JSON.parse(raw) as typeof list;
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(list)) return null;
+  const clock = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+  const merged: { activity: string; startMs: number; endMs: number }[] = [];
+  for (const seg of list) {
+    const activity = seg.actName ?? 'Unknown';
+    const last = merged[merged.length - 1];
+    if (last && last.activity === activity) last.endMs = seg.e;
+    else merged.push({ activity, startMs: seg.s, endMs: seg.e });
+  }
+  if (merged.length < 2) return null;
+  return merged.map((m) => ({ activity: m.activity, start: clock.format(new Date(m.startMs)), minutes: Math.round((m.endMs - m.startMs) / 60_000) }));
+}
+
 // ---------------------------------------------------------------------------------------------
 
-const SLEEP = 'HKCategoryTypeIdentifierSleepAnalysis';
+const SLEEP = SLEEP_TYPE;
 
 /**
  * Nightly sleep, attributed to the local date the sleep ended. When several sources overlap
@@ -265,7 +302,7 @@ export async function getSleep(deps: QueryDeps, args: { start_date: string; end_
     const cap = 400;
     const out = await rows(c, `
       WITH x AS (
-        SELECT *, CAST(${localTs('e', r.tz)} - INTERVAL 12 HOUR AS DATE) + 1 AS night,
+        SELECT *, ${nightOf('e', r.tz)} AS night,
                (e - s) / 60000.0 AS mins
         FROM sl WHERE e > ${startUtc} - 43200000 AND e <= ${endUtc} + 43200000
       ),
@@ -354,46 +391,65 @@ export async function getOverview(deps: QueryDeps, args: { days?: number; timezo
   const startMs = Date.parse(today + 'T00:00:00Z') - (days - 1) * 86_400_000;
   const start = new Date(startMs).toISOString().slice(0, 10);
   const base = { start_date: start, end_date: today, timezone: tz };
-  const metrics: Record<string, unknown> = {};
-  const coverage: CoverageInfo[] = [];
-  let complete = true;
+  const results: { name: string; value: unknown; coverage: CoverageInfo[]; complete: boolean; notes: string[] }[] = [];
   const safe = async (name: string, fn: () => Promise<ToolResult>, pick: (r: ToolResult) => unknown) => {
+    const slot = results.length;
+    results.push({ name, value: undefined, coverage: [], complete: true, notes: [] });
     try {
       const res = await fn();
-      coverage.push(...res.coverage);
-      complete &&= res.complete;
-      metrics[name] = pick(res);
+      results[slot] = { name, value: pick(res), coverage: res.coverage, complete: res.complete, notes: res.notes };
     } catch (err) {
-      metrics[name] = err instanceof ToolError ? { unavailable: err.message } : { unavailable: 'error' };
+      results[slot]!.value = err instanceof ToolError ? { unavailable: err.message } : { unavailable: 'error' };
     }
   };
   const total = (r: ToolResult) => {
-    const v = (r.rows as { value: number }[]).reduce((n, x) => n + (x.value ?? 0), 0);
-    return (r.rows as unknown[]).length ? { dailyAverage: Math.round((v / days) * 10) / 10, total: Math.round(v) } : 'no data';
+    if (r.method === 'raw_may_double_count') {
+      return { unavailable: 'Hourly totals are not fully synced yet, and adding raw readings would count iPhone and Apple Watch steps twice. Try again after the KROK app finishes syncing, or use summarize with a source filter.' };
+    }
+    const list = r.rows as { period: string; value: number }[];
+    const v = list.reduce((n, x) => n + (x.value ?? 0), 0);
+    if (!list.length) return 'no data';
+    // Average over the days since the first day with data, so a short history is not diluted by
+    // days before the user had any.
+    const first = Date.parse(list[0]!.period + 'T00:00:00Z');
+    const elapsed = Number.isNaN(first) ? days : Math.min(days, Math.max(1, Math.round((Date.parse(today + 'T00:00:00Z') - first) / 86_400_000) + 1));
+    return { dailyAverage: Math.round((v / elapsed) * 10) / 10, total: Math.round(v), daysCovered: elapsed };
   };
   const avg = (r: ToolResult) => {
     const row = (r.rows as { value: number }[])[0];
     return row ? Math.round(row.value * 10) / 10 : 'no data';
   };
-  await safe('steps', () => summarize(deps, { ...base, type: 'StepCount', period: 'day' }), total);
-  await safe('activeEnergyKcal', () => summarize(deps, { ...base, type: 'ActiveEnergyBurned', period: 'day' }), total);
-  await safe('exerciseMinutes', () => summarize(deps, { ...base, type: 'AppleExerciseTime', period: 'day' }), total);
-  await safe('restingHeartRateBpm', () => summarize(deps, { ...base, type: 'RestingHeartRate', period: 'none' }), avg);
-  await safe('hrvSdnnMs', () => summarize(deps, { ...base, type: 'HeartRateVariabilitySDNN', period: 'none' }), avg);
-  await safe('bodyMassKg', () => summarize(deps, { ...base, type: 'BodyMass', period: 'none' }), avg);
-  await safe('vo2Max', () => summarize(deps, { ...base, type: 'VO2Max', period: 'none' }), avg);
-  await safe('sleep', () => getSleep(deps, base), (r) => {
-    const n = r.nights as { asleep_min: number }[];
-    return n.length ? { nights: n.length, averageAsleepHours: Math.round((n.reduce((a, x) => a + x.asleep_min, 0) / n.length / 60) * 10) / 10 } : 'no data';
-  });
-  await safe('workouts', () => getWorkouts(deps, base), (r) => {
-    const w = r.workouts as { duration_min: number }[];
-    return { count: w.length, totalMinutes: Math.round(w.reduce((a, x) => a + (x.duration_min ?? 0), 0)) };
-  });
+  // Independent queries: run a few at a time instead of one after another (each opens its own DuckDB).
+  const jobs: (() => Promise<void>)[] = [
+    () => safe('steps', () => summarize(deps, { ...base, type: 'StepCount', period: 'day' }), total),
+    () => safe('activeEnergyKcal', () => summarize(deps, { ...base, type: 'ActiveEnergyBurned', period: 'day' }), total),
+    () => safe('exerciseMinutes', () => summarize(deps, { ...base, type: 'AppleExerciseTime', period: 'day' }), total),
+    () => safe('restingHeartRateBpm', () => summarize(deps, { ...base, type: 'RestingHeartRate', period: 'none' }), avg),
+    () => safe('hrvSdnnMs', () => summarize(deps, { ...base, type: 'HeartRateVariabilitySDNN', period: 'none' }), avg),
+    () => safe('bodyMassKg', () => summarize(deps, { ...base, type: 'BodyMass', period: 'none' }), avg),
+    () => safe('vo2Max', () => summarize(deps, { ...base, type: 'VO2Max', period: 'none' }), avg),
+    () => safe('sleep', () => getSleep(deps, base), (r) => {
+      const n = r.nights as { asleep_min: number }[];
+      return n.length ? { nights: n.length, averageAsleepHours: Math.round((n.reduce((a, x) => a + x.asleep_min, 0) / n.length / 60) * 10) / 10 } : 'no data';
+    }),
+    () => safe('workouts', () => getWorkouts(deps, base), (r) => {
+      const w = r.workouts as { duration_min: number }[];
+      return { count: w.length, totalMinutes: Math.round(w.reduce((a, x) => a + (x.duration_min ?? 0), 0)) };
+    }),
+  ];
+  const queue = [...jobs];
+  await Promise.all(Array.from({ length: OVERVIEW_CONCURRENCY }, async () => {
+    for (let job = queue.shift(); job; job = queue.shift()) await job();
+  }));
+  const metrics = Object.fromEntries(results.map((r) => [r.name, r.value]));
+  const coverage = results.flatMap((r) => r.coverage);
+  const complete = results.every((r) => r.complete);
   const env = envelope(deps, [], complete);
-  if (coverage.some((cv) => cv.stale)) {
-    env.notes.unshift('Some of this data was last synced more than a day ago. Suggest the user opens the KROK app on their iPhone to refresh.');
-  }
+  const checkedAt = coverage.map((cv) => cv.lastCheckedAt).filter((x): x is string => x !== null).sort();
+  env.dataAsOf = checkedAt[0] ?? null;
+  for (const n of results.flatMap((r) => r.notes)) if (!env.notes.includes(n)) env.notes.push(n);
+  const staleNote = 'Some of this data was last synced more than a day ago. Suggest the user opens the KROK app on their iPhone to refresh.';
+  if (coverage.some((cv) => cv.stale) && !env.notes.includes(staleNote)) env.notes.unshift(staleNote);
   return { ...env, coverage: dedupeCoverage(coverage), period: `${start}..${today}`, timezone: tz, metrics };
 }
 

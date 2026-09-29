@@ -1,9 +1,9 @@
-# Deploys the server. Runs on main, and on the development branch while there are no users yet.
+# Deploys the server. Runs on main and the named development branch only: other feature branches share this backend with TestFlight testers and must not deploy.
 # Skips cleanly (with a notice) until the Google Cloud secrets from docs/SETUP.md exist.
 name: deploy
 on:
   push:
-    branches: [main, 'claude/**']
+    branches: [main, claude/youthful-planck-k7ff0m]
     paths: ['firebase/**', 'shared/**', 'scripts/**', '.github/workflows/deploy.yml']
   workflow_dispatch:
 permissions:

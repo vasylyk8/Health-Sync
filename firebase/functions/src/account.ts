@@ -2,7 +2,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import { PROVIDERS, type Provider } from './config.js';
 import { generateToken, hashToken } from './auth/tokens.js';
-import type { BlobStore, UserDoc } from './store/types.js';
+import type { BlobStore, MetaStore, UserDoc } from './store/types.js';
 import { log } from './log.js';
 
 export class AccountError extends Error {
@@ -152,4 +152,15 @@ export async function getStatus(db: Firestore, uid: string): Promise<Status> {
     historySyncedBackTo: earliest,
     typesWithData: withData,
   };
+}
+
+/**
+ * Whether the server already has a batch: processed (any outcome) or still waiting in the incoming
+ * bucket. Lets the phone tell "already uploaded" apart from a real rejection when Storage answers
+ * `unauthorized` (its rules only allow creating an object once).
+ */
+export async function batchExists(deps: { meta: MetaStore; incoming: BlobStore }, uid: string, batchId: unknown): Promise<boolean> {
+  if (typeof batchId !== 'string' || !/^[0-9a-f-]{36}$/.test(batchId)) throw new AccountError('invalid-argument', 'batchId must be a batch UUID.');
+  if ((await deps.meta.batchState(uid, batchId)) !== null) return true;
+  return deps.incoming.exists(`incoming/${uid}/${batchId}.ndjson.gz`);
 }

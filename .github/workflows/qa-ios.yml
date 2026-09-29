@@ -1,0 +1,75 @@
+# QA: runs the QA UI tests on the smallest available iPhone (ios-ci already covers the newest).
+name: qa-ios
+on:
+  push:
+    branches: ['claude/krok-app-qa-testing-*', 'claude/krok-improvements-overnight-*']
+    paths: ['ios/**', '.github/workflows/qa-ios.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: qa-ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  small-device:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: ios
+    env:
+      BUNDLE_ID: app.healthsync.dev
+      APPLE_TEAM_ID: ''
+      PUBLIC_BASE_URL: https://krok-1d60a.web.app
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          brew install xcodegen
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+      - name: Pick the smallest iPhone simulator
+        run: |
+          DEVICE=$(xcrun simctl list devices available -j | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)['devices']
+          names=[x['name'] for k in sorted(d, reverse=True) if 'iOS' in k for x in d[k] if x['name'].startswith('iPhone')]
+          pref=[n for n in names if 'SE' in n] or [n for n in names if 'mini' in n] or [n for n in names if n.endswith('e')] or names
+          print(pref[0])")
+          echo "SIM_DEVICE=$DEVICE" >> "$GITHUB_ENV"
+          echo "Using $DEVICE"
+      - name: Generate project
+        run: xcodegen generate --spec project.yml
+      - name: QA UI tests
+        run: |
+          xcodebuild test -project HealthSync.xcodeproj -scheme HealthSync \
+            -destination "platform=iOS Simulator,name=$SIM_DEVICE" \
+            -only-testing:HealthSyncUITests/QAUITests \
+            -resultBundlePath qa.xcresult \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= | tee qa.log | grep -E "QA-|Test Case|error:|passed|failed"
+          exit ${PIPESTATUS[0]}
+      - name: QA UI tests (dark appearance)
+        if: always()
+        run: |
+          xcrun simctl boot "$SIM_DEVICE" || true
+          xcrun simctl ui booted appearance dark
+          TEST_RUNNER_QA_APPEARANCE=dark xcodebuild test -project HealthSync.xcodeproj -scheme HealthSync \
+            -destination "platform=iOS Simulator,name=$SIM_DEVICE" \
+            -only-testing:HealthSyncUITests/QAUITests/testDarkModeScreens \
+            -resultBundlePath qa-dark.xcresult \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= | tee qa-dark.log | grep -E "QA-|Test Case|error:"
+          exit ${PIPESTATUS[0]}
+      - name: Export screenshots
+        if: always()
+        run: |
+          mkdir -p qa-screenshots qa-screenshots-dark
+          xcrun xcresulttool export attachments --path qa.xcresult --output-path qa-screenshots || true
+          xcrun xcresulttool export attachments --path qa-dark.xcresult --output-path qa-screenshots-dark || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-small-device
+          path: |
+            ios/qa-screenshots
+            ios/qa.log
+          retention-days: 14

@@ -44,7 +44,7 @@ KROK is not a medical device and doesn't provide medical advice.
 KROK lets users analyze their own Apple Health data with the AI assistant of their choice (Anthropic's Claude or OpenAI's ChatGPT), which they explicitly connect. The purpose is health and fitness management: users ask questions about their sleep, activity, heart rate and workouts, and get answers grounded in their own data.
 
 - Data is read-only and used only to provide this service to the user. It is not used for advertising, sold, or used for data mining. No data is shared until the user taps an assistant, reads a consent screen naming the recipient company, and copies a private link into that assistant's settings.
-- The user can disconnect an assistant (access stops immediately) or delete all data (Settings menu → Delete All My Data).
+- The user can disconnect an assistant (access stops immediately) or delete all data (••• menu → Delete All My Data).
 - Data is stored encrypted in the EU (Google Cloud, Belgium) and deleted automatically after a year of inactivity.
 - To test without an AI account, the app works fully up to the connection step. Adding the connector on claude.ai (free account) takes about a minute: Settings → Connectors → Add custom connector → paste the link.
 - HealthKit data is not stored in iCloud.

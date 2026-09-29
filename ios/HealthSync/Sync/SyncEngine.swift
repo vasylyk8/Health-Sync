@@ -265,7 +265,9 @@ actor SyncEngine {
         let full = outbox.state.statsFullAt[t.id].map { end.timeIntervalSince($0) > config.statsFullEvery } ?? true
         var start: Date
         if full {
-            if outbox.state.earliest[t.id] == nil, let e = try await source.earliestSampleDate(t) {
+            // Re-read every full recompute: older data added later (e.g. imported from another app)
+            // must be included in the merged totals.
+            if let e = try await source.earliestSampleDate(t), outbox.state.earliest[t.id] != e {
                 try outbox.update { $0.earliest[t.id] = e }
             }
             guard let earliest = outbox.state.earliest[t.id] else {
@@ -312,7 +314,11 @@ actor SyncEngine {
 
     private func syncProfile() async throws {
         guard let profile = source.profile() else { return }
-        let data = try JSONEncoder().encode(profile)
+        // Sorted keys: dictionary order can differ between instances, which would change the hash
+        // and re-upload an unchanged profile.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let data = try encoder.encode(profile)
         let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         guard hash != outbox.state.profileHash else { return }
         let header = BatchHeader(type: HealthTypes.profileId, mode: .profile, seq: try outbox.nextSeq(HealthTypes.profileId), checkedAt: now())
@@ -400,12 +406,11 @@ actor SyncEngine {
     /// failure (retried next run).
     func flush(typeId: String? = nil) async throws {
         for var entry in outbox.pending() where typeId == nil || entry.typeId == typeId {
+            var lost = false
             for id in entry.batchIds where !entry.uploaded.contains(id) {
                 guard let gz = outbox.batchData(id) else {
-                    // Missing file (should not happen): treat as uploaded rather than block forever.
-                    try outbox.markUploaded(&entry, batchId: id)
-                    telemetry.nonFatal("outbox.missingBatch", code: 1)
-                    continue
+                    lost = true
+                    break
                 }
                 let sha = SHA256.hash(data: gz).map { String(format: "%02x", $0) }.joined()
                 let started = Date()
@@ -417,6 +422,14 @@ actor SyncEngine {
                 }
                 lastUploadMs = Self.ms(since: started)
                 try outbox.markUploaded(&entry, batchId: id)
+            }
+            if lost {
+                // A batch file vanished (should not happen). Completing the entry would move the anchor
+                // past data the server never got, so drop it instead: the next run re-reads from the
+                // last committed anchor.
+                telemetry.nonFatal("outbox.missingBatch", code: 1)
+                try outbox.discard(entry)
+                continue
             }
             try outbox.complete(entry)
         }

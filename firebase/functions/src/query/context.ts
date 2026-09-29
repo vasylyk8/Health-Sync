@@ -1,6 +1,6 @@
 import type { DuckDBConnection } from '@duckdb/node-api';
 import { join } from 'node:path';
-import { LIMITS, resolveType, shortName, type CoverageEntry } from '../config.js';
+import { COVERAGE, LIMITS, resolveType, shortName, type CoverageEntry } from '../config.js';
 import { covers, type BlobStore, type MetaStore, type TypeManifest } from '../store/types.js';
 import { lit } from './duck.js';
 
@@ -21,6 +21,8 @@ export interface QueryDeps {
 
 export function validTz(tz: string): string {
   try {
+    // UTC offsets such as "+05:30" pass Intl but not the query engine; only named zones are supported.
+    if (/^[+-]/.test(tz)) throw new Error('offset');
     new Intl.DateTimeFormat('en-US', { timeZone: tz });
     return tz;
   } catch {
@@ -32,16 +34,34 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Parses YYYY-MM-DD (a local calendar date in the request timezone). */
 export function parseDate(value: string, field: string): string {
-  if (!DATE_RE.test(value) || Number.isNaN(Date.parse(value + 'T00:00:00Z'))) {
+  const ms = DATE_RE.test(value) ? Date.parse(value + 'T00:00:00Z') : NaN;
+  // Round-trip so impossible dates such as 2024-02-30 are rejected instead of rolling over.
+  if (Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== value) {
     throw new ToolError('bad_request', `${field} must be a date like 2024-03-31`);
   }
   return value;
 }
 
+/** Everyday names an assistant is likely to use, mapped to the real type names. */
+const ALIASES: Record<string, string> = {
+  steps: 'StepCount', stepcount: 'StepCount', heartrate: 'HeartRate', pulse: 'HeartRate', restinghr: 'RestingHeartRate',
+  hrv: 'HeartRateVariabilitySDNN', heartratevariability: 'HeartRateVariabilitySDNN', sleep: 'SleepAnalysis',
+  weight: 'BodyMass', bodyweight: 'BodyMass', calories: 'ActiveEnergyBurned', activeenergy: 'ActiveEnergyBurned',
+  activecalories: 'ActiveEnergyBurned', distance: 'DistanceWalkingRunning', exercise: 'AppleExerciseTime',
+  exerciseminutes: 'AppleExerciseTime', vo2: 'VO2Max', vo2max: 'VO2Max', bloodoxygen: 'OxygenSaturation', spo2: 'OxygenSaturation',
+};
+
+const squash = (name: string) => name.toLowerCase().replace(/[\s_-]+/g, '');
+
 export function resolveKnownType(name: string): CoverageEntry {
-  const t = resolveType(name);
-  if (!t) throw new ToolError('not_found', `Unknown data type "${name}". Call list_available_data to see valid names.`);
-  return t;
+  const found = resolveType(name) ?? (ALIASES[squash(name)] ? resolveType(ALIASES[squash(name)]!) : undefined);
+  if (found) return found;
+  const q = squash(name);
+  const similar = q.length >= 3
+    ? COVERAGE.types.map((t) => shortName(t.id)).filter((n) => squash(n).includes(q) || q.includes(squash(n))).slice(0, 5)
+    : [];
+  const hint = similar.length ? ` Did you mean ${similar.join(', ')}?` : '';
+  throw new ToolError('not_found', `Unknown data type "${name}".${hint} Call list_available_data to see valid names.`);
 }
 
 export interface CoverageInfo {
@@ -182,9 +202,16 @@ export async function localRangeToUtc(c: DuckDBConnection, tz: string, startDate
 export function isComplete(man: TypeManifest | null, start: number, end: number, now: number, stats = false): boolean {
   const checked = man?.coverage.checkedAt;
   if (!man || !checked || now - checked > LIMITS.staleAfterMs) return false;
+  if (stats) {
+    // Hourly totals are refreshed by their own batches, which are usually a few minutes older than
+    // the latest anchored/empty check. Judge them against their own window, not `checkedAt`.
+    const window = man.coverage.statsIntervals.find(([a, b]) => a <= start && start <= b);
+    if (!window || checked - window[1] > LIMITS.statsMaxLagMs) return false;
+    return covers(man.coverage.statsIntervals, start, Math.min(end, window[1]));
+  }
   const until = Math.min(end, checked);
   if (until < start) return false;
-  return covers(stats ? man.coverage.statsIntervals : man.coverage.intervals, start, until);
+  return covers(man.coverage.intervals, start, until);
 }
 
 /** SQL expression: local wall-clock TIMESTAMP of epoch-ms column `col` in `tz`. */

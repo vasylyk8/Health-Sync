@@ -102,6 +102,7 @@ interface BucketLike {
     download(opts?: { destination?: string }): Promise<[Buffer]>;
     save(data: Buffer, opts: { resumable: boolean; contentType: string }): Promise<unknown>;
     delete(opts: { ignoreNotFound: boolean }): Promise<unknown>;
+    exists(): Promise<[boolean]>;
   };
   deleteFiles(opts: { prefix: string; force: boolean }): Promise<unknown>;
 }
@@ -120,6 +121,10 @@ export class GcsBlobs implements BlobStore {
   }
   async delete(path: string) {
     await this.bucket.file(path).delete({ ignoreNotFound: true });
+  }
+  async exists(path: string) {
+    const [ok] = await this.bucket.file(path).exists();
+    return ok;
   }
   async deletePrefix(prefix: string) {
     await this.bucket.deleteFiles({ prefix, force: true });

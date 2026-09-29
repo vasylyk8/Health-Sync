@@ -55,7 +55,8 @@ const TOOLS: { name: string; title: string; description: string; input: z.ZodRaw
       'Exact calculation over a Health data type, grouped by hour/day/week/month/year or "none" (one total for the range). ' +
       'stat: sum | avg | min | max | count | duration_min (category types such as MindfulSession or SleepAnalysis). ' +
       'Defaults: sum for cumulative types (steps, distance, energy), avg for others. Weeks start on Monday. ' +
-      'Optional source filter (e.g. "Watch") and category_value (e.g. SleepAnalysis 4 = deep sleep).',
+      'Optional source filter (e.g. "Watch") and category_value (e.g. SleepAnalysis 4 = deep sleep). ' +
+      'SleepAnalysis is grouped by the date the night ends (like get_sleep); prefer get_sleep for per-night sleep.',
     input: {
       type: z.string().describe('Data type name from list_available_data, e.g. StepCount, HeartRate'),
       start_date: dateField,
@@ -183,11 +184,15 @@ export async function handleMcp(req: IncomingMessage & { body?: unknown }, res: 
     res.setHeader('Allow', 'POST');
     return send(res, 405, { error: 'method_not_allowed' });
   }
-  if (!(await deps.limiter.hit(`mcp_${hash.slice(0, 32)}`, LIMITS.mcpRequestsPerMinute, 60_000))) {
+  // The rate-limit transaction and the user lookup are independent: run them together to save a round trip.
+  const [allowed, user] = await Promise.all([
+    deps.limiter.hit(`mcp_${hash.slice(0, 32)}`, LIMITS.mcpRequestsPerMinute, 60_000),
+    deps.meta.getUser(rec.uid),
+  ]);
+  if (!allowed) {
     res.setHeader('Retry-After', '60');
     return send(res, 429, { error: 'too_many_requests', message: 'Too many requests. Wait a minute.' });
   }
-  const user = await deps.meta.getUser(rec.uid);
   if (!user || user.deleting) return send(res, 404, { error: 'not_found', message: 'This KROK link is no longer active.' });
 
   await deps.connections.touch(rec.uid, rec.provider, now(), user.connections[rec.provider]).catch(() => undefined);

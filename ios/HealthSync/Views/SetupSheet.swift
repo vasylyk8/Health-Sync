@@ -11,6 +11,7 @@ struct SetupSheet: View {
     @State private var consented = false
     @State private var copied = false
     @State private var confirmDisconnect = false
+    @State private var linkError: String?
 
     var body: some View {
         NavigationStack {
@@ -36,43 +37,76 @@ struct SetupSheet: View {
     }
 
     private var consentView: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Image(systemName: "lock.shield.fill").font(.system(size: 56)).foregroundStyle(provider.tint.gradient)
-            Text("Share your Health data with \(provider.name)?").font(.title2.bold()).multilineTextAlignment(.center)
-            Text("You'll get a private link. With it, \(provider.name) can read your Health data whenever you ask it a question. \(provider.company) processes that data under its own terms. You can disconnect at any time.")
-                .multilineTextAlignment(.center).foregroundStyle(.secondary)
-            Spacer()
-            Button {
-                Task {
-                    if let url = await model.link(for: provider) {
-                        link = url
-                        consented = true
+        VStack(spacing: 0) {
+            // Scrolls at large Dynamic Type sizes; Continue stays reachable below it.
+            GeometryReader { geo in
+                ScrollView {
+                    VStack(spacing: 20) {
+                        Spacer(minLength: 0)
+                        Image(systemName: "lock.shield.fill").font(.system(size: 56)).foregroundStyle(provider.tint.gradient)
+                            .accessibilityHidden(true)
+                        Text("Share your Health data with \(provider.name)?").font(.title2.bold()).multilineTextAlignment(.center)
+                        Text("You'll get a private link. With it, \(provider.name) can read your Health data whenever you ask it a question. \(provider.company) processes that data under its own terms. You can disconnect at any time.")
+                            .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 24)
+                    .frame(minHeight: geo.size.height)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+            }
+            VStack(spacing: 12) {
+                if let linkError {
+                    Label(linkError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote).foregroundStyle(.orange).multilineTextAlignment(.center)
+                        .accessibilityIdentifier("linkError")
+                }
+                Button {
+                    Task {
+                        linkError = nil
+                        if let url = await model.link(for: provider) {
+                            link = url
+                            consented = true
+                        } else {
+                            // The app-level alert sits underneath this sheet, so show the reason here.
+                            linkError = model.errorMessage ?? "Something went wrong. Please try again."
+                            model.errorMessage = nil
+                        }
+                    }
+                } label: {
+                    HStack {
+                        if model.busy { ProgressView() }
+                        Text("Continue").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
                     }
                 }
-            } label: {
-                HStack {
-                    if model.busy { ProgressView() }
-                    Text("Continue").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
-                }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(model.busy)
+                .accessibilityIdentifier("consentContinue")
             }
-            .buttonStyle(.borderedProminent).controlSize(.large)
-            .accessibilityIdentifier("consentContinue")
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
         }
-        .padding(24)
     }
 
     private var stepsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 ForEach(Array(provider.steps.enumerated()), id: \.offset) { index, step in
-                    StepCard(number: index + 1, step: step, tint: provider.tint) {
+                    StepCard(number: index + 1, step: step, tint: provider.tint, badgeTint: provider.badgeTint) {
                         switch index {
                         case 0:
                             Button {
-                                UIPasteboard.general.string = link
+                                if let link {
+                                    // The link is a credential: keep it off Universal Clipboard and let it expire.
+                                    UIPasteboard.general.setItems([["public.utf8-plain-text": link]],
+                                                                  options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(600)])
+                                }
                                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                                 copied = true
+                                Task {
+                                    try? await Task.sleep(for: .seconds(3))
+                                    copied = false
+                                }
                             } label: {
                                 Label(copied ? "Copied" : "Copy Link", systemImage: copied ? "checkmark" : "doc.on.doc").frame(maxWidth: .infinity)
                             }
@@ -128,6 +162,7 @@ struct SetupSheet: View {
         VStack(spacing: 18) {
             Spacer()
             Image(systemName: "checkmark.circle.fill").font(.system(size: 64)).foregroundStyle(.green)
+                .accessibilityHidden(true)
             Text("\(provider.name) is set up").font(.title2.bold())
             Text("Ask \(provider.name) about your sleep, workouts, heart rate and more. It reads your Health data only when you ask.")
                 .multilineTextAlignment(.center).foregroundStyle(.secondary)
@@ -153,6 +188,7 @@ private struct StepCard<Actions: View>: View {
     let number: Int
     let step: AIProvider.Step
     let tint: Color
+    let badgeTint: Color
     @ViewBuilder let actions: () -> Actions
 
     var body: some View {
@@ -161,9 +197,11 @@ private struct StepCard<Actions: View>: View {
                 Text("\(number)")
                     .font(.subheadline.bold()).foregroundStyle(.white)
                     .frame(width: 26, height: 26)
-                    .background(tint, in: Circle())
+                    .background(badgeTint, in: Circle())
                 Text(step.title).font(.headline)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
             Text(step.detail).font(.subheadline).foregroundStyle(.secondary)
             IllustrationView(kind: step.illustration, tint: tint)
             actions()

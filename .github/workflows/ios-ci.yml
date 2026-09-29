@@ -45,6 +45,15 @@ jobs:
           mkdir -p screenshots
           RESULT=$(ls -d fastlane/test_output/*.xcresult | head -1)
           xcrun xcresulttool export attachments --path "$RESULT" --output-path screenshots || true
+      - name: Failure summary
+        if: failure()
+        run: |
+          RESULT=$(ls -d fastlane/test_output/*.xcresult | head -1)
+          xcrun xcresulttool get test-results summary --path "$RESULT" --compact | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          for f in d.get('testFailures',[]): print('FAILED', f.get('testName'), '::', f.get('failureText'))
+          print('totals', d.get('passedTests'), 'passed', d.get('failedTests'), 'failed')" || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:

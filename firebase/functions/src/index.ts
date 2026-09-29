@@ -110,6 +110,12 @@ export const createConnectorLink = onCall(callableOpts, wrap(async (req) => {
 
 export const getStatus = onCall(callableOpts, wrap((req) => account.getStatus(deps().db, uidOf(req))));
 
+export const batchExists = onCall(callableOpts, wrap(async (req) => {
+  const uid = uidOf(req);
+  const d = deps();
+  return { exists: await account.batchExists({ meta: d.meta, incoming: d.incoming }, uid, (req.data as { batchId?: unknown })?.batchId) };
+}));
+
 export const disconnectProvider = onCall(callableOpts, wrap(async (req) => {
   await account.disconnect(deps().db, uidOf(req), parseProvider((req.data as { provider?: unknown })?.provider));
   return { ok: true };
