@@ -106,7 +106,14 @@ final class AppModel: ObservableObject {
                 try await backend.registerDevice(timeZone: TimeZone.current.identifier)
             }
             await refreshStatus()
-            try await engine.run()
+            // A background wake-up may be using the engine for a moment; wait for it instead of skipping the sync.
+            var outcome = try await engine.run()
+            var waits = 0
+            while outcome == .alreadyRunning && waits < 6 {
+                waits += 1
+                try await Task.sleep(for: .seconds(5))
+                outcome = try await engine.run()
+            }
             await refreshStatus()
             syncIssue = nil
         } catch is CancellationError {

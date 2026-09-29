@@ -106,6 +106,38 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertTrue(outbox.pending().isEmpty)
     }
 
+    func testObserverWakeIgnoresTypesThatAreStillSyncing() async throws {
+        let cat = SyncType(id: "C0", kind: .category, sampleType: nil, unit: nil)
+        let source = ScriptedSource()
+        source.pages[cat.id] = [AnchoredPage(records: [sample("n1")], newAnchor: Data("N".utf8), objectCount: 1)]
+        let up = RecordingUploader()
+        let outbox = Outbox(root: root)
+        let engine = SyncEngine(source: source, uploader: up, outbox: outbox, types: [cat])
+        // HealthKit fires every observer at launch, before the first sync has covered the type.
+        try await engine.runTypes([cat.id], deadline: Date().addingTimeInterval(5))
+        XCTAssertTrue(up.uploaded.isEmpty)
+        XCTAssertNil(outbox.state.anchors[cat.id])
+        // The main run is not blocked and picks the type up.
+        let outcome = try await engine.run()
+        XCTAssertEqual(outcome, .finished)
+        XCTAssertTrue(outbox.state.caughtUp.contains(cat.id))
+    }
+
+    func testObserverWakeSyncsTypesThatAreCaughtUp() async throws {
+        let cat = SyncType(id: "C0", kind: .category, sampleType: nil, unit: nil)
+        let source = ScriptedSource()
+        let up = RecordingUploader()
+        let outbox = Outbox(root: root)
+        let engine = SyncEngine(source: source, uploader: up, outbox: outbox, types: [cat])
+        _ = try await engine.run()
+        XCTAssertTrue(outbox.state.caughtUp.contains(cat.id))
+        source.pages[cat.id] = [AnchoredPage(records: [sample("n1")], newAnchor: Data("N".utf8), objectCount: 1)]
+        let before = up.uploaded.count
+        try await engine.runTypes([cat.id], deadline: Date().addingTimeInterval(5))
+        XCTAssertEqual(up.uploaded.count, before + 1)
+        XCTAssertEqual(outbox.state.anchors[cat.id], Data("N".utf8))
+    }
+
     func testLostBatchFileDoesNotAdvanceTheAnchor() async throws {
         let outbox = Outbox(root: root)
         let batch = Batch(id: "lost-batch", gz: Gzip.compress(Data("{}".utf8)))
