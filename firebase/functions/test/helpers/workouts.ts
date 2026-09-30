@@ -18,9 +18,9 @@ export async function seedRun(env: Env, opts: { wid?: string; withRaw?: boolean;
     {
       k: 'w', id: wid, s: T0, e: T0 + 1860_000, act: 37, actName: 'Running', dur: 1800, en: 310.5, dist: 6000, hrAvg: 145, hrMax: 162,
       src: 'Apple Watch', bid: 'com.apple.health', dev: 'Watch7,1',
-      ev: [{ t: T0 + 900_000, type: 1, dur: 60 }, { t: T0 + 960_000, type: 2, dur: 0 }],
+      ev: [{ t: T0 + 900_000, type: 1, dur: 60 }, { t: T0 + 960_000, type: 2, dur: 0 }, { t: T0, type: 7, dur: 300 }, { t: T0 + 300_000, type: 7, dur: 300 }],
       stats: { HeartRate: { avg: 145, min: 110, max: 162, u: 'count/min' }, ActiveEnergyBurned: { sum: 310.5, u: 'kcal' } },
-      md: { HKIndoorWorkout: false, HKAverageMETs: 9.8 },
+      md: { HKIndoorWorkout: false, HKAverageMETs: 9.8, HKWeatherHumidity: '8100 %' },
     },
   ]);
   if (opts.withRaw === false) return { wid, gen };

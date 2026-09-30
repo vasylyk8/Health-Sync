@@ -126,6 +126,16 @@ function tidyMetric(v: unknown): unknown {
 }
 const tidyMetrics = (m: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, tidyMetric(v)]));
 
+/** Apple stores weather humidity as a fraction x 10000 with a "%" unit ("8100 %" means 81%). */
+function tidyMetadata(md: unknown): unknown {
+  if (!md || typeof md !== 'object') return md ?? null;
+  const out: Record<string, unknown> = { ...(md as Record<string, unknown>) };
+  const h = out.HKWeatherHumidity;
+  const m = typeof h === 'string' ? /^\s*([\d.]+)\s*%\s*$/.exec(h) : null;
+  if (m && Number(m[1]) > 100) out.HKWeatherHumidity = `${round(Number(m[1]) / 100, 0)} %`;
+  return out;
+}
+
 const num = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 
 function eventsOf(extra: Record<string, unknown>): WorkoutEvent[] {
@@ -191,6 +201,8 @@ export async function getWorkout(deps: QueryDeps, args: { workout_id: string; ti
     const x = row.extra;
     const events = eventsOf(x);
     const pauses = pausesFromEvents(events, row.e);
+    // Auto-detected segments (one per ~km, often overlapping) add noise; their count stays in events.counts.
+    const listed = events.filter((e) => EVENT_NAMES[e.type] !== 'segment');
     const day = row.startLocal.slice(0, 10);
     const dailyMan = await loadType(c, dir, deps, DAILY_TYPE, [row.s - 3 * 86_400_000, row.s + 86_400_000], 'd', { what: 'raw', budget: { bytes: 0 } });
     const dailyRows = await rows(c, `SELECT id, extra FROM d WHERE k = 'day' AND id IN (${lit(day)}, ${lit(dayBefore(day))})`);
@@ -221,13 +233,14 @@ export async function getWorkout(deps: QueryDeps, args: { workout_id: string; ti
       },
       apple_summary: {
         statistics: x.stats ?? null,
-        metadata: x.md ?? null,
+        metadata: tidyMetadata(x.md),
         extra: Object.fromEntries(Object.entries(x).filter(([k]) => !['actName', 'dur', 'en', 'dist', 'hrAvg', 'hrMax', 'ev', 'acts', 'md', 'stats', 'act'].includes(k))),
       },
       events: {
         counts: eventCounts,
-        list: events.slice(0, 100).map((e) => ({ offset_seconds: round((e.t - row.s) / 1000, 1), type: EVENT_NAMES[e.type] ?? `type_${e.type}`, duration_seconds: round(e.dur ?? 0, 1) })),
-        truncated: events.length > 100,
+        list: listed.slice(0, 100).map((e) => ({ offset_seconds: round((e.t - row.s) / 1000, 1), type: EVENT_NAMES[e.type] ?? `type_${e.type}`, duration_seconds: round(e.dur ?? 0, 1) })),
+        truncated: listed.length > 100,
+        segments_omitted_from_list: events.length - listed.length,
       },
       raw_data: { status: rawStatus(doc), streams },
       daily_context: { same_day: daily[day] ?? null, previous_day: daily[dayBefore(day)] ?? null },

@@ -50,8 +50,10 @@ describe('get_workouts / get_workout', () => {
     const r = await getWorkout(q(), { workout_id: RUN });
     const w = r.workout as Record<string, unknown>;
     expect(w.paused_seconds).toBe(60);
-    expect((r.events as { counts: Record<string, number> }).counts).toEqual({ pause: 1, resume: 1 });
+    expect((r.events as { counts: Record<string, number> }).counts).toEqual({ pause: 1, resume: 1, segment: 2 });
+    expect((r.events as { list: unknown[] }).list).toHaveLength(2);
     expect((r.apple_summary as { statistics: Record<string, unknown> }).statistics).toHaveProperty('HeartRate');
+    expect((r.apple_summary as { metadata: Record<string, unknown> }).metadata.HKWeatherHumidity).toBe('81 %');
     const raw = r.raw_data as { status: string; streams: { name: string; points: number; expected_points: number }[] };
     expect(raw.status).toBe('complete');
     expect(raw.streams.map((s) => s.name).sort()).toEqual(['DistanceWalkingRunning', 'HeartRate', 'route']);
