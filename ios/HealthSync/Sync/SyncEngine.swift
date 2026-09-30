@@ -30,6 +30,7 @@ struct SyncProgress: Equatable, Sendable {
     /// What the app is doing in the early steps, which show no percentage for a while on a large history.
     var phaseHint: String? {
         switch phase {
+        case 0: return "Getting ready…"
         case 1: return "Reading your recent workouts…"
         case 2: return "Reading years of daily history (sleep, heart rate, steps…). The first time this can take a minute or two."
         case 3: return "Reading your list of workouts…"
@@ -151,23 +152,32 @@ actor SyncEngine {
         stepErrors = []
         uploadFailed = false
         do {
-            var index: [WorkoutRef] = []
-            try await step { index = try await self.refreshWorkoutIndex() }
+            // Listing every workout is slow on a large history, so it runs alongside the other startup steps.
+            let source = self.source
+            let indexTask = Task { try await SyncTiming.shared.measure("phase.index") { try await source.workoutIndex() } }
+            defer { indexTask.cancel() }
             phase = 1
-            try await step { try await self.recentWorkouts() }
+            try await step { try await SyncTiming.shared.measure("phase.recent") { try await self.recentWorkouts() } }
             phase = 2
-            try await step { try await self.dailyContext() }
+            try await step { try await SyncTiming.shared.measure("phase.daily") { try await self.dailyContext() } }
             phase = 3
             try await step {
                 guard let wt = self.scope.workout else { return }
-                while true {
-                    try self.checkTime()
-                    if try await self.anchoredPage(wt) { break }
-                    self.report(syncing: true)
+                try await SyncTiming.shared.measure("phase.history") {
+                    while true {
+                        try self.checkTime()
+                        if try await self.anchoredPage(wt) { break }
+                        self.report(syncing: true)
+                    }
                 }
             }
             phase = 4
-            try await step { try await self.uploadDetails(index) }
+            try await step {
+                let index = try await indexTask.value
+                try self.outbox.update { $0.workoutTotal = index.count }
+                self.report(syncing: true)
+                try await self.uploadDetails(index)
+            }
             try await sendStatus()
         } catch is OutOfTime {
             try? await sendStatus()
