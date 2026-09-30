@@ -6,6 +6,7 @@ import UIKit
 struct HealthSyncApp: App {
     @StateObject private var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
+    private let benchMode = ProcessInfo.processInfo.arguments.contains("-healthBench")
 
     init() {
         let args = ProcessInfo.processInfo.arguments
@@ -14,7 +15,7 @@ struct HealthSyncApp: App {
         let backend: Backend
         let source: HealthSource
         let telemetry: Telemetry
-        if uiTesting || !FirebaseBackend.configure() {
+        if uiTesting || args.contains("-healthBench") || !FirebaseBackend.configure() {
             backend = FakeBackend()
             source = FakeHealthSource()
             telemetry = NoTelemetry()
@@ -47,12 +48,22 @@ struct HealthSyncApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if benchMode {
+                BenchView()
+            } else {
+                RootView()
+                    .environmentObject(model)
+                    .tint(Theme.accent)
+            }
+            #else
             RootView()
                 .environmentObject(model)
                 .tint(Theme.accent)
+            #endif
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { model.start() }
+            if phase == .active, !benchMode { model.start() }
         }
     }
 }
