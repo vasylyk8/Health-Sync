@@ -21,6 +21,18 @@ final class SyncTiming: @unchecked Sendable {
     private var counters: [String: Int] = [:]
     private let started = Date()
     private var detailStart: Date?
+    /// CPU seconds used by this process (all threads), to tell whether the app itself is the limit.
+    private var cpuAtStart = 0.0
+    private var lastCpu = 0.0
+    private var lastWall = Date()
+    private var recentCores = 0.0
+
+    private static func cpuSeconds() -> Double {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        func secs(_ t: timeval) -> Double { Double(t.tv_sec) + Double(t.tv_usec) / 1_000_000 }
+        return secs(usage.ru_utime) + secs(usage.ru_stime)
+    }
     private var lastWrite = Date.distantPast
 
     /// Times `body` under `name` (a phase such as "detail.read", "upload", "outbox.enqueue").
@@ -48,7 +60,13 @@ final class SyncTiming: @unchecked Sendable {
 
     /// Marks the start of Step 4 (raw workout data) so the live speed is measured from there.
     func markDetailsStart() {
-        lock.withLock { if detailStart == nil { detailStart = Date() } }
+        lock.withLock {
+            guard detailStart == nil else { return }
+            detailStart = Date()
+            cpuAtStart = Self.cpuSeconds()
+            lastCpu = cpuAtStart
+            lastWall = Date()
+        }
     }
 
     /// One line for the sync screen while Step 4 runs, so speed can be read (and screenshotted) without files.
@@ -63,10 +81,28 @@ final class SyncTiming: @unchecked Sendable {
             let uploads = stats["upload"]?.count ?? 0
             let mb = uploads > 0 ? Double(counters["upload.bytes"] ?? 0) / Double(uploads) / 1_000_000 : 0
             let rate = String(format: "%.1f", Double(workouts) / minutes)
-            let perWorkout = String(format: "%.0f", Double(counters["hk.samples"] ?? 0) / Double(workouts))
+            let perWorkout = String(format: "%.0f", Double(counters["hk.samples"] ?? 0) / Double(max(counters["hk.workouts"] ?? 0, 1)))
             func secs(_ key: String) -> String { stats[key].map { String(format: "%.0f", $0.totalMs / 1000) } ?? "-" }
             let startup = "startup: list \(secs("phase.index"))s · recent \(secs("phase.recent"))s · daily \(secs("phase.daily"))s · history \(secs("phase.history"))s"
-            return startup + "\n" + "\(rate) workouts/min · \(counters["read.limit"] ?? 0) queries in flight · \(perWorkout) samples per workout · read \(avg("detail.read"))s per workout · encode \(avg("detail.encode"))s per workout · compress \(avg("batch.compress"))s · save \(avg("outbox.enqueue"))s · upload \(avg("upload"))s per batch (\(String(format: "%.1f", mb)) MB) · \(uploads) uploads"
+            // CPU used by the app (1.0 = one core fully busy): near a full core means the app's own work is the limit.
+            let cpuNow = Self.cpuSeconds()
+            let wallNow = Date()
+            let avgCores = (cpuNow - cpuAtStart) / max(wallNow.timeIntervalSince(start), 0.1)
+            if wallNow.timeIntervalSince(lastWall) >= 10 {
+                recentCores = (cpuNow - lastCpu) / wallNow.timeIntervalSince(lastWall)
+                lastCpu = cpuNow
+                lastWall = wallNow
+            }
+            let heat: String
+            switch ProcessInfo.processInfo.thermalState {
+            case .nominal: heat = "normal"
+            case .fair: heat = "warm"
+            case .serious: heat = "hot"
+            case .critical: heat = "critical"
+            @unknown default: heat = "?"
+            }
+            let device = "app cpu \(String(format: "%.2f", avgCores)) cores avg, \(String(format: "%.2f", recentCores)) now (of \(ProcessInfo.processInfo.activeProcessorCount)) · heat \(heat) · low power \(ProcessInfo.processInfo.isLowPowerModeEnabled ? "ON" : "off")"
+            return startup + "\n" + device + "\n" + "\(rate) workouts/min · \(counters["read.limit"] ?? 0) queries in flight · \(perWorkout) samples per workout · read \(avg("detail.read"))s per workout · encode \(avg("detail.encode"))s per workout · compress \(avg("batch.compress"))s · save \(avg("outbox.enqueue"))s · upload \(avg("upload"))s per batch (\(String(format: "%.1f", mb)) MB) · \(uploads) uploads"
         }
     }
 

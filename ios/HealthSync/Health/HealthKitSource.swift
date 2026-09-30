@@ -6,8 +6,7 @@ import HealthKit
 /// context to batch records. Read-only.
 final class HealthKitSource: HealthSource, @unchecked Sendable {
     private let store = HKHealthStore()
-    /// Extra stores with their own connection to HealthKit. A profile of the first sync showed the same speed
-    /// at 6 and at 24 workouts in parallel, which points at one serial queue per store, so reads are spread over several.
+    /// Extra stores with their own connection to HealthKit, used round-robin for raw workout data reads.
     private let readStores: [HKHealthStore] = (0..<4).map { _ in HKHealthStore() }
     private let storeLock = NSLock()
     private var nextStoreIndex = 0
@@ -179,9 +178,6 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         var wanted = Set(w.allStatistics.keys.map(\.identifier))
         wanted.insert(HealthTypes.quantityPrefix + "HeartRate")
         let specs = scope.workoutQuantities.filter { wanted.contains($0.id) }
-        // One query for every quantity type of this workout (instead of one per type): far fewer round trips.
-        let bySpec = try await timingMeasure("hk.samples") { try await self.workoutQuantitySamples(specs, workout: w) }
-        SyncTiming.shared.count("hk.samples", bySpec.values.reduce(0) { $0 + $1.count })
 
         // Every quantity type and the route are read at the same time (each is an independent query);
         // results are put back in a fixed order so the output does not depend on which finished first.
@@ -190,7 +186,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let parts: [Part] = try await withThrowingTaskGroup(of: Part.self) { group in
             for (i, q) in specs.enumerated() {
                 group.addTask {
-                    let points = try await timing.measure("hk.quantity") { try await self.quantityPoints(q, samples: bySpec[q.type.identifier] ?? [], workout: w, allowTimeWindow: q.name == "HeartRate") }
+                    let points = try await timing.measure("hk.quantity") { try await self.quantityPoints(q, workout: w, allowTimeWindow: q.name == "HeartRate") }
                     return .series(i, points)
                 }
             }
@@ -225,31 +221,16 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             }
         }
         records.append(WorkoutRecords.mark(wid: id, gen: gen, expected: expected))
+        SyncTiming.shared.count("hk.workouts")
         return records
-    }
-
-    private func timingMeasure<T>(_ name: StaticString, _ body: () async throws -> T) async rethrows -> T {
-        try await SyncTiming.shared.measure(name, body)
-    }
-
-    /// Every sample of all the given quantity types that belongs to the workout, in one query, by type identifier.
-    private func workoutQuantitySamples(_ specs: [WorkoutQuantity], workout w: HKWorkout) async throws -> [String: [HKQuantitySample]] {
-        guard !specs.isEmpty else { return [:] }
-        await queryGate.acquire()
-        defer { queryGate.release() }
-        let predicate = HKQuery.predicateForObjects(from: w)
-        let descriptor = HKSampleQueryDescriptor(
-            predicates: specs.map { HKSamplePredicate<HKQuantitySample>.quantitySample(type: $0.type, predicate: predicate) },
-            sortDescriptors: [SortDescriptor(\HKQuantitySample.startDate)], limit: nil)
-        let samples = try await descriptor.result(for: nextStore())
-        return Dictionary(grouping: samples, by: { $0.quantityType.identifier })
     }
 
     /// Readings of one quantity type belonging to the workout. Cumulative types (distance, energy,
     /// steps) are increments stamped with the end of their interval; discrete types (heart rate,
     /// speed, power...) are instantaneous readings.
-    private func quantityPoints(_ q: WorkoutQuantity, samples: [HKQuantitySample], workout w: HKWorkout, allowTimeWindow: Bool) async throws -> [SeriesPoint] {
-        var found = samples
+    private func quantityPoints(_ q: WorkoutQuantity, workout w: HKWorkout, allowTimeWindow: Bool) async throws -> [SeriesPoint] {
+        var found = try await quantitySamples(q.type, predicate: HKQuery.predicateForObjects(from: w))
+        SyncTiming.shared.count("hk.samples", found.count)
         if found.isEmpty && allowTimeWindow {
             let window = HKQuery.predicateForSamples(withStart: w.startDate, end: w.endDate, options: [])
             let sameSource = HKQuery.predicateForObjects(from: [w.sourceRevision.source])
