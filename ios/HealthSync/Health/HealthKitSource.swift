@@ -8,6 +8,14 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     private let store = HKHealthStore()
     private let scope: SyncScope
     private let quantitiesById: [String: WorkoutQuantity]
+    /// Apple documents no limit on parallel queries, so the number in flight is tuned while syncing (`ReadTuner`).
+    private let queryGate = ReadGate(limit: 24)
+    var queryConcurrency: Int { queryGate.currentLimit }
+    func setQueryConcurrency(_ n: Int) { queryGate.setLimit(n) }
+    /// Workouts from the last `workoutIndex()`, so each one is not fetched a second time by uuid before its
+    /// raw data is read. An entry is dropped once that workout has been read.
+    private let cacheLock = NSLock()
+    private var workoutCache: [String: HKWorkout] = [:]
 
     init(scope: SyncScope) {
         self.scope = scope
@@ -47,6 +55,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     func workoutIndex() async throws -> [WorkoutRef] {
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
         let samples = try await fetch(HKObjectType.workoutType(), predicate: nil, sort: sort)
+        let workouts = samples.compactMap { $0 as? HKWorkout }
+        cacheLock.withLock { workoutCache = Dictionary(workouts.map { ($0.uuid.uuidString, $0) }, uniquingKeysWith: { first, _ in first }) }
         return samples.map { WorkoutRef(id: $0.uuid.uuidString, start: $0.startDate) }
     }
 
@@ -141,8 +151,15 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     func workoutDetail(id: String, gen: Int64) async throws -> [Record]? {
         guard let uuid = UUID(uuidString: id) else { return nil }
-        let found = try await fetch(HKObjectType.workoutType(), predicate: HKQuery.predicateForObject(with: uuid), sort: nil, limit: 1)
-        guard let w = found.first as? HKWorkout else { return nil }
+        let w: HKWorkout
+        if let cached = cacheLock.withLock({ workoutCache[id] }) {
+            w = cached
+        } else {
+            let found = try await fetch(HKObjectType.workoutType(), predicate: HKQuery.predicateForObject(with: uuid), sort: nil, limit: 1)
+            guard let fetched = found.first as? HKWorkout else { return nil }
+            w = fetched
+        }
+        defer { cacheLock.withLock { workoutCache[id] = nil } }
 
         var records: [Record] = []
         var expected: [String: Int] = [:]
@@ -239,6 +256,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     /// Every individual reading of a series sample (e.g. heart rate every few seconds).
     private func expandSeries(_ sample: HKQuantitySample, _ q: WorkoutQuantity) async throws -> [SeriesPoint] {
         let predicate = HKQuery.predicateForObject(with: sample.uuid)
+        await queryGate.acquire()
+        defer { queryGate.release() }
         return try await withCheckedThrowingContinuation { cont in
             var acc: [SeriesPoint] = []
             let query = HKQuantitySeriesSampleQuery(quantityType: q.type, predicate: predicate) { _, quantity, interval, _, done, error in
@@ -271,7 +290,9 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     private func locations(of route: HKWorkoutRoute) async throws -> [CLLocation] {
-        try await withCheckedThrowingContinuation { cont in
+        await queryGate.acquire()
+        defer { queryGate.release() }
+        return try await withCheckedThrowingContinuation { cont in
             var acc: [CLLocation] = []
             let query = HKWorkoutRouteQuery(route: route) { _, batch, done, error in
                 if let error {
@@ -287,68 +308,117 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     // MARK: Daily context
 
+    /// One value of one daily metric on one local day.
+    private struct DailyCell: Sendable {
+        var day: String
+        var key: String
+        var value: RecordValue
+    }
+
     func dailyContext(from: Date, to: Date) async throws -> [Record] {
         let cal = Calendar.current
         let start = cal.startOfDay(for: from)
-        var days: [String: [String: RecordValue]] = [:]
-        func put(_ day: String, _ key: String, _ value: RecordValue) { days[day, default: [:]][key] = value }
+        let metrics = scope.dailyMetrics
+        // The metrics are independent queries (dozens per year of history), so several run at the same time;
+        // results are merged in the metrics' order so the output does not depend on which finished first.
+        var perMetric = [[DailyCell]?](repeating: nil, count: metrics.count)
         var failures = 0
         var firstError: Error?
-        for metric in scope.dailyMetrics {
-            do {
-                switch metric.kind {
-                case .quantity(let type, let unit, let agg, let scale):
-                    for (day, value) in try await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal) {
-                        put(day, metric.key, .double(value))
-                    }
-                case .category(let type, let mode):
-                    for (day, value) in try await dailyCategory(type, mode: mode, from: start, to: to, calendar: cal) { put(day, metric.key, value) }
-                case .sleep(let type):
-                    // A night can start the evening before the first day.
-                    let segments = try await sleepSegments(type, from: start.addingTimeInterval(-86_400), to: to)
-                    for (day, values) in SleepNights.nights(segments, calendar: cal) where day >= SleepNights.dayKey(start, calendar: cal) {
-                        for (k, v) in values { put(day, k, v) }
-                    }
-                case .rings:
-                    for (day, values) in try await activityRings(from: start, to: to, calendar: cal) {
-                        for (k, v) in values { put(day, k, v) }
-                    }
-                case .stateOfMind:
-                    if #available(iOS 18.0, *) {
-                        for (day, values) in try await moods(from: start, to: to, calendar: cal) {
-                            for (k, v) in values { put(day, k, v) }
-                        }
+        let limit = max(1, Self.dailyConcurrency)
+        await withTaskGroup(of: (Int, [DailyCell]?, Error?).self) { group in
+            var next = 0
+            func startNext() {
+                guard next < metrics.count else { return }
+                let i = next
+                next += 1
+                group.addTask {
+                    do {
+                        return (i, try await SyncTiming.shared.measure("hk.daily") { try await self.dailyCells(metrics[i], start: start, to: to, calendar: cal) }, nil)
+                    } catch {
+                        // One metric failing (e.g. no permission) must not lose the others.
+                        return (i, nil, error)
                     }
                 }
-            } catch {
-                // One metric failing (e.g. no permission) must not lose the others.
-                failures += 1
-                firstError = firstError ?? error
+            }
+            for _ in 0 ..< min(limit, metrics.count) { startNext() }
+            while let (i, cells, error) = await group.next() {
+                if let error {
+                    failures += 1
+                    firstError = firstError ?? error
+                } else {
+                    perMetric[i] = cells
+                }
+                startNext()
             }
         }
-        if failures > 0, failures == scope.dailyMetrics.count, let firstError { throw firstError }
+        if failures > 0, failures == metrics.count, let firstError { throw firstError }
+        var days: [String: [String: RecordValue]] = [:]
+        for cells in perMetric {
+            for c in cells ?? [] { days[c.day, default: [:]][c.key] = c.value }
+        }
         return days.keys.sorted().map { day in ["k": "day", "day": .string(day), "m": .object(days[day] ?? [:])] }
     }
 
-    func earliestDailyDate() async throws -> Date? {
-        var earliest: Date?
-        for metric in scope.dailyMetrics {
-            let type: HKSampleType?
-            switch metric.kind {
-            case .quantity(let t, _, _, _): type = t
-            case .category(let t, _): type = t
-            case .sleep(let t): type = t
-            case .rings: type = nil
-            case .stateOfMind:
-                if #available(iOS 18.0, *) { type = HKObjectType.stateOfMindType() } else { type = nil }
+    /// Metric queries running at once during the daily-context pass.
+    private static let dailyConcurrency = 8
+
+    private func dailyCells(_ metric: DailyMetric, start: Date, to: Date, calendar cal: Calendar) async throws -> [DailyCell] {
+        var out: [DailyCell] = []
+        switch metric.kind {
+        case .quantity(let type, let unit, let agg, let scale):
+            for (day, value) in try await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal) {
+                out.append(DailyCell(day: day, key: metric.key, value: .double(value)))
             }
-            guard let type else { continue }
-            let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
-            if let first = try? await fetch(type, predicate: nil, sort: sort, limit: 1).first?.startDate, earliest.map({ first < $0 }) ?? true {
-                earliest = first
+        case .category(let type, let mode):
+            for (day, value) in try await dailyCategory(type, mode: mode, from: start, to: to, calendar: cal) {
+                out.append(DailyCell(day: day, key: metric.key, value: value))
+            }
+        case .sleep(let type):
+            // A night can start the evening before the first day.
+            let segments = try await sleepSegments(type, from: start.addingTimeInterval(-86_400), to: to)
+            for (day, values) in SleepNights.nights(segments, calendar: cal) where day >= SleepNights.dayKey(start, calendar: cal) {
+                for (k, v) in values { out.append(DailyCell(day: day, key: k, value: v)) }
+            }
+        case .rings:
+            for (day, values) in try await activityRings(from: start, to: to, calendar: cal) {
+                for (k, v) in values { out.append(DailyCell(day: day, key: k, value: v)) }
+            }
+        case .stateOfMind:
+            if #available(iOS 18.0, *) {
+                for (day, values) in try await moods(from: start, to: to, calendar: cal) {
+                    for (k, v) in values { out.append(DailyCell(day: day, key: k, value: v)) }
+                }
             }
         }
-        return earliest
+        return out
+    }
+
+    func earliestDailyDate() async throws -> Date? {
+        // One "oldest sample" query per metric, all at the same time.
+        let types: [HKSampleType] = scope.dailyMetrics.compactMap { metric in
+            switch metric.kind {
+            case .quantity(let t, _, _, _): return t
+            case .category(let t, _): return t
+            case .sleep(let t): return t
+            case .rings: return nil
+            case .stateOfMind:
+                if #available(iOS 18.0, *) { return HKObjectType.stateOfMindType() }
+                return nil
+            }
+        }
+        return await withTaskGroup(of: Date?.self) { group in
+            for type in types {
+                group.addTask {
+                    let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+                    return try? await self.fetch(type, predicate: nil, sort: sort, limit: 1).first?.startDate
+                }
+            }
+            var earliest: Date?
+            for await first in group {
+                if let first, earliest.map({ first < $0 }) ?? true { earliest = first }
+            }
+            return earliest
+        }
     }
 
     private func dailyStatistics(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date, calendar: Calendar) async throws -> [(String, Double)] {
@@ -474,7 +544,9 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     // MARK: Helpers
 
     private func fetch(_ type: HKSampleType, predicate: NSPredicate?, sort: NSSortDescriptor?, limit: Int = HKObjectQueryNoLimit) async throws -> [HKSample] {
-        try await withCheckedThrowingContinuation { cont in
+        await queryGate.acquire()
+        defer { queryGate.release() }
+        return try await withCheckedThrowingContinuation { cont in
             let q = HKSampleQuery(sampleType: type, predicate: predicate, limit: limit, sortDescriptors: sort.map { [$0] }) { _, results, error in
                 if let error { cont.resume(throwing: error) } else { cont.resume(returning: results ?? []) }
             }

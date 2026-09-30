@@ -27,6 +27,15 @@ struct SyncProgress: Equatable, Sendable {
         default: return "Syncing your workouts"
         }
     }
+    /// What the app is doing in the early steps, which show no percentage for a while on a large history.
+    var phaseHint: String? {
+        switch phase {
+        case 1: return "Reading your recent workouts…"
+        case 2: return "Reading years of daily history (sleep, heart rate, steps…). The first time this can take a minute or two."
+        case 3: return "Reading your list of workouts…"
+        default: return nil
+        }
+    }
     var fraction: Double { stepsTotal > 0 ? min(1, Double(stepsDone) / Double(stepsTotal)) : 0 }
     var historyComplete: Bool { stepsTotal > 0 && stepsDone >= stepsTotal }
 }
@@ -45,11 +54,11 @@ actor SyncEngine {
         var device = "iPhone"
         var appVersion = "1.0"
         /// Workouts read from HealthKit at the same time while raw data is collected.
-        var detailReadConcurrency = 6
+        var detailReadConcurrency = 24
         /// Batches of one raw-data upload sent at the same time (only for `_wstream`, whose parts have no ordering).
         var uploadConcurrency = 3
         /// Workouts whose raw data goes into one upload (fewer round trips and file writes).
-        var detailGroupSize = 24
+        var detailGroupSize = 48
         /// Smaller groups when there is a deadline (background wake-ups) so the time limit is respected.
         var detailGroupSizeWithDeadline = 4
     }
@@ -300,20 +309,28 @@ actor SyncEngine {
         let size = max(1, deadline == nil ? config.detailGroupSize : config.detailGroupSizeWithDeadline)
         let groups = stride(from: 0, to: todo.count, by: size).map { Array(todo[$0 ..< min($0 + size, todo.count)]) }
         let source = self.source
-        let concurrency = max(1, config.detailReadConcurrency)
         let clock = now
         let timing = SyncTiming.shared
+        // Workouts in progress are bounded by a fixed gate (memory); how many HealthKit queries run at once
+        // is tuned to what this iPhone answers fastest, since Apple documents no limit.
+        let gate = ReadGate(limit: config.detailReadConcurrency)
+        let tuner = ReadTuner(
+            current: { [source] in source.queryConcurrency }, apply: { [source] in source.setQueryConcurrency($0) },
+            minLimit: 4, maxLimit: 96, step: 8, windowSize: 24)
+        timing.set("read.limit", source.queryConcurrency)
 
         func read(_ group: [WorkoutRef]) -> Task<[EncodedWorkout?], Error> {
-            Task { try await Self.readGroup(group, source: source, concurrency: concurrency, now: clock) }
+            Task { try await Self.readGroup(group, source: source, gate: gate, tuner: tuner, now: clock) }
         }
 
         try checkTime()
-        var next: Task<[EncodedWorkout?], Error>? = read(groups[0])
-        defer { next?.cancel() }
+        // The next group is read while this one is still finishing and while the previous one is uploaded.
+        var reads: [Int: Task<[EncodedWorkout?], Error>] = [:]
+        defer { reads.values.forEach { $0.cancel() } }
         for (i, group) in groups.enumerated() {
-            let results = try await next!.value
-            next = i + 1 < groups.count ? read(groups[i + 1]) : nil
+            for j in i ... min(i + 1, groups.count - 1) where reads[j] == nil { reads[j] = read(groups[j]) }
+            let results = try await reads[i]!.value
+            reads[i] = nil
             try checkTime()
 
             var lines: [Data] = []
@@ -353,30 +370,31 @@ actor SyncEngine {
         var recordCount: Int
     }
 
-    /// Reads a group of workouts with at most `concurrency` in flight; results keep the group's order.
+    /// Reads a group of workouts (all at once, throttled by the shared gate); results keep the group's order.
     /// Each workout is also JSON-encoded here, so encoding runs in parallel and not on the sync actor.
-    private static func readGroup(_ group: [WorkoutRef], source: HealthSource, concurrency: Int, now: @escaping @Sendable () -> Date) async throws -> [EncodedWorkout?] {
+    private static func readGroup(_ group: [WorkoutRef], source: HealthSource, gate: ReadGate, tuner: ReadTuner, now: @escaping @Sendable () -> Date) async throws -> [EncodedWorkout?] {
         try await withThrowingTaskGroup(of: (Int, EncodedWorkout?).self) { tasks in
-            var results = [EncodedWorkout?](repeating: nil, count: group.count)
-            var started = 0
-            func startNext() {
-                guard started < group.count else { return }
-                let i = started
-                started += 1
-                let ref = group[i]
+            for (i, ref) in group.enumerated() {
                 tasks.addTask {
-                    let gen = now().msValue
-                    let records = try await SyncTiming.shared.measure("detail.read") { try await source.workoutDetail(id: ref.id, gen: gen) }
+                    await gate.acquire()
+                    let records: [Record]?
+                    do {
+                        try Task.checkCancellation()
+                        let gen = now().msValue
+                        records = try await SyncTiming.shared.measure("detail.read") { try await source.workoutDetail(id: ref.id, gen: gen) }
+                    } catch {
+                        gate.release()
+                        throw error
+                    }
+                    gate.release()
+                    tuner.completed()
                     guard let records else { return (i, nil) }
                     let lines = try SyncTiming.shared.measureSync("detail.encode") { try BatchWriter.encodeLines(records) }
                     return (i, EncodedWorkout(lines: lines, recordCount: records.count))
                 }
             }
-            for _ in 0 ..< min(concurrency, group.count) { startNext() }
-            while let (i, encoded) = try await tasks.next() {
-                results[i] = encoded
-                startNext()
-            }
+            var results = [EncodedWorkout?](repeating: nil, count: group.count)
+            while let (i, encoded) = try await tasks.next() { results[i] = encoded }
             return results
         }
     }

@@ -162,7 +162,9 @@ final class SyncEngineTests: XCTestCase {
     func testManyWorkoutsShareUploadsInOrder() async throws {
         let source = manyWorkouts(60)
         let up = RecordingUploader()
-        let (engine, box) = makeEngine(source, up)
+        var config = SyncEngine.Config()
+        config.detailGroupSize = 24
+        let (engine, box) = makeEngine(source, up, config: config)
         _ = try await engine.run()
         let streams = up.uploaded.filter { $0.type == HealthTypes.streamId }
         XCTAssertEqual(streams.count, 3, "60 workouts in groups of 24")
@@ -179,7 +181,9 @@ final class SyncEngineTests: XCTestCase {
         source.earliestDaily = Date() // today only: the daily context is a single batch
         let up = RecordingUploader()
         up.failAfter = 2 // the daily batch and the first group get through, then the network drops
-        let (engine, box) = makeEngine(source, up)
+        var config = SyncEngine.Config()
+        config.detailGroupSize = 24
+        let (engine, box) = makeEngine(source, up, config: config)
         do {
             _ = try await engine.run()
             XCTFail("expected offline error")
@@ -191,7 +195,7 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertFalse(box.pending().isEmpty, "the group that failed stays queued")
 
         up.failAfter = nil
-        let (engine2, _) = makeEngine(source, up, outbox: Outbox(root: root))
+        let (engine2, _) = makeEngine(source, up, outbox: Outbox(root: root), config: config)
         _ = try await engine2.run()
         let reloaded = Outbox(root: root)
         XCTAssertEqual(reloaded.state.detailsDone.count, 60)
