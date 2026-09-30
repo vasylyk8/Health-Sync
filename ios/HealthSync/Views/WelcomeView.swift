@@ -51,6 +51,15 @@ struct WelcomeView: View {
     }
 
     private var connectButton: some View {
+        VStack(spacing: 8) {
+            connectButtonBody
+            if model.busy, !model.connectStage.isEmpty {
+                Text(model.connectStage).font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("connectStage")
+            }
+        }
+    }
+
+    private var connectButtonBody: some View {
         Button {
             Task { await model.connectHealth() }
         } label: {
