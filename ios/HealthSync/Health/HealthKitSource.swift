@@ -676,10 +676,14 @@ extension HealthKitSource {
         emit("1 round trip, 1 workout: \(f(t0 / 30 * 1000)) ms")
 
         // 2. Heart rate per workout, by how it is asked.
+        // Warm-up pass (not reported) so the first measured row is not the only one reading from cold storage.
+        _ = await benchParallel(sample, stores: readStores, width: 8, sorted: false, cap: 30)
         let a = await benchParallel(sample, stores: [store], width: 1, sorted: true, cap: 15)
         emit("2 one at a time, sorted: \(f(a.seconds / Double(max(a.workouts, 1)) * 1000)) ms per workout, \(f(Double(a.samples) / max(a.seconds, 0.001))) samples/s (\(a.workouts) workouts, \(a.samples) samples)")
         let b = await benchParallel(sample, stores: [store], width: 1, sorted: false, cap: 15)
         emit("3 one at a time, unsorted: \(f(b.seconds / Double(max(b.workouts, 1)) * 1000)) ms per workout, \(f(Double(b.samples) / max(b.seconds, 0.001))) samples/s")
+        let a2 = await benchParallel(sample, stores: [store], width: 1, sorted: true, cap: 15)
+        emit("3b sorted again: \(f(a2.seconds / Double(max(a2.workouts, 1)) * 1000)) ms per workout")
         let c = await benchParallel(sample, stores: [store], width: 8, sorted: true, cap: 15)
         emit("4 8 at once, 1 connection: \(f(Double(c.workouts) / max(c.seconds, 0.001))) workouts/s, \(f(Double(c.samples) / max(c.seconds, 0.001))) samples/s")
         let d = await benchParallel(sample, stores: readStores, width: 8, sorted: true, cap: 15)

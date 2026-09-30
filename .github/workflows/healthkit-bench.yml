@@ -24,7 +24,7 @@ jobs:
       APPLE_TEAM_ID: ''
       PUBLIC_BASE_URL: https://krok-1d60a.web.app
       SIM_DEVICE: iPhone 17 Pro
-      TEST_RUNNER_BENCH_COUNT: ${{ inputs.count || '100' }}
+      TEST_RUNNER_BENCH_COUNT: ${{ inputs.count || '300' }}
       TEST_RUNNER_BENCH_MINUTES: '90'
     steps:
       - uses: actions/checkout@v4
