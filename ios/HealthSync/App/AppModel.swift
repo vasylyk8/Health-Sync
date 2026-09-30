@@ -14,6 +14,8 @@ final class AppModel: ObservableObject {
     }
     @Published var errorMessage: String?
     @Published var busy = false
+    /// What the connect button is waiting for right now (shown under it), so a stall can be told apart.
+    @Published var connectStage = ""
     /// Shown under the sync status when the last sync attempt failed; cleared by the next success.
     @Published var syncIssue: String?
 
@@ -59,7 +61,10 @@ final class AppModel: ObservableObject {
 
     func connectHealth() async {
         busy = true
-        defer { busy = false }
+        defer {
+            busy = false
+            connectStage = ""
+        }
         // Which step failed, so a failure can be told apart (Health permission, sign-in, registration).
         var stage = "start"
         do {
@@ -70,11 +75,16 @@ final class AppModel: ObservableObject {
             // HealthKit never reveals which read permissions were granted; we proceed either way
             // and show "No readable Health data found" later if nothing arrives.
             stage = "health-permission"
+            connectStage = "Waiting for Apple Health…"
             try await source.requestAuthorization(scope: scope)
             stage = "sign-in"
-            _ = try await backend.signIn()
+            connectStage = "Signing in…"
+            let backend = self.backend
+            _ = try await Self.withTimeout(seconds: 25) { try await backend.signIn() }
             stage = "register"
-            try await backend.registerDevice(timeZone: TimeZone.current.identifier)
+            connectStage = "Registering this iPhone…"
+            let tz = TimeZone.current.identifier
+            try await Self.withTimeout(seconds: 25) { try await backend.registerDevice(timeZone: tz) }
             defaults.set(true, forKey: "healthConnected")
             telemetry.event("health_connected")
             busy = false
@@ -85,6 +95,23 @@ final class AppModel: ObservableObject {
             telemetry.nonFatal("connect.\(stage)", code: ns.code)
             // The step and error code carry no health data; they make a failure diagnosable from a screenshot.
             errorMessage = friendly(error) + "\n\n(\(stage): \(ns.domain) \(ns.code))"
+        }
+    }
+
+    private struct StepTimeout: LocalizedError {
+        var errorDescription: String? { "This is taking too long. Check your connection and try again." }
+    }
+
+    /// Fails instead of waiting forever when a network step stalls.
+    private static func withTimeout<T: Sendable>(seconds: Double, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await body() }
+            group.addTask {
+                try await Task.sleep(for: .seconds(seconds))
+                throw StepTimeout()
+            }
+            defer { group.cancelAll() }
+            return try await group.next()!
         }
     }
 
