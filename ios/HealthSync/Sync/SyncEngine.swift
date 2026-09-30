@@ -45,7 +45,9 @@ actor SyncEngine {
         var device = "iPhone"
         var appVersion = "1.0"
         /// Workouts read from HealthKit at the same time while raw data is collected.
-        var detailReadConcurrency = 4
+        var detailReadConcurrency = 6
+        /// Batches of one raw-data upload sent at the same time (only for `_wstream`, whose parts have no ordering).
+        var uploadConcurrency = 3
         /// Workouts whose raw data goes into one upload (fewer round trips and file writes).
         var detailGroupSize = 24
         /// Smaller groups when there is a deadline (background wake-ups) so the time limit is respected.
@@ -302,51 +304,60 @@ actor SyncEngine {
         let clock = now
         let timing = SyncTiming.shared
 
-        func read(_ group: [WorkoutRef]) -> Task<[[Record]?], Error> {
+        func read(_ group: [WorkoutRef]) -> Task<[EncodedWorkout?], Error> {
             Task { try await Self.readGroup(group, source: source, concurrency: concurrency, now: clock) }
         }
 
         try checkTime()
-        var next: Task<[[Record]?], Error>? = read(groups[0])
+        var next: Task<[EncodedWorkout?], Error>? = read(groups[0])
         defer { next?.cancel() }
         for (i, group) in groups.enumerated() {
             let results = try await next!.value
             next = i + 1 < groups.count ? read(groups[i + 1]) : nil
             try checkTime()
 
-            var records: [Record] = []
+            var lines: [Data] = []
+            var recordCount = 0
             var withData: [String] = []
             var empty: [String] = []
             for (ref, found) in zip(group, results) {
                 // Nil: the workout no longer exists. Only the closing marker: no raw data (e.g. logged by hand).
-                if let found, found.count > 1 {
-                    records.append(contentsOf: found)
+                if let found, found.recordCount > 1 {
+                    lines.append(contentsOf: found.lines)
+                    recordCount += found.recordCount
                     withData.append(ref.id)
                 } else {
                     empty.append(ref.id)
                 }
             }
-            if records.isEmpty {
+            if lines.isEmpty {
                 if !empty.isEmpty { try outbox.update { $0.detailsDone.formUnion(empty) } }
             } else {
                 // Workouts without raw data ride along in the same completion: one state write per group.
                 let id = HealthTypes.streamId
                 let header = BatchHeader(type: id, mode: .workoutdata, seq: try outbox.nextSeq(id), checkedAt: now())
                 try await timing.measure("detail.send") {
-                    try await self.send(id, header: header, records: records, anchor: nil, completes: .detailsDone(withData + empty))
+                    try await self.sendLines(id, header: header, lines: lines, anchor: nil, completes: .detailsDone(withData + empty))
                 }
             }
-            timing.count("detail.records", records.count)
+            timing.count("detail.records", recordCount)
             timing.count("detail.workouts", group.count)
             timing.checkpoint("details \(min((i + 1) * size, todo.count))/\(todo.count)")
             report(syncing: true)
         }
     }
 
+    /// A workout's raw-data records, already encoded as JSON lines (done while reading, in parallel).
+    private struct EncodedWorkout: Sendable {
+        var lines: [Data]
+        var recordCount: Int
+    }
+
     /// Reads a group of workouts with at most `concurrency` in flight; results keep the group's order.
-    private static func readGroup(_ group: [WorkoutRef], source: HealthSource, concurrency: Int, now: @escaping @Sendable () -> Date) async throws -> [[Record]?] {
-        try await withThrowingTaskGroup(of: (Int, [Record]?).self) { tasks in
-            var results = [[Record]?](repeating: nil, count: group.count)
+    /// Each workout is also JSON-encoded here, so encoding runs in parallel and not on the sync actor.
+    private static func readGroup(_ group: [WorkoutRef], source: HealthSource, concurrency: Int, now: @escaping @Sendable () -> Date) async throws -> [EncodedWorkout?] {
+        try await withThrowingTaskGroup(of: (Int, EncodedWorkout?).self) { tasks in
+            var results = [EncodedWorkout?](repeating: nil, count: group.count)
             var started = 0
             func startNext() {
                 guard started < group.count else { return }
@@ -356,12 +367,14 @@ actor SyncEngine {
                 tasks.addTask {
                     let gen = now().msValue
                     let records = try await SyncTiming.shared.measure("detail.read") { try await source.workoutDetail(id: ref.id, gen: gen) }
-                    return (i, records)
+                    guard let records else { return (i, nil) }
+                    let lines = try SyncTiming.shared.measureSync("detail.encode") { try BatchWriter.encodeLines(records) }
+                    return (i, EncodedWorkout(lines: lines, recordCount: records.count))
                 }
             }
             for _ in 0 ..< min(concurrency, group.count) { startNext() }
-            while let (i, records) = try await tasks.next() {
-                results[i] = records
+            while let (i, encoded) = try await tasks.next() {
+                results[i] = encoded
                 startNext()
             }
             return results
@@ -400,14 +413,19 @@ actor SyncEngine {
     // MARK: Upload
 
     private func send(_ typeId: String, header: BatchHeader, records: [Record], anchor: Data?, completes: Outbox.Completion?, readMs: Int? = nil) async throws {
+        let lines = try SyncTiming.shared.measureSync("batch.encode") { try BatchWriter.encodeLines(records) }
+        try await sendLines(typeId, header: header, lines: lines, anchor: anchor, completes: completes, readMs: readMs)
+    }
+
+    private func sendLines(_ typeId: String, header: BatchHeader, lines: [Data], anchor: Data?, completes: Outbox.Completion?, readMs: Int? = nil) async throws {
         let outbox = self.outbox
         var header = header
         header.readMs = readMs
         header.uploadMs = lastUploadMs
         let (device, appVersion, tz, at) = (config.device, config.appVersion, timeZone(), now())
-        let batches = try SyncTiming.shared.measureSync("batch.encode") {
+        let batches = try SyncTiming.shared.measureSync("batch.compress") {
             try BatchWriter.make(
-                header: header, records: records, nextSeq: { (try? outbox.nextSeq(typeId)) ?? header.seq },
+                header: header, lines: lines, nextSeq: { (try? outbox.nextSeq(typeId)) ?? header.seq },
                 now: at, tz: tz, device: device, appVersion: appVersion)
         }
         SyncTiming.shared.count("upload.bytes", batches.reduce(0) { $0 + $1.gz.count })
@@ -420,23 +438,31 @@ actor SyncEngine {
     /// failure (retried next run).
     func flush(typeId: String? = nil) async throws {
         for var entry in outbox.pending() where typeId == nil || entry.typeId == typeId {
+            // Files first: stop at the first missing one (the earlier ones are still uploaded and recorded).
+            var jobs: [(id: String, gz: Data)] = []
             var lost = false
             for id in entry.batchIds where !entry.uploaded.contains(id) {
                 guard let gz = outbox.batchData(id) else {
                     lost = true
                     break
                 }
-                let sha = SHA256.hash(data: gz).map { String(format: "%02x", $0) }.joined()
-                let started = Date()
-                do {
-                    try await SyncTiming.shared.measure("upload") { try await uploader.upload(batchId: id, gz: gz, sha256: sha, typeId: entry.typeId) }
-                } catch {
-                    uploadFailed = true
-                    throw error
-                }
-                lastUploadMs = Self.ms(since: started)
-                try outbox.markUploaded(&entry, batchId: id)
+                jobs.append((id, gz))
             }
+            // Parts of a raw-data upload carry no completion flag and can arrive in any order. Other types
+            // (history pages, daily rows) must arrive in order: only their last part claims completion.
+            let limit = entry.typeId == HealthTypes.streamId ? max(1, config.uploadConcurrency) : 1
+            let results = await Self.uploadAll(jobs, typeId: entry.typeId, uploader: uploader, limit: limit)
+            var failure: Error?
+            for r in results {
+                if let error = r.error {
+                    uploadFailed = true
+                    failure = failure ?? error
+                } else {
+                    lastUploadMs = r.ms
+                    try outbox.markUploaded(&entry, batchId: r.id)
+                }
+            }
+            if let failure { throw failure }
             if lost {
                 // A batch file vanished (should not happen). Completing the entry would move the anchor
                 // past data the server never got, so drop it instead: the next run re-reads from the
@@ -447,5 +473,43 @@ actor SyncEngine {
             }
             try outbox.complete(entry)
         }
+    }
+
+    private struct UploadResult {
+        var id: String
+        var ms: Int
+        var error: Error?
+    }
+
+    /// Uploads the batches with at most `limit` in flight. A failure does not cancel the others (their
+    /// results are recorded, so a retry only sends what is missing); with limit 1 it stops at the first.
+    private static func uploadAll(_ jobs: [(id: String, gz: Data)], typeId: String, uploader: Uploader, limit: Int) async -> [UploadResult] {
+        var results: [UploadResult] = []
+        await withTaskGroup(of: UploadResult.self) { group in
+            var next = 0
+            var stop = false
+            func startNext() {
+                guard !stop, next < jobs.count else { return }
+                let job = jobs[next]
+                next += 1
+                group.addTask {
+                    let sha = SHA256.hash(data: job.gz).map { String(format: "%02x", $0) }.joined()
+                    let started = Date()
+                    do {
+                        try await SyncTiming.shared.measure("upload") { try await uploader.upload(batchId: job.id, gz: job.gz, sha256: sha, typeId: typeId) }
+                        return UploadResult(id: job.id, ms: Self.ms(since: started), error: nil)
+                    } catch {
+                        return UploadResult(id: job.id, ms: Self.ms(since: started), error: error)
+                    }
+                }
+            }
+            for _ in 0 ..< min(limit, jobs.count) { startNext() }
+            while let r = await group.next() {
+                results.append(r)
+                if r.error != nil { stop = true }
+                startNext()
+            }
+        }
+        return results
     }
 }

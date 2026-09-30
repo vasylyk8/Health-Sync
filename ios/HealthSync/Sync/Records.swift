@@ -110,7 +110,16 @@ enum BatchWriter {
     /// Only the last batch carries `caughtUp`/`reconcileDone`, so the server never marks a type
     /// complete before every part has arrived.
     static func make(header: BatchHeader, records: [Record], nextSeq: () -> Int64, now: Date = Date(), tz: String, device: String, appVersion: String) throws -> [Batch] {
-        let lines = try records.map { try encoder.encode($0) }
+        try make(header: header, lines: encodeLines(records), nextSeq: nextSeq, now: now, tz: tz, device: device, appVersion: appVersion)
+    }
+
+    /// One JSON line per record. Can run off the sync actor (several workouts at once).
+    static func encodeLines(_ records: [Record]) throws -> [Data] {
+        try records.map { try encoder.encode($0) }
+    }
+
+    /// Same as `make(header:records:)` for records that were already encoded with `encodeLines`.
+    static func make(header: BatchHeader, lines: [Data], nextSeq: () -> Int64, now: Date = Date(), tz: String, device: String, appVersion: String) throws -> [Batch] {
         var chunks: [[Data]] = [[]]
         var bytes = 0
         for line in lines {

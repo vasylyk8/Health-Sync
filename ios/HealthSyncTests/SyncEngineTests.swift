@@ -198,6 +198,46 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertTrue(reloaded.pending().isEmpty)
     }
 
+    /// A queued raw-data entry with several parts, as a big group of workouts produces.
+    private func enqueueParts(_ outbox: Outbox, count: Int, workoutId: String) throws -> [String] {
+        let batches = (0..<count).map { i in
+            Batch(id: "part-\(i)-\(UUID().uuidString.lowercased())", gz: Gzip.compress(Data(#"{"kind":"header","mode":"workoutdata"}"#.utf8)))
+        }
+        _ = try outbox.enqueue(typeId: HealthTypes.streamId, batches: batches, anchor: nil, completes: .detailsDone([workoutId]))
+        return batches.map(\.id)
+    }
+
+    func testPartsOfARawDataUploadAreAllSentAndRecordedOnce() async throws {
+        let up = RecordingUploader()
+        let (engine, box) = makeEngine(ScriptedSource(), up)
+        let ids = try enqueueParts(box, count: 7, workoutId: "W1")
+        try await engine.flush()
+        XCTAssertEqual(Set(up.uploaded.map(\.id)), Set(ids))
+        XCTAssertEqual(up.uploaded.count, 7, "each part exactly once")
+        XCTAssertEqual(box.state.detailsDone, ["W1"])
+        XCTAssertTrue(box.pending().isEmpty)
+    }
+
+    func testFailedPartIsRetriedWithoutResendingTheOthers() async throws {
+        let up = RecordingUploader()
+        up.failAfter = 3
+        let (engine, box) = makeEngine(ScriptedSource(), up)
+        let ids = try enqueueParts(box, count: 7, workoutId: "W1")
+        do {
+            try await engine.flush()
+            XCTFail("expected offline error")
+        } catch is RecordingUploader.Offline {}
+        XCTAssertTrue(box.state.detailsDone.isEmpty, "the group is not recorded until every part is accepted")
+        XCTAssertFalse(box.pending().isEmpty)
+
+        up.failAfter = nil
+        try await engine.flush()
+        XCTAssertEqual(Set(up.uploaded.map(\.id)), Set(ids))
+        XCTAssertEqual(up.uploaded.count, 7, "parts accepted before the failure are not sent again")
+        XCTAssertEqual(box.state.detailsDone, ["W1"])
+        XCTAssertTrue(box.pending().isEmpty)
+    }
+
     func testGroupsAreSmallWhenThereIsADeadline() async throws {
         let source = manyWorkouts(10)
         let up = RecordingUploader()
