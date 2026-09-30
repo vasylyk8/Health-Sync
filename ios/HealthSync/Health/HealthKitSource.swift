@@ -566,9 +566,10 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
     }
 
+    /// Unsorted on purpose: asking HealthKit to sort made each query 7-13x slower in the simulator benchmark
+    /// (healthkit-bench workflow). Points are sorted and de-duplicated by time afterwards (WorkoutRecords).
     private func quantitySamples(_ type: HKQuantityType, predicate: NSPredicate) async throws -> [HKQuantitySample] {
-        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
-        return try await fetch(type, predicate: predicate, sort: sort).compactMap { $0 as? HKQuantitySample }
+        try await fetch(type, predicate: predicate, sort: nil).compactMap { $0 as? HKQuantitySample }
     }
 }
 
