@@ -133,6 +133,11 @@ function tidyMetadata(md: unknown): unknown {
   const h = out.HKWeatherHumidity;
   const m = typeof h === 'string' ? /^\s*([\d.]+)\s*%\s*$/.exec(h) : null;
   if (m && Number(m[1]) > 100) out.HKWeatherHumidity = `${round(Number(m[1]) / 100, 0)} %`;
+  // HKSwimmingLocationType is an enum (1 pool, 2 open water); older uploads stored 0/1 as booleans.
+  const loc = out.HKSwimmingLocationType;
+  if (loc === true || loc === 1) out.HKSwimmingLocationType = 'pool';
+  else if (loc === 2) out.HKSwimmingLocationType = 'open water';
+  else if (loc === false || loc === 0) out.HKSwimmingLocationType = 'unknown';
   return out;
 }
 
@@ -274,6 +279,9 @@ function pointLimit(n: number | undefined): number {
 
 export async function getWorkoutSeries(deps: QueryDeps, args: SeriesArgs): Promise<ToolResult> {
   const limit = pointLimit(args.max_points);
+  if ((args.start_offset_seconds ?? -Infinity) > (args.end_offset_seconds ?? Infinity)) {
+    throw new ToolError('bad_request', 'start_offset_seconds is after end_offset_seconds.');
+  }
   return withDuck(async (c, dir) => {
     const { man, row } = await findWorkout(c, dir, deps, args.workout_id, validTz(args.timezone ?? deps.tz));
     const doc = await loadDoc(deps, row.id);

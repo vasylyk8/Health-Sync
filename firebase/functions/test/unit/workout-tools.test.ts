@@ -54,6 +54,7 @@ describe('get_workouts / get_workout', () => {
     expect((r.events as { list: unknown[] }).list).toHaveLength(2);
     expect((r.apple_summary as { statistics: Record<string, unknown> }).statistics).toHaveProperty('HeartRate');
     expect((r.apple_summary as { metadata: Record<string, unknown> }).metadata.HKWeatherHumidity).toBe('81 %');
+    expect((r.apple_summary as { metadata: Record<string, unknown> }).metadata.HKSwimmingLocationType).toBe('pool');
     const raw = r.raw_data as { status: string; streams: { name: string; points: number; expected_points: number }[] };
     expect(raw.status).toBe('complete');
     expect(raw.streams.map((s) => s.name).sort()).toEqual(['DistanceWalkingRunning', 'HeartRate', 'route']);
@@ -240,6 +241,12 @@ describe('calculation tools', () => {
     const r = await workoutHrZones(q(), { workout_id: half, max_hr: 190 });
     expect(r.complete).toBe(false);
     expect((r.notes as string[]).join(' ')).toContain('still uploading');
+  });
+});
+
+describe('get_workout_series window', () => {
+  it('rejects a start after the end instead of returning nothing', async () => {
+    await fails(getWorkoutSeries(q(), { workout_id: RUN, stream: 'HeartRate', start_offset_seconds: 500, end_offset_seconds: 100 }), 'bad_request');
   });
 });
 
