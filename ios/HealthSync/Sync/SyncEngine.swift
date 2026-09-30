@@ -325,14 +325,17 @@ actor SyncEngine {
                     empty.append(ref.id)
                 }
             }
-            if !empty.isEmpty { try outbox.update { $0.detailsDone.formUnion(empty) } }
-            if !records.isEmpty {
+            if records.isEmpty {
+                if !empty.isEmpty { try outbox.update { $0.detailsDone.formUnion(empty) } }
+            } else {
+                // Workouts without raw data ride along in the same completion: one state write per group.
                 let id = HealthTypes.streamId
                 let header = BatchHeader(type: id, mode: .workoutdata, seq: try outbox.nextSeq(id), checkedAt: now())
                 try await timing.measure("detail.send") {
-                    try await self.send(id, header: header, records: records, anchor: nil, completes: .detailsDone(withData))
+                    try await self.send(id, header: header, records: records, anchor: nil, completes: .detailsDone(withData + empty))
                 }
             }
+            timing.count("detail.records", records.count)
             timing.count("detail.workouts", group.count)
             timing.checkpoint("details \(min((i + 1) * size, todo.count))/\(todo.count)")
             report(syncing: true)
@@ -406,6 +409,8 @@ actor SyncEngine {
                 header: header, records: records, nextSeq: { (try? outbox.nextSeq(typeId)) ?? header.seq },
                 now: at, tz: tz, device: device, appVersion: appVersion)
         }
+        SyncTiming.shared.count("upload.bytes", batches.reduce(0) { $0 + $1.gz.count })
+        SyncTiming.shared.count("upload.batches", batches.count)
         _ = try SyncTiming.shared.measureSync("outbox.enqueue") { try outbox.enqueue(typeId: typeId, batches: batches, anchor: anchor, completes: completes) }
         try await flush(typeId: typeId)
     }
