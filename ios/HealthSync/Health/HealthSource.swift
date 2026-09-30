@@ -36,6 +36,8 @@ protocol HealthSource: Sendable {
     /// How many HealthKit queries may run at the same time (raw workout data), adjusted while syncing.
     var queryConcurrency: Int { get }
     func setQueryConcurrency(_ n: Int)
+    /// On-device read-speed measurements (the "speed test"); reports its full text so far after each step.
+    func benchmark(onUpdate: @escaping @Sendable (String) -> Void) async
     /// Registers a background observer for new workouts; `onChange` must call its completion when done.
     func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void)
 }
@@ -43,4 +45,5 @@ protocol HealthSource: Sendable {
 extension HealthSource {
     var queryConcurrency: Int { 1 }
     func setQueryConcurrency(_ n: Int) {}
+    func benchmark(onUpdate: @escaping @Sendable (String) -> Void) async { onUpdate("The speed test needs Apple Health on a real iPhone.") }
 }

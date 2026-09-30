@@ -32,6 +32,7 @@ struct ConnectView: View {
                     Menu {
                         Link(destination: Theme.supportURL) { Label("Help & Support", systemImage: "questionmark.circle") }
                         Link(destination: Theme.privacyURL) { Label("Privacy Policy", systemImage: "hand.raised") }
+                        Button { model.runSpeedTest() } label: { Label("Run speed test (pauses sync)", systemImage: "speedometer") }
                         Button(role: .destructive) { confirmDelete = true } label: { Label("Delete All My Data", systemImage: "trash") }
                     } label: {
                         Image(systemName: "ellipsis.circle").accessibilityLabel("More")
@@ -41,6 +42,25 @@ struct ConnectView: View {
             }
             .sheet(item: $selected) { provider in
                 SetupSheet(provider: provider)
+            }
+            .sheet(isPresented: $model.showBenchmark, onDismiss: { model.finishSpeedTest() }) {
+                NavigationStack {
+                    ScrollView {
+                        Text(model.benchmarkText)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                    }
+                    .navigationTitle("Speed test")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            if model.benchmarkRunning { ProgressView() } else { Button("Done") { model.showBenchmark = false } }
+                        }
+                    }
+                }
+                .interactiveDismissDisabled(model.benchmarkRunning)
             }
             .confirmationDialog("Delete all your data from KROK?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete All My Data", role: .destructive) { Task { await model.deleteAllData() } }
