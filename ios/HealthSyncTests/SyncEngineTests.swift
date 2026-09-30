@@ -176,6 +176,7 @@ final class SyncEngineTests: XCTestCase {
 
     func testInterruptedGroupedUploadResumesWithoutLosingWorkouts() async throws {
         let source = manyWorkouts(60)
+        source.earliestDaily = Date() // today only: the daily context is a single batch
         let up = RecordingUploader()
         up.failAfter = 2 // the daily batch and the first group get through, then the network drops
         let (engine, box) = makeEngine(source, up)
