@@ -2,6 +2,9 @@
 # Run by hand (workflow_dispatch). Simulator speeds are not iPhone speeds; use it to compare strategies.
 name: healthkit-bench
 on:
+  push:
+    branches: ['claude/laughing-knuth-5lkgy7']
+    paths: ['.github/workflows/healthkit-bench.yml', 'ios/HealthSync/Health/HealthBench.swift', 'ios/HealthSyncUITests/HealthBenchUITests.swift']
   workflow_dispatch:
     inputs:
       count:
@@ -21,7 +24,7 @@ jobs:
       APPLE_TEAM_ID: ''
       PUBLIC_BASE_URL: https://krok-1d60a.web.app
       SIM_DEVICE: iPhone 17 Pro
-      TEST_RUNNER_BENCH_COUNT: ${{ inputs.count }}
+      TEST_RUNNER_BENCH_COUNT: ${{ inputs.count || '100' }}
       TEST_RUNNER_BENCH_MINUTES: '90'
     steps:
       - uses: actions/checkout@v4
