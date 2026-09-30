@@ -104,6 +104,11 @@ struct SyncStatusView: View {
                 }
                 Text("Keep the app open while your workouts sync. You can connect an assistant meanwhile.")
                     .font(.footnote).foregroundStyle(Theme.mutedText)
+                if progress.phase == 4, let speed = SyncTiming.shared.liveSummary() {
+                    Text(speed)
+                        .font(.caption2.monospaced()).foregroundStyle(Theme.mutedText)
+                        .accessibilityIdentifier("syncSpeed")
+                }
             } else if progress.historyComplete && status.typesWithData == 0 && status.registered {
                 Text("No readable Health data found").font(.subheadline.weight(.medium))
                 Text("Check Settings › Health › Data Access & Devices › KROK and turn on Workouts, Workout Routes and the other categories you want to share.")

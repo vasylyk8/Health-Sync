@@ -294,6 +294,7 @@ actor SyncEngine {
     private func uploadDetails(_ index: [WorkoutRef]) async throws {
         let todo = index.filter { !outbox.state.detailsDone.contains($0.id) }
         guard !todo.isEmpty else { return }
+        SyncTiming.shared.markDetailsStart()
         let size = max(1, deadline == nil ? config.detailGroupSize : config.detailGroupSizeWithDeadline)
         let groups = stride(from: 0, to: todo.count, by: size).map { Array(todo[$0 ..< min($0 + size, todo.count)]) }
         let source = self.source

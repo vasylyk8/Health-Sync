@@ -20,6 +20,7 @@ final class SyncTiming: @unchecked Sendable {
     private var stats: [String: Stat] = [:]
     private var counters: [String: Int] = [:]
     private let started = Date()
+    private var detailStart: Date?
     private var lastWrite = Date.distantPast
 
     /// Times `body` under `name` (a phase such as "detail.read", "upload", "outbox.enqueue").
@@ -43,6 +44,27 @@ final class SyncTiming: @unchecked Sendable {
             record("\(name)", ms: Double(DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000)
         }
         return try body()
+    }
+
+    /// Marks the start of Step 4 (raw workout data) so the live speed is measured from there.
+    func markDetailsStart() {
+        lock.withLock { if detailStart == nil { detailStart = Date() } }
+    }
+
+    /// One line for the sync screen while Step 4 runs, so speed can be read (and screenshotted) without files.
+    func liveSummary() -> String? {
+        lock.withLock {
+            guard let start = detailStart, let workouts = counters["detail.workouts"], workouts > 0 else { return nil }
+            let minutes = max(Date().timeIntervalSince(start) / 60, 0.01)
+            func avg(_ key: String, _ scale: Double = 1000) -> String {
+                guard let s = stats[key], s.count > 0 else { return "-" }
+                return String(format: "%.2f", s.totalMs / Double(s.count) / scale)
+            }
+            let uploads = stats["upload"]?.count ?? 0
+            let mb = uploads > 0 ? Double(counters["upload.bytes"] ?? 0) / Double(uploads) / 1_000_000 : 0
+            let rate = String(format: "%.1f", Double(workouts) / minutes)
+            return "\(rate) workouts/min · read \(avg("detail.read"))s per workout · encode \(avg("batch.encode"))s · save \(avg("outbox.enqueue"))s · upload \(avg("upload"))s per batch (\(String(format: "%.1f", mb)) MB) · \(uploads) uploads"
+        }
     }
 
     func count(_ name: String, _ n: Int = 1) {
