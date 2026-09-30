@@ -10,6 +10,8 @@ struct UploadAttempts: @unchecked Sendable {
     private let defaults: UserDefaults
     private let key: String
     private static let limit = 500
+    /// Uploads run several at a time; the read-modify-write of the stored list must not interleave.
+    private static let lock = NSLock()
 
     init(defaults: UserDefaults = .standard, key: String = "uploadAttempts") {
         self.defaults = defaults
@@ -19,6 +21,8 @@ struct UploadAttempts: @unchecked Sendable {
     /// Records that an upload of `batchId` is starting. Returns true if an earlier attempt was
     /// started and never reached a definite outcome (a retry).
     func begin(_ batchId: String) -> Bool {
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
         var ids = defaults.stringArray(forKey: key) ?? []
         let retried = ids.contains(batchId)
         if !retried {
@@ -31,6 +35,8 @@ struct UploadAttempts: @unchecked Sendable {
 
     /// The attempt reached a definite outcome (accepted, or rejected on a first attempt).
     func finish(_ batchId: String) {
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
         var ids = defaults.stringArray(forKey: key) ?? []
         ids.removeAll { $0 == batchId }
         defaults.set(ids, forKey: key)
