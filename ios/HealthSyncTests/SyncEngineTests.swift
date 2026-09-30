@@ -114,8 +114,8 @@ final class SyncEngineTests: XCTestCase {
         let (engine, box) = makeEngine(source, up, config: config)
         let outcome = try await engine.run()
         XCTAssertEqual(outcome, .finished)
-        XCTAssertEqual(up.modes, ["recent", "stats", "anchored", "workoutdata", "workoutdata", "status"])
-        XCTAssertEqual(up.uploaded.map { $0.type }, [HealthTypes.workoutId, HealthTypes.dailyId, HealthTypes.workoutId, HealthTypes.streamId, HealthTypes.streamId, HealthTypes.statusId])
+        XCTAssertEqual(up.modes, ["recent", "stats", "anchored", "workoutdata", "status"], "both workouts' raw data go in one upload")
+        XCTAssertEqual(up.uploaded.map { $0.type }, [HealthTypes.workoutId, HealthTypes.dailyId, HealthTypes.workoutId, HealthTypes.streamId, HealthTypes.statusId])
         // The first page was full (2 of limit 2), so not caught up; the second was empty and is
         // reported in the status batch instead of its own upload.
         XCTAssertEqual(up.uploaded[2].header["caughtUp"] as? Bool, false)
@@ -133,7 +133,8 @@ final class SyncEngineTests: XCTestCase {
         let p = await engine.progress
         XCTAssertTrue(p.historyComplete)
         XCTAssertEqual(p.fraction, 1)
-        XCTAssertEqual(source.detailReads, ["W2", "W1"], "newest workout first")
+        XCTAssertEqual(Set(source.detailReads), ["W2", "W1"])
+        XCTAssertEqual(up.uploaded.first { $0.type == HealthTypes.streamId }?.records, 4, "two streams and two markers")
     }
 
     func testDetailBatchesCarryStreamsAndTheMarker() async throws {
@@ -146,6 +147,64 @@ final class SyncEngineTests: XCTestCase {
         let d = try XCTUnwrap(up.uploaded.first { $0.type == HealthTypes.streamId })
         XCTAssertEqual(d.header["mode"] as? String, "workoutdata")
         XCTAssertEqual(d.records, 2, "one stream chunk and the closing marker")
+    }
+
+    private func manyWorkouts(_ n: Int) -> ScriptedSource {
+        let source = ScriptedSource()
+        for i in 0..<n {
+            let id = "W\(String(format: "%04d", i))"
+            source.index.append(WorkoutRef(id: id, start: Date(timeIntervalSinceNow: -Double(i) * 60)))
+            source.details[id] = detail(id)
+        }
+        return source
+    }
+
+    func testManyWorkoutsShareUploadsInOrder() async throws {
+        let source = manyWorkouts(60)
+        let up = RecordingUploader()
+        let (engine, box) = makeEngine(source, up)
+        _ = try await engine.run()
+        let streams = up.uploaded.filter { $0.type == HealthTypes.streamId }
+        XCTAssertEqual(streams.count, 3, "60 workouts in groups of 24")
+        XCTAssertEqual(streams.map { $0.records }, [48, 48, 24])
+        XCTAssertEqual(box.state.detailsDone.count, 60)
+        XCTAssertEqual(Set(source.detailReads).count, 60)
+        let seqs = streams.map { $0.header["seq"] as! Int }
+        XCTAssertEqual(seqs, seqs.sorted())
+        XCTAssertTrue(box.pending().isEmpty)
+    }
+
+    func testInterruptedGroupedUploadResumesWithoutLosingWorkouts() async throws {
+        let source = manyWorkouts(60)
+        source.earliestDaily = Date() // today only: the daily context is a single batch
+        let up = RecordingUploader()
+        up.failAfter = 2 // the daily batch and the first group get through, then the network drops
+        let (engine, box) = makeEngine(source, up)
+        do {
+            _ = try await engine.run()
+            XCTFail("expected offline error")
+        } catch is RecordingUploader.Offline {}
+        let done = box.state.detailsDone.count
+        XCTAssertGreaterThan(done, 0)
+        XCTAssertLessThan(done, 60)
+        XCTAssertEqual(done % 24, 0, "a group is recorded only after its whole upload was accepted")
+        XCTAssertFalse(box.pending().isEmpty, "the group that failed stays queued")
+
+        up.failAfter = nil
+        let (engine2, _) = makeEngine(source, up, outbox: Outbox(root: root))
+        _ = try await engine2.run()
+        let reloaded = Outbox(root: root)
+        XCTAssertEqual(reloaded.state.detailsDone.count, 60)
+        XCTAssertTrue(reloaded.pending().isEmpty)
+    }
+
+    func testGroupsAreSmallWhenThereIsADeadline() async throws {
+        let source = manyWorkouts(10)
+        let up = RecordingUploader()
+        let (engine, box) = makeEngine(source, up)
+        _ = try await engine.run(deadline: Date(timeIntervalSinceNow: 60))
+        XCTAssertEqual(box.state.detailsDone.count, 10)
+        XCTAssertEqual(up.uploaded.filter { $0.type == HealthTypes.streamId }.count, 3, "groups of 4")
     }
 
     func testDetailsAreUploadedOnlyOnce() async throws {

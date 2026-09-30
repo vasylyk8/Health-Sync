@@ -122,3 +122,8 @@ The phone's upload ack only means **accepted**. "Synced" in the app and every to
 3. Ingestion checks `deleting`/`generation` inside its publish transaction and discards late work.
 4. Storage soft-delete is disabled on the bucket, so deleted objects are gone. The privacy policy states deletion completes within 24 h.
 5. One-off migration: `scripts/tasks/cleanup-legacy` removes the data types of the previous app version (after backing them up for 14 days).
+
+## First-sync performance notes (app behaviour, no format change)
+- Raw workout data (`workoutdata` batches) may carry several workouts (the app sends up to 24 per upload, 4 when running under a background time limit). Each workout keeps its own `wd` marker; the server already publishes per workout id.
+- The app records a group of workouts as done only after every batch of that upload was accepted, so an interrupted first sync resumes without losing or duplicating data.
+- Header `perf` accepts only `readMs` and `uploadMs` (strict schema); on-device timing lives in `sync-timing.json`, not in batches.

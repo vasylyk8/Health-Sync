@@ -29,6 +29,8 @@ final class Outbox: @unchecked Sendable {
         case dailyFull(Date)
         /// The raw data of this workout (its HealthKit uuid) is on the server.
         case detailDone(String)
+        /// The raw data of these workouts (several per upload) is on the server.
+        case detailsDone([String])
     }
 
     struct State: Codable, Equatable {
@@ -176,6 +178,7 @@ final class Outbox: @unchecked Sendable {
                 s.reconcile[entry.typeId] = nil
             case .dailyFull(let at): s.dailyFullAt = at
             case .detailDone(let id): s.detailsDone.insert(id)
+            case .detailsDone(let ids): s.detailsDone.formUnion(ids)
             case nil: break
             }
         }

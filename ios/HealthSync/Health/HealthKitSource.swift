@@ -150,15 +150,42 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         // from other apps carry no Apple statistics but often have heart rate samples.
         var wanted = Set(w.allStatistics.keys.map(\.identifier))
         wanted.insert(HealthTypes.quantityPrefix + "HeartRate")
-        for q in scope.workoutQuantities where wanted.contains(q.id) {
-            let points = try await quantityPoints(q, workout: w, allowTimeWindow: q.name == "HeartRate")
-            guard !points.isEmpty else { continue }
+        let specs = scope.workoutQuantities.filter { wanted.contains($0.id) }
+
+        // Every quantity type and the route are read at the same time (each is an independent query);
+        // results are put back in a fixed order so the output does not depend on which finished first.
+        enum Part { case series(Int, [SeriesPoint]), route([RoutePoint]) }
+        let timing = SyncTiming.shared
+        let parts: [Part] = try await withThrowingTaskGroup(of: Part.self) { group in
+            for (i, q) in specs.enumerated() {
+                group.addTask {
+                    let points = try await timing.measure("hk.quantity") { try await self.quantityPoints(q, workout: w, allowTimeWindow: q.name == "HeartRate") }
+                    return .series(i, points)
+                }
+            }
+            group.addTask {
+                let points = try await timing.measure("hk.route") { try await self.routePoints(w) }
+                return .route(points)
+            }
+            var out: [Part] = []
+            for try await part in group { out.append(part) }
+            return out
+        }
+        var route: [RoutePoint] = []
+        var seriesByIndex: [Int: [SeriesPoint]] = [:]
+        for part in parts {
+            switch part {
+            case .series(let i, let points): seriesByIndex[i] = points
+            case .route(let points): route = points
+            }
+        }
+        for (i, q) in specs.enumerated() {
+            guard let points = seriesByIndex[i], !points.isEmpty else { continue }
             let built = WorkoutRecords.series(wid: id, name: q.name, gen: gen, unit: q.unitLabel, points: points)
             guard built.count > 0 else { continue }
             records.append(contentsOf: built.records)
             expected[q.name] = built.count
         }
-        let route = try await routePoints(w)
         if !route.isEmpty {
             let built = WorkoutRecords.route(wid: id, gen: gen, points: route)
             if built.count > 0 {
@@ -180,16 +207,33 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             let sameSource = HKQuery.predicateForObjects(from: [w.sourceRevision.source])
             found = try await quantitySamples(q.type, predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [window, sameSource]))
         }
-        var points: [SeriesPoint] = []
-        for s in found {
+        // Plain samples become one point each; series samples (e.g. heart rate recorded as a series)
+        // are expanded at the same time, one query each.
+        var chunks = [[SeriesPoint]](repeating: [], count: found.count)
+        var seriesSamples: [(Int, HKQuantitySample)] = []
+        for (i, s) in found.enumerated() {
             if !q.cumulative && s.count > 1 {
-                points.append(contentsOf: try await expandSeries(s, q))
+                seriesSamples.append((i, s))
             } else {
                 let t = q.cumulative ? s.endDate.msValue : s.startDate.msValue
-                points.append(SeriesPoint(t: t, v: s.quantity.doubleValue(for: q.unit)))
+                chunks[i] = [SeriesPoint(t: t, v: s.quantity.doubleValue(for: q.unit))]
             }
         }
-        return points
+        if !seriesSamples.isEmpty {
+            let expanded: [(Int, [SeriesPoint])] = try await withThrowingTaskGroup(of: (Int, [SeriesPoint]).self) { group in
+                for (i, s) in seriesSamples {
+                    group.addTask {
+                        let pts = try await self.expandSeries(s, q)
+                        return (i, pts)
+                    }
+                }
+                var out: [(Int, [SeriesPoint])] = []
+                for try await item in group { out.append(item) }
+                return out
+            }
+            for (i, pts) in expanded { chunks[i] = pts }
+        }
+        return chunks.flatMap { $0 }
     }
 
     /// Every individual reading of a series sample (e.g. heart rate every few seconds).
