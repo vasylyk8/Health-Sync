@@ -4,11 +4,12 @@ import XCTest
 /// Backend whose sign-in can be made to fail (offline, server error).
 final class StubBackend: Backend, @unchecked Sendable {
     var signInError: Error?
+    var registerError: Error?
     func signIn() async throws -> String {
         if let signInError { throw signInError }
         return "stub-user"
     }
-    func registerDevice(timeZone: String) async throws {}
+    func registerDevice(timeZone: String) async throws { if let registerError { throw registerError } }
     func createLink(provider: String) async throws -> String { "https://example.test/mcp/\(provider)" }
     func disconnect(provider: String) async throws {}
     func deleteAllData() async throws {}
@@ -46,6 +47,21 @@ final class AppModelTests: XCTestCase {
         let model = makeModel(backend)
         await model.syncNow()
         XCTAssertEqual(model.syncIssue?.contains("Pull down"), true)
+    }
+
+    func testConnectFailureNamesTheStepAndCode() async {
+        let backend = StubBackend()
+        backend.registerError = NSError(domain: "com.firebase.functions", code: 13)
+        let model = makeModel(backend)
+        await model.connectHealth()
+        XCTAssertEqual(model.phase, .welcome)
+        XCTAssertEqual(model.errorMessage?.contains("register: com.firebase.functions 13"), true)
+        XCTAssertEqual(model.errorMessage?.hasPrefix("Something went wrong. Please try again."), true)
+
+        backend.registerError = nil
+        backend.signInError = NSError(domain: "FIRAuthErrorDomain", code: 17999)
+        await model.connectHealth()
+        XCTAssertEqual(model.errorMessage?.contains("sign-in: FIRAuthErrorDomain 17999"), true)
     }
 
     func testCanConnectAgainAfterDeletingAllData() async {
