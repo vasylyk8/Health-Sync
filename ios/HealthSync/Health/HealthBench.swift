@@ -27,6 +27,7 @@ struct BenchView: View {
     }
 }
 
+@MainActor
 enum HealthBench {
     static func run(_ m: BenchModel) async {
         let args = ProcessInfo.processInfo.arguments
