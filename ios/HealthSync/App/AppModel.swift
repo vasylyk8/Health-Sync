@@ -94,7 +94,9 @@ final class AppModel: ObservableObject {
             let ns = error as NSError
             telemetry.nonFatal("connect.\(stage)", code: ns.code)
             // The step and error code carry no health data; they make a failure diagnosable from a screenshot.
-            errorMessage = friendly(error) + "\n\n(\(stage): \(ns.domain) \(ns.code))"
+            // HealthKit's own text names the problem (for example which data type it refused); it contains no health data.
+            let detail = ns.domain == "com.apple.healthkit" ? " \(ns.localizedDescription)" : ""
+            errorMessage = friendly(error) + "\n\n(\(stage): \(ns.domain) \(ns.code))\(detail)"
         }
     }
 

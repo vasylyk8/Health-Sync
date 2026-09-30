@@ -35,8 +35,30 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
 
     func requestAuthorization(scope: SyncScope) async throws {
-        try await store.requestAuthorization(toShare: [], read: HealthTypes.readPermissions(for: scope))
+        let types = HealthTypes.readPermissions(for: scope)
+        do {
+            try await store.requestAuthorization(toShare: [], read: types)
+        } catch let error as NSError where error.domain == HKErrorDomain && error.code == HKError.Code.errorInvalidArgument.rawValue {
+            // iOS rejects the whole request if it no longer accepts one type (e.g. after an iOS update).
+            // Find those types without showing anything (a status check fails the same way) and ask for the rest.
+            var accepted = Set<HKObjectType>()
+            var rejected: [String] = []
+            for type in types {
+                do {
+                    _ = try await store.statusForAuthorizationRequest(toShare: [], read: [type])
+                    accepted.insert(type)
+                } catch {
+                    rejected.append(type.identifier)
+                }
+            }
+            rejectedPermissionTypes = rejected.sorted()
+            guard !rejected.isEmpty, !accepted.isEmpty else { throw error }
+            try await store.requestAuthorization(toShare: [], read: accepted)
+        }
     }
+
+    /// Types iOS refused to ask permission for at the last request (identifiers only), for diagnostics.
+    private(set) var rejectedPermissionTypes: [String] = []
 
     // MARK: Workout summaries
 
