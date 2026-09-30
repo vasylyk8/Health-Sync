@@ -104,6 +104,10 @@ struct SyncStatusView: View {
                 }
                 Text("Keep the app open while your workouts sync. You can connect an assistant meanwhile.")
                     .font(.footnote).foregroundStyle(Theme.mutedText)
+            } else if progress.historyComplete && status.typesWithData == 0 && status.registered {
+                Text("No readable Health data found").font(.subheadline.weight(.medium))
+                Text("Check Settings › Health › Data Access & Devices › KROK and turn on Workouts, Workout Routes and the other categories you want to share.")
+                    .font(.footnote).foregroundStyle(Theme.mutedText)
             } else if let last = status.lastVisibleDate {
                 Label {
                     Text("Synced \(last, format: .relative(presentation: .named))")
@@ -111,10 +115,6 @@ struct SyncStatusView: View {
                     Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(Theme.mutedText)
                 }
                 .font(.subheadline)
-            } else if progress.historyComplete && status.typesWithData == 0 && status.registered {
-                Text("No readable Health data found").font(.subheadline.weight(.medium))
-                Text("Check Settings › Health › Data Access & Devices › KROK and turn on Workouts, Workout Routes and the other categories you want to share.")
-                    .font(.footnote).foregroundStyle(Theme.mutedText)
             } else {
                 Label("Getting ready…", systemImage: "hourglass").font(.subheadline)
             }
