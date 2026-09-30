@@ -98,6 +98,13 @@ struct SyncStatusView: View {
                     Text("\(progress.stepTitle) · \(Int(progress.fraction * 100))%").font(.subheadline.weight(.medium))
                 }
                 .accessibilityIdentifier("syncProgress")
+                if let hint = progress.phaseHint {
+                    HStack(alignment: .top, spacing: 8) {
+                        ProgressView()
+                        Text(hint).font(.footnote)
+                    }
+                    .accessibilityIdentifier("syncHint")
+                }
                 if progress.recentReady {
                     Text("Your recent workouts are ready. You can already ask Claude or ChatGPT about them.")
                         .font(.footnote)

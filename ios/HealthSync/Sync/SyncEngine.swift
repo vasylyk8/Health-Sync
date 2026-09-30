@@ -27,6 +27,15 @@ struct SyncProgress: Equatable, Sendable {
         default: return "Syncing your workouts"
         }
     }
+    /// What the app is doing in the early steps, which show no percentage for a while on a large history.
+    var phaseHint: String? {
+        switch phase {
+        case 1: return "Reading your recent workouts…"
+        case 2: return "Reading years of daily history (sleep, heart rate, steps…). The first time this can take a minute or two."
+        case 3: return "Reading your list of workouts…"
+        default: return nil
+        }
+    }
     var fraction: Double { stepsTotal > 0 ? min(1, Double(stepsDone) / Double(stepsTotal)) : 0 }
     var historyComplete: Bool { stepsTotal > 0 && stepsDone >= stepsTotal }
 }
@@ -45,11 +54,11 @@ actor SyncEngine {
         var device = "iPhone"
         var appVersion = "1.0"
         /// Workouts read from HealthKit at the same time while raw data is collected.
-        var detailReadConcurrency = 6
+        var detailReadConcurrency = 12
         /// Batches of one raw-data upload sent at the same time (only for `_wstream`, whose parts have no ordering).
         var uploadConcurrency = 3
         /// Workouts whose raw data goes into one upload (fewer round trips and file writes).
-        var detailGroupSize = 24
+        var detailGroupSize = 48
         /// Smaller groups when there is a deadline (background wake-ups) so the time limit is respected.
         var detailGroupSizeWithDeadline = 4
     }
