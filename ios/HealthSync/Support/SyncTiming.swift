@@ -102,7 +102,7 @@ final class SyncTiming: @unchecked Sendable {
             @unknown default: heat = "?"
             }
             let device = "app cpu \(String(format: "%.2f", avgCores)) cores avg, \(String(format: "%.2f", recentCores)) now (of \(ProcessInfo.processInfo.activeProcessorCount)) · heat \(heat) · low power \(ProcessInfo.processInfo.isLowPowerModeEnabled ? "ON" : "off")"
-            return startup + "\n" + device + "\n" + "\(rate) workouts/min · \(counters["read.limit"] ?? 0) queries in flight · \(perWorkout) samples per workout · read \(avg("detail.read"))s per workout · encode \(avg("detail.encode"))s per workout · compress \(avg("batch.compress"))s · save \(avg("outbox.enqueue"))s · upload \(avg("upload"))s per batch (\(String(format: "%.1f", mb)) MB) · \(uploads) uploads"
+            return startup + "\n" + device + "\n" + "\(rate) workouts/min · \(counters["read.limit"] ?? 0) queries in flight · \(perWorkout) samples per workout · \(String(format: "%.0f", Double(counters["hk.samples"] ?? 0) / max(Date().timeIntervalSince(start), 1))) samples/s · read \(avg("detail.read"))s per workout · encode \(avg("detail.encode"))s per workout · compress \(avg("batch.compress"))s · save \(avg("outbox.enqueue"))s · upload \(avg("upload"))s per batch (\(String(format: "%.1f", mb)) MB) · \(uploads) uploads"
         }
     }
 

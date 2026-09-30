@@ -573,3 +573,178 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 }
 
 enum HealthSourceError: Error { case noResults }
+
+// MARK: Speed test
+
+/// Measurements that show what limits HealthKit read speed on this phone. Read-only; results are numbers only.
+extension HealthKitSource {
+    private static func timed(_ body: () async -> Void) async -> Double {
+        let t0 = DispatchTime.now().uptimeNanoseconds
+        await body()
+        return Double(DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000_000
+    }
+
+    private func benchRaw(_ store: HKHealthStore, _ type: HKSampleType, _ predicate: NSPredicate?, _ limit: Int, _ sort: NSSortDescriptor?) async throws -> [HKSample] {
+        try await withCheckedThrowingContinuation { cont in
+            let q = HKSampleQuery(sampleType: type, predicate: predicate, limit: limit, sortDescriptors: sort.map { [$0] }) { _, results, error in
+                if let error { cont.resume(throwing: error) } else { cont.resume(returning: results ?? []) }
+            }
+            store.execute(q)
+        }
+    }
+
+    private func benchAnchored(_ type: HKSampleType, anchor: HKQueryAnchor?, limit: Int) async throws -> ([HKSample], HKQueryAnchor?) {
+        try await withCheckedThrowingContinuation { cont in
+            let q = HKAnchoredObjectQuery(type: type, predicate: nil, anchor: anchor, limit: limit) { _, samples, _, newAnchor, error in
+                if let error { cont.resume(throwing: error) } else { cont.resume(returning: (samples ?? [], newAnchor)) }
+            }
+            store.execute(q)
+        }
+    }
+
+    private func benchSeries(_ sample: HKQuantitySample, _ type: HKQuantityType) async throws -> Int {
+        try await withCheckedThrowingContinuation { cont in
+            var n = 0
+            let q = HKQuantitySeriesSampleQuery(quantityType: type, predicate: HKQuery.predicateForObject(with: sample.uuid)) { _, quantity, _, _, done, error in
+                if let error {
+                    cont.resume(throwing: error)
+                    return
+                }
+                if quantity != nil { n += 1 }
+                if done { cont.resume(returning: n) }
+            }
+            store.execute(q)
+        }
+    }
+
+    /// Heart rate of each workout (association query), `width` at a time over `stores`, stopping after `cap` seconds.
+    private func benchParallel(_ ws: [HKWorkout], stores: [HKHealthStore], width: Int, sorted: Bool, cap: Double) async -> (seconds: Double, workouts: Int, samples: Int) {
+        let hr = HKQuantityType(.heartRate)
+        let asc = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+        var samples = 0
+        var workouts = 0
+        let started = Date()
+        let seconds = await Self.timed {
+            await withTaskGroup(of: Int.self) { group in
+                var next = 0
+                func add() {
+                    guard next < ws.count, Date().timeIntervalSince(started) < cap else { return }
+                    let w = ws[next]
+                    let st = stores[next % stores.count]
+                    next += 1
+                    group.addTask { (try? await self.benchRaw(st, hr, HKQuery.predicateForObjects(from: w), HKObjectQueryNoLimit, sorted ? asc : nil).count) ?? 0 }
+                }
+                for _ in 0 ..< max(1, min(width, ws.count)) { add() }
+                while let c = await group.next() {
+                    samples += c
+                    workouts += 1
+                    add()
+                }
+            }
+        }
+        return (seconds, workouts, samples)
+    }
+
+    func benchmark(onUpdate: @escaping @Sendable (String) -> Void) async {
+        var lines: [String] = ["iOS \(ProcessInfo.processInfo.operatingSystemVersionString) · low power \(ProcessInfo.processInfo.isLowPowerModeEnabled ? "ON" : "off")"]
+        func emit(_ s: String) {
+            lines.append(s)
+            onUpdate(lines.joined(separator: "\n"))
+        }
+        onUpdate(lines.joined(separator: "\n") + "\nRunning…")
+        let hr = HKQuantityType(.heartRate)
+        let desc = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
+        let workoutType = HKObjectType.workoutType()
+        let ws: [HKWorkout]
+        do {
+            ws = try await benchRaw(store, workoutType, nil, 400, desc).compactMap { $0 as? HKWorkout }
+        } catch {
+            emit("Could not read workouts: \((error as NSError).domain) \((error as NSError).code). Keep the phone unlocked and try again.")
+            return
+        }
+        guard !ws.isEmpty else {
+            emit("No workouts found.")
+            return
+        }
+        let sample = Array(ws.prefix(40))
+        func f(_ v: Double) -> String { String(format: "%.1f", v) }
+
+        // 1. Cost of a query that returns almost nothing.
+        let t0 = await Self.timed {
+            for _ in 0 ..< 30 { _ = try? await self.benchRaw(self.store, workoutType, nil, 1, nil) }
+        }
+        emit("1 round trip, 1 workout: \(f(t0 / 30 * 1000)) ms")
+
+        // 2. Heart rate per workout, by how it is asked.
+        let a = await benchParallel(sample, stores: [store], width: 1, sorted: true, cap: 15)
+        emit("2 one at a time, sorted: \(f(a.seconds / Double(max(a.workouts, 1)) * 1000)) ms per workout, \(f(Double(a.samples) / max(a.seconds, 0.001))) samples/s (\(a.workouts) workouts, \(a.samples) samples)")
+        let b = await benchParallel(sample, stores: [store], width: 1, sorted: false, cap: 15)
+        emit("3 one at a time, unsorted: \(f(b.seconds / Double(max(b.workouts, 1)) * 1000)) ms per workout, \(f(Double(b.samples) / max(b.seconds, 0.001))) samples/s")
+        let c = await benchParallel(sample, stores: [store], width: 8, sorted: true, cap: 15)
+        emit("4 8 at once, 1 connection: \(f(Double(c.workouts) / max(c.seconds, 0.001))) workouts/s, \(f(Double(c.samples) / max(c.seconds, 0.001))) samples/s")
+        let d = await benchParallel(sample, stores: readStores, width: 8, sorted: true, cap: 15)
+        emit("5 8 at once, 4 connections: \(f(Double(d.workouts) / max(d.seconds, 0.001))) workouts/s, \(f(Double(d.samples) / max(d.seconds, 0.001))) samples/s")
+        let e = await benchParallel(sample, stores: readStores, width: 32, sorted: true, cap: 15)
+        emit("6 32 at once, 4 connections: \(f(Double(e.workouts) / max(e.seconds, 0.001))) workouts/s, \(f(Double(e.samples) / max(e.seconds, 0.001))) samples/s")
+
+        // 3. Does a time-window query return the same heart rate as the workout association?
+        var same = 0, assoc = 0, window = 0, checkedN = 0
+        for w in sample.prefix(10) {
+            let asc = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+            guard let x = try? await benchRaw(store, hr, HKQuery.predicateForObjects(from: w), HKObjectQueryNoLimit, asc),
+                  let y = try? await benchRaw(store, hr, HKQuery.predicateForSamples(withStart: w.startDate, end: w.endDate, options: []), HKObjectQueryNoLimit, asc) else { continue }
+            checkedN += 1
+            assoc += x.count
+            window += y.count
+            if Set(x.map(\.uuid)) == Set(y.map(\.uuid)) { same += 1 }
+        }
+        emit("7 time window vs association (\(checkedN) workouts): identical in \(same), association \(assoc) samples, window \(window) samples")
+
+        // 4. Whole-history scan of heart rate, oldest first (capped at 20 s each). Later rows may be faster because the first warmed caches.
+        var picks: [HKQuantitySample] = []
+        for limit in [1_000, 10_000, 50_000] {
+            var anchor: HKQueryAnchor?
+            var total = 0, seriesCount = 0, pages = 0
+            let started = Date()
+            let secs = await Self.timed {
+                while Date().timeIntervalSince(started) < 20 {
+                    guard let (page, next) = try? await self.benchAnchored(hr, anchor: anchor, limit: limit) else { break }
+                    pages += 1
+                    total += page.count
+                    anchor = next
+                    for case let s as HKQuantitySample in page where s.count > 1 {
+                        seriesCount += 1
+                        if picks.count < 10 { picks.append(s) }
+                    }
+                    if page.count < limit { break }
+                }
+            }
+            emit("8 all heart rate in pages of \(limit): \(f(Double(total) / max(secs, 0.001))) samples/s (\(total) samples in \(f(secs)) s, \(pages) pages, \(seriesCount) are series)")
+        }
+
+        // 5. Expanding series samples into individual readings.
+        if picks.isEmpty {
+            emit("9 series readings: none found")
+        } else {
+            var points = 0
+            let secs = await Self.timed {
+                for s in picks { points += (try? await self.benchSeries(s, hr)) ?? 0 }
+            }
+            emit("9 series readings: \(f(Double(points) / max(secs, 0.001))) points/s (\(points) points from \(picks.count) samples in \(f(secs)) s)")
+        }
+
+        // 6. GPS routes.
+        var routePoints = 0, routes = 0
+        let routeSecs = await Self.timed {
+            for w in sample where routes < 10 {
+                guard let found = try? await self.benchRaw(self.store, HKSeriesType.workoutRoute(), HKQuery.predicateForObjects(from: w), HKObjectQueryNoLimit, nil) else { continue }
+                for case let route as HKWorkoutRoute in found {
+                    routes += 1
+                    routePoints += (try? await self.locations(of: route))?.count ?? 0
+                }
+            }
+        }
+        emit("10 GPS routes: \(routes == 0 ? "none found" : "\(f(Double(routePoints) / max(routeSecs, 0.001))) points/s (\(routePoints) points from \(routes) routes in \(f(routeSecs)) s)")")
+        emit("Done.")
+    }
+}

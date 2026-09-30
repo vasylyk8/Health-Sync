@@ -17,6 +17,12 @@ final class AppModel: ObservableObject {
     /// Shown under the sync status when the last sync attempt failed; cleared by the next success.
     @Published var syncIssue: String?
 
+    /// Result of the read-speed test (shown in a sheet); the sync is paused while it runs.
+    @Published var benchmarkText = ""
+    @Published var benchmarkRunning = false
+    @Published var showBenchmark = false
+    private var syncTask: Task<Void, Never>?
+
     let providers = AIProvider.all
     private let backend: Backend
     private let source: HealthSource
@@ -86,10 +92,33 @@ final class AppModel: ObservableObject {
 
     /// Called on launch (when already onboarded) and whenever the app becomes active.
     func start() {
-        guard phase == .home else { return }
+        guard phase == .home, !benchmarkRunning else { return }
         Task { await engine.onProgress { p in Task { @MainActor in self.progress = p } } }
         startObservers()
-        Task { await syncNow() }
+        syncTask = Task { await syncNow() }
+    }
+
+    /// Pauses the sync (it resumes where it left off), measures HealthKit read speed, then resumes.
+    func runSpeedTest() {
+        guard !benchmarkRunning else { return }
+        benchmarkRunning = true
+        benchmarkText = "Pausing sync…"
+        showBenchmark = true
+        UIApplication.shared.isIdleTimerDisabled = true
+        Task {
+            syncTask?.cancel()
+            await syncTask?.value
+            syncTask = nil
+            await source.benchmark { text in Task { @MainActor in self.benchmarkText = text } }
+            benchmarkRunning = false
+        }
+    }
+
+    /// Closing the results resumes the sync.
+    func finishSpeedTest() {
+        showBenchmark = false
+        guard !benchmarkRunning else { return }
+        start()
     }
 
     /// Registers the HealthKit observers that let iOS wake the app for new data. Must also run when
