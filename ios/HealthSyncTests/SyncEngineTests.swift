@@ -292,7 +292,7 @@ final class SyncEngineTests: XCTestCase {
         // The app restarts later with the network back: the queued batches are re-sent and committed.
         up.failAfter = nil
         source.pages = [AnchoredPage(records: [workout("W1")], newAnchor: Data("A1".utf8), objectCount: 1)]
-        let (engine2, _) = makeEngine(source, up, outbox: Outbox(root: root), config: config)
+        let (engine2, _) = makeEngine(source, up, outbox: Outbox(root: root))
         _ = try await engine2.run()
         let reloaded = Outbox(root: root)
         XCTAssertTrue(reloaded.pending().isEmpty)
