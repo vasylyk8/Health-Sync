@@ -63,7 +63,7 @@ final class SyncTiming: @unchecked Sendable {
             let uploads = stats["upload"]?.count ?? 0
             let mb = uploads > 0 ? Double(counters["upload.bytes"] ?? 0) / Double(uploads) / 1_000_000 : 0
             let rate = String(format: "%.1f", Double(workouts) / minutes)
-            return "\(rate) workouts/min · \(counters["read.limit"] ?? 0) readers · read \(avg("detail.read"))s per workout · encode \(avg("detail.encode"))s per workout · compress \(avg("batch.compress"))s · save \(avg("outbox.enqueue"))s · upload \(avg("upload"))s per batch (\(String(format: "%.1f", mb)) MB) · \(uploads) uploads"
+            return "\(rate) workouts/min · \(counters["read.limit"] ?? 0) queries in flight · read \(avg("detail.read"))s per workout · encode \(avg("detail.encode"))s per workout · compress \(avg("batch.compress"))s · save \(avg("outbox.enqueue"))s · upload \(avg("upload"))s per batch (\(String(format: "%.1f", mb)) MB) · \(uploads) uploads"
         }
     }
 

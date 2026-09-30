@@ -51,8 +51,8 @@ final class ReadGateTests: XCTestCase {
         let tuner = ReadTuner(gate: gate)
         for _ in 0..<5_000 {
             tuner.completed()
-            XCTAssertGreaterThanOrEqual(gate.currentLimit, ReadTuner.minLimit)
-            XCTAssertLessThanOrEqual(gate.currentLimit, ReadTuner.maxLimit)
+            XCTAssertGreaterThanOrEqual(gate.currentLimit, ReadTuner.defaultMinLimit)
+            XCTAssertLessThanOrEqual(gate.currentLimit, ReadTuner.defaultMaxLimit)
         }
     }
 }

@@ -33,6 +33,14 @@ protocol HealthSource: Sendable {
     func dailyContext(from: Date, to: Date) async throws -> [Record]
     /// Earliest sample across the daily-context metrics, to know how far back to start.
     func earliestDailyDate() async throws -> Date?
+    /// How many HealthKit queries may run at the same time (raw workout data), adjusted while syncing.
+    var queryConcurrency: Int { get }
+    func setQueryConcurrency(_ n: Int)
     /// Registers a background observer for new workouts; `onChange` must call its completion when done.
     func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void)
+}
+
+extension HealthSource {
+    var queryConcurrency: Int { 1 }
+    func setQueryConcurrency(_ n: Int) {}
 }

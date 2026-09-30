@@ -54,7 +54,7 @@ actor SyncEngine {
         var device = "iPhone"
         var appVersion = "1.0"
         /// Workouts read from HealthKit at the same time while raw data is collected.
-        var detailReadConcurrency = 12
+        var detailReadConcurrency = 24
         /// Batches of one raw-data upload sent at the same time (only for `_wstream`, whose parts have no ordering).
         var uploadConcurrency = 3
         /// Workouts whose raw data goes into one upload (fewer round trips and file writes).
@@ -311,10 +311,13 @@ actor SyncEngine {
         let source = self.source
         let clock = now
         let timing = SyncTiming.shared
-        // One shared limit on parallel reads across all groups; it adapts to what this iPhone reads fastest.
+        // Workouts in progress are bounded by a fixed gate (memory); how many HealthKit queries run at once
+        // is tuned to what this iPhone answers fastest, since Apple documents no limit.
         let gate = ReadGate(limit: config.detailReadConcurrency)
-        let tuner = ReadTuner(gate: gate)
-        timing.set("read.limit", gate.currentLimit)
+        let tuner = ReadTuner(
+            current: { [source] in source.queryConcurrency }, apply: { [source] in source.setQueryConcurrency($0) },
+            minLimit: 4, maxLimit: 96, step: 8, windowSize: 24)
+        timing.set("read.limit", source.queryConcurrency)
 
         func read(_ group: [WorkoutRef]) -> Task<[EncodedWorkout?], Error> {
             Task { try await Self.readGroup(group, source: source, gate: gate, tuner: tuner, now: clock) }

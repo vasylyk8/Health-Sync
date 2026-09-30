@@ -53,15 +53,18 @@ final class ReadGate: @unchecked Sendable {
     }
 }
 
-/// Finds how many workouts this iPhone reads fastest at once: measures workouts/second over windows of
+/// Finds the fastest number of parallel reads on this iPhone: measures work done per second over windows of
 /// completed reads and moves the limit up while it helps, back when it hurts, and holds at a plateau.
 final class ReadTuner: @unchecked Sendable {
-    static let minLimit = 4
-    static let maxLimit = 32
-    static let step = 4
-    static let windowSize = 24
+    static let defaultMinLimit = 4
+    static let defaultMaxLimit = 32
 
-    let gate: ReadGate
+    private let minLimit: Int
+    private let maxLimit: Int
+    private let step: Int
+    private let windowSize: Int
+    private let current: @Sendable () -> Int
+    private let apply: @Sendable (Int) -> Void
     private let lock = NSLock()
     private var windowStart = Date()
     private var windowCount = 0
@@ -69,21 +72,32 @@ final class ReadTuner: @unchecked Sendable {
     private var direction = 1
     private var holdWindows = 0
 
-    init(gate: ReadGate) { self.gate = gate }
+    init(current: @escaping @Sendable () -> Int, apply: @escaping @Sendable (Int) -> Void, minLimit: Int, maxLimit: Int, step: Int, windowSize: Int) {
+        self.current = current
+        self.apply = apply
+        self.minLimit = minLimit
+        self.maxLimit = maxLimit
+        self.step = step
+        self.windowSize = windowSize
+    }
 
-    /// Call once per finished workout read.
+    convenience init(gate: ReadGate) {
+        self.init(current: { gate.currentLimit }, apply: { gate.setLimit($0) }, minLimit: Self.defaultMinLimit, maxLimit: Self.defaultMaxLimit, step: 4, windowSize: 24)
+    }
+
+    /// Call once per finished unit of work (a workout read).
     func completed() {
         let newLimit: Int? = lock.withLock {
             windowCount += 1
-            guard windowCount >= Self.windowSize else { return nil }
+            guard windowCount >= windowSize else { return nil }
             let elapsed = max(Date().timeIntervalSince(windowStart), 0.001)
             let rate = Double(windowCount) / elapsed
             windowStart = Date()
             windowCount = 0
-            return adjust(rate: rate, current: gate.currentLimit)
+            return adjust(rate: rate, current: current())
         }
         if let newLimit {
-            gate.setLimit(newLimit)
+            apply(newLimit)
             SyncTiming.shared.set("read.limit", newLimit)
         }
     }
@@ -97,16 +111,16 @@ final class ReadTuner: @unchecked Sendable {
             return nil
         }
         defer { lastRate = rate }
-        guard let previous = lastRate else { return clamp(current + Self.step) }
+        guard let previous = lastRate else { return clamp(current + step) }
         if rate > previous * 1.10 {
-            return clamp(current + direction * Self.step)
+            return clamp(current + direction * step)
         } else if rate < previous * 0.90 {
             direction = -direction
-            return clamp(current + direction * Self.step)
+            return clamp(current + direction * step)
         }
         holdWindows = 4
         return nil
     }
 
-    private func clamp(_ n: Int) -> Int { min(max(n, Self.minLimit), Self.maxLimit) }
+    private func clamp(_ n: Int) -> Int { min(max(n, minLimit), maxLimit) }
 }

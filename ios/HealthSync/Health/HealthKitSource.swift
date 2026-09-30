@@ -8,6 +8,10 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     private let store = HKHealthStore()
     private let scope: SyncScope
     private let quantitiesById: [String: WorkoutQuantity]
+    /// Apple documents no limit on parallel queries, so the number in flight is tuned while syncing (`ReadTuner`).
+    private let queryGate = ReadGate(limit: 24)
+    var queryConcurrency: Int { queryGate.currentLimit }
+    func setQueryConcurrency(_ n: Int) { queryGate.setLimit(n) }
     /// Workouts from the last `workoutIndex()`, so each one is not fetched a second time by uuid before its
     /// raw data is read. An entry is dropped once that workout has been read.
     private let cacheLock = NSLock()
@@ -252,6 +256,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     /// Every individual reading of a series sample (e.g. heart rate every few seconds).
     private func expandSeries(_ sample: HKQuantitySample, _ q: WorkoutQuantity) async throws -> [SeriesPoint] {
         let predicate = HKQuery.predicateForObject(with: sample.uuid)
+        await queryGate.acquire()
+        defer { queryGate.release() }
         return try await withCheckedThrowingContinuation { cont in
             var acc: [SeriesPoint] = []
             let query = HKQuantitySeriesSampleQuery(quantityType: q.type, predicate: predicate) { _, quantity, interval, _, done, error in
@@ -284,7 +290,9 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     private func locations(of route: HKWorkoutRoute) async throws -> [CLLocation] {
-        try await withCheckedThrowingContinuation { cont in
+        await queryGate.acquire()
+        defer { queryGate.release() }
+        return try await withCheckedThrowingContinuation { cont in
             var acc: [CLLocation] = []
             let query = HKWorkoutRouteQuery(route: route) { _, batch, done, error in
                 if let error {
@@ -536,7 +544,9 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     // MARK: Helpers
 
     private func fetch(_ type: HKSampleType, predicate: NSPredicate?, sort: NSSortDescriptor?, limit: Int = HKObjectQueryNoLimit) async throws -> [HKSample] {
-        try await withCheckedThrowingContinuation { cont in
+        await queryGate.acquire()
+        defer { queryGate.release() }
+        return try await withCheckedThrowingContinuation { cont in
             let q = HKSampleQuery(sampleType: type, predicate: predicate, limit: limit, sortDescriptors: sort.map { [$0] }) { _, results, error in
                 if let error { cont.resume(throwing: error) } else { cont.resume(returning: results ?? []) }
             }
