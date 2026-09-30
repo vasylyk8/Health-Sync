@@ -54,6 +54,8 @@ final class AppModel: ObservableObject {
     func connectHealth() async {
         busy = true
         defer { busy = false }
+        // Which step failed, so a failure can be told apart (Health permission, sign-in, registration).
+        var stage = "start"
         do {
             guard source.isAvailable else {
                 errorMessage = "Apple Health isn't available on this device."
@@ -61,8 +63,11 @@ final class AppModel: ObservableObject {
             }
             // HealthKit never reveals which read permissions were granted; we proceed either way
             // and show "No readable Health data found" later if nothing arrives.
+            stage = "health-permission"
             try await source.requestAuthorization(scope: scope)
+            stage = "sign-in"
             _ = try await backend.signIn()
+            stage = "register"
             try await backend.registerDevice(timeZone: TimeZone.current.identifier)
             defaults.set(true, forKey: "healthConnected")
             telemetry.event("health_connected")
@@ -70,7 +75,10 @@ final class AppModel: ObservableObject {
             withAnimation { phase = .home }
             start()
         } catch {
-            errorMessage = friendly(error)
+            let ns = error as NSError
+            telemetry.nonFatal("connect.\(stage)", code: ns.code)
+            // The step and error code carry no health data; they make a failure diagnosable from a screenshot.
+            errorMessage = friendly(error) + "\n\n(\(stage): \(ns.domain) \(ns.code))"
         }
     }
 
