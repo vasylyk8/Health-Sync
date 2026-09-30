@@ -8,6 +8,7 @@ import SwiftUI
 @MainActor
 final class BenchModel: ObservableObject {
     @Published var text = "BENCH starting"
+    var speed = ""
     func log(_ s: String) {
         text += "\n" + s
         print("BENCH " + s)
@@ -57,12 +58,12 @@ enum HealthBench {
         }
 
         await source.benchmark { text in
-            Task { @MainActor in m.text = text; print("BENCHSUMMARY\n" + text) }
+            Task { @MainActor in m.speed = text }
         }
         // Give the last update a moment to land, then replay the summary as plain log lines.
         try? await Task.sleep(for: .seconds(1))
         m.log("--- speed test ---")
-        m.log(m.text)
+        m.log(m.speed)
 
         await endToEnd(source, m)
         m.log("BENCH DONE")
