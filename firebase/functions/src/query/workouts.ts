@@ -118,6 +118,14 @@ function rawStatus(doc: WorkoutDataDoc | null): 'complete' | 'partial' | 'none' 
   return doc.rawComplete ? 'complete' : 'partial';
 }
 
+/** Health metrics carry float noise (26388.047698444407 steps); keep them readable and cheap in tokens. */
+function tidyMetric(v: unknown): unknown {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return v;
+  const a = Math.abs(v);
+  return round(v, a >= 1000 ? 0 : a >= 10 ? 1 : 2);
+}
+const tidyMetrics = (m: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, tidyMetric(v)]));
+
 const num = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 
 function eventsOf(extra: Record<string, unknown>): WorkoutEvent[] {
@@ -155,18 +163,22 @@ export async function getWorkouts(deps: QueryDeps, args: { start_date: string; e
     const [startUtc, endUtc] = await localRangeToUtc(c, r.tz, r.start, r.end);
     const man = await loadType(c, dir, deps, WORKOUT_TYPE, roughUtcRange(r.start, r.end), 'w', { what: 'raw', budget: { bytes: 0 } });
     const filters = [`s >= ${startUtc} AND s < ${endUtc}`, `k = 'w'`];
-    if (args.activity) filters.push(`json_extract_string(extra, '$.actName') ILIKE ${lit('%' + args.activity + '%')}`);
+    if (args.activity) filters.push(`json_extract_string(extra, '$.actName') ILIKE ${lit('%' + args.activity.replace(/[\\%_]/g, '\\$&') + '%')} ESCAPE '\\'`);
     const out = await rows(c, `${SELECT_W(r.tz)} WHERE ${filters.join(' AND ')} ORDER BY s LIMIT ${cap + 1}`);
-    if (out.length > cap) throw new ToolError('too_large', `More than ${cap} workouts in that range. Use a shorter range or an activity filter.`);
+    const truncated = out.length > cap;
+    if (truncated) out.length = cap;
     const docs = new Map((await deps.meta.listWorkoutData(deps.uid)).map((d) => [d.wid, d]));
     const list = out.map((row) => {
       const w = toWorkoutRow(row);
       return { ...summaryOf(w), raw_data: rawStatus(docs.get(w.id) ?? null) };
     });
     const notes = ['duration_min excludes pauses. distance_km and avg_hr are null when the workout recorded none.', 'raw_data: complete = all raw streams synced; partial = still uploading; none = summary only.'];
+    if (truncated) {
+      notes.push(`More workouts match than the ${cap} shown (oldest first). To see the rest, call again starting after ${list[list.length - 1]!.start.slice(0, 10)}, or narrow the range or activity filter.`);
+    }
     return {
       ...envelope(deps, [[WORKOUT_TYPE, man]], isComplete(man, startUtc, endUtc, deps.now()), notes),
-      timezone: r.tz, count: list.length, workouts: list,
+      timezone: r.tz, count: list.length, truncated, workouts: list,
     };
   });
 }
@@ -182,7 +194,7 @@ export async function getWorkout(deps: QueryDeps, args: { workout_id: string; ti
     const day = row.startLocal.slice(0, 10);
     const dailyMan = await loadType(c, dir, deps, DAILY_TYPE, [row.s - 3 * 86_400_000, row.s + 86_400_000], 'd', { what: 'raw', budget: { bytes: 0 } });
     const dailyRows = await rows(c, `SELECT id, extra FROM d WHERE k = 'day' AND id IN (${lit(day)}, ${lit(dayBefore(day))})`);
-    const daily = Object.fromEntries(dailyRows.map((d) => [String(d.id), (parseExtra(d.extra).m as Record<string, unknown>) ?? {}]));
+    const daily = Object.fromEntries(dailyRows.map((d) => [String(d.id), tidyMetrics((parseExtra(d.extra).m as Record<string, unknown>) ?? {})]));
     const streams = doc
       ? Object.entries(doc.streams).map(([name, s]) => ({
           name, points: s.points, unit: s.unit, columns: s.cols,
@@ -515,7 +527,7 @@ export async function getDailyContext(deps: QueryDeps, args: { start_date: strin
         'Each day is a local calendar day on the user\'s phone. Sleep is dated by the morning it ends. A missing metric means it was not recorded that day, not zero.',
       ]),
       count: out.length,
-      days: out.map((d) => ({ date: String(d.id), ...((parseExtra(d.extra).m as Record<string, unknown>) ?? {}) })),
+      days: out.map((d) => ({ date: String(d.id), ...tidyMetrics((parseExtra(d.extra).m as Record<string, unknown>) ?? {}) })),
     };
   });
 }

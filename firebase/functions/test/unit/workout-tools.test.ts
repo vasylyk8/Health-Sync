@@ -36,6 +36,16 @@ describe('get_workouts / get_workout', () => {
     expect((await getWorkouts(q(), { start_date: '2024-06-21', end_date: '2024-06-22' })).count).toBe(0);
   });
 
+  it('truncates to the requested limit instead of failing, and treats % in the activity filter literally', async () => {
+    for (const wid of ['55555555-5555-4555-8555-555555555555', '66666666-6666-4666-8666-666666666666']) await seedRun(env, { wid, withRaw: false });
+    const r = await getWorkouts(q(), { ...day, limit: 2 });
+    expect(r.count).toBe(2);
+    expect(r.truncated).toBe(true);
+    expect((r.notes as string[]).join(' ')).toContain('More workouts match');
+    expect((await getWorkouts(q(), { ...day, limit: 3 })).truncated).toBe(false);
+    expect((await getWorkouts(q(), { ...day, activity: '%' })).count).toBe(0);
+  });
+
   it('returns the full detail: events, streams and daily context', async () => {
     const r = await getWorkout(q(), { workout_id: RUN });
     const w = r.workout as Record<string, unknown>;
