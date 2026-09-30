@@ -77,6 +77,7 @@ enum HealthBench {
 
         await endToEnd(source, m)
         await bulkScan(store, m)
+        await engineRun(scope, m)
         m.log("BENCH DONE")
     }
 
@@ -113,6 +114,40 @@ enum HealthBench {
             let secs = Date().timeIntervalSince(t0)
             m.log(String(format: "e2e width %d: %d workouts in %.1f s = %.1f workouts/min (%d records)", width, done, secs, Double(done) / secs * 60, points))
         }
+    }
+
+    /// The app's whole first sync (steps 1-4) with the real HealthKit reader and an in-memory server,
+    /// to catch a step that never finishes. Logs what is running every 15 s; gives up after 10 minutes.
+    private static func engineRun(_ scope: SyncScope, _ m: BenchModel) async {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("bench-\(UUID().uuidString)")
+        let engine = SyncEngine(source: HealthKitSource(scope: scope), uploader: FakeBackend(), outbox: Outbox(root: root), scope: scope)
+        let t0 = Date()
+        m.log("engine: first sync starting")
+        let watcher = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(15))
+                if Task.isCancelled { break }
+                let p = await engine.progress
+                m.log("engine \(Int(Date().timeIntervalSince(t0)))s: phase \(p.phase), details \(p.detailsDone)/\(p.detailsTotal) | " + SyncTiming.shared.startupSummary().replacingOccurrences(of: "\n", with: " | "))
+            }
+        }
+        let run = Task { try await engine.run() }
+        let outcome: String = await withTaskGroup(of: String.self) { group in
+            group.addTask {
+                do { return "finished: \(try await run.value)" } catch { return "failed: \(error)" }
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(600))
+                return "TIMEOUT after 600 s (stuck)"
+            }
+            let first = await group.next() ?? "?"
+            group.cancelAll()
+            return first
+        }
+        run.cancel()
+        watcher.cancel()
+        let p = await engine.progress
+        m.log("engine: \(outcome) in \(Int(Date().timeIntervalSince(t0))) s, details \(p.detailsDone)/\(p.detailsTotal) | " + SyncTiming.shared.startupSummary().replacingOccurrences(of: "\n", with: " | "))
     }
 
     /// All-day heart rate outside workouts (a watch records it every few minutes), so the database is
