@@ -8,6 +8,10 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     private let store = HKHealthStore()
     private let scope: SyncScope
     private let quantitiesById: [String: WorkoutQuantity]
+    /// Workouts from the last `workoutIndex()`, so each one is not fetched a second time by uuid before its
+    /// raw data is read. An entry is dropped once that workout has been read.
+    private let cacheLock = NSLock()
+    private var workoutCache: [String: HKWorkout] = [:]
 
     init(scope: SyncScope) {
         self.scope = scope
@@ -47,6 +51,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     func workoutIndex() async throws -> [WorkoutRef] {
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
         let samples = try await fetch(HKObjectType.workoutType(), predicate: nil, sort: sort)
+        let workouts = samples.compactMap { $0 as? HKWorkout }
+        cacheLock.withLock { workoutCache = Dictionary(workouts.map { ($0.uuid.uuidString, $0) }, uniquingKeysWith: { first, _ in first }) }
         return samples.map { WorkoutRef(id: $0.uuid.uuidString, start: $0.startDate) }
     }
 
@@ -141,8 +147,15 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     func workoutDetail(id: String, gen: Int64) async throws -> [Record]? {
         guard let uuid = UUID(uuidString: id) else { return nil }
-        let found = try await fetch(HKObjectType.workoutType(), predicate: HKQuery.predicateForObject(with: uuid), sort: nil, limit: 1)
-        guard let w = found.first as? HKWorkout else { return nil }
+        let w: HKWorkout
+        if let cached = cacheLock.withLock({ workoutCache[id] }) {
+            w = cached
+        } else {
+            let found = try await fetch(HKObjectType.workoutType(), predicate: HKQuery.predicateForObject(with: uuid), sort: nil, limit: 1)
+            guard let fetched = found.first as? HKWorkout else { return nil }
+            w = fetched
+        }
+        defer { cacheLock.withLock { workoutCache[id] = nil } }
 
         var records: [Record] = []
         var expected: [String: Int] = [:]
