@@ -57,6 +57,7 @@ export async function ingestObject(objectPath: string, deps: IngestDeps, opts: {
     }
     parsed = parseBatch(bytes);
     if (parsed.header.batchId !== batchId) throw new BatchError('batchId does not match file name');
+    if (parsed.skipped > 0) log.warn('invalid records skipped', { uid, batchId, skipped: parsed.skipped, first: parsed.firstSkip });
   } catch (err) {
     if (err instanceof BatchError) {
       log.warn('batch rejected', { uid, batchId, reason: err.message });

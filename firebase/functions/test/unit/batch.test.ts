@@ -41,6 +41,18 @@ describe('parseBatch', () => {
     expect(() => parseBatch(gz(lines as object[]))).toThrow(BatchError);
   });
 
+  it('keeps the valid records when only some are invalid, and counts the skipped ones', () => {
+    const p = parseBatch(gz([
+      header(),
+      { k: 'w', id: 'good', s: S, e: S + 60_000, act: 37 },
+      { k: 'w', id: 'bad', s: S, e: S - 1, act: 1 },
+      '{nope',
+    ]));
+    expect(p.recordCount).toBe(1);
+    expect(p.skipped).toBe(2);
+    expect(p.partitions.get('2024-03')).toHaveLength(1);
+  });
+
   it('rejects non-gzip and decompression bombs', () => {
     expect(() => parseBatch(Buffer.from('plain'))).toThrow(BatchError);
     const bomb = gzipSync(Buffer.alloc(200 * 1024 * 1024, 32));

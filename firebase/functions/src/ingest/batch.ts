@@ -123,6 +123,9 @@ export interface ParsedBatch {
   /** Min/max sample start time in this batch (null if none). */
   span: { start: number; end: number } | null;
   recordCount: number;
+  /** Records dropped because they were invalid (the rest of the batch is kept). */
+  skipped: number;
+  firstSkip: string | null;
   /** Only for `status` batches: one entry per known type. */
   statuses: { type: string; at: number; caughtUp: boolean }[];
   /** Only for `workoutdata` batches. */
@@ -191,72 +194,85 @@ export function parseBatch(gz: Buffer): ParsedBatch {
     rows.push(row);
   };
 
+  // One bad record must not throw away the other (up to 5,000) records of the batch: the phone has
+  // already moved its anchor past them. Skip it, keep the rest, and report the count.
+  let skipped = 0;
+  let firstSkip: string | null = null;
   for (let i = 1; i < lines.length; i++) {
-    const rec = parseLine(lines[i]!, i, RecordSchema) as Record<string, unknown> & BatchRecord;
-    const base = { seq: header.seq, batch: header.batchId, rid: header.reconcileId ?? null };
-    if (!KINDS_BY_TYPE[header.type]?.has(rec.k)) throw new BatchError(`line ${i}: record kind ${rec.k} is not allowed in a ${header.type} batch`);
-    switch (rec.k) {
-      case 'ws': {
-        const cols: StreamChunk['cols'] = {};
-        for (const col of STREAM_COLS) {
-          const arr = rec[col];
-          if (!arr) continue;
-          if (arr.length !== rec.t.length) throw new BatchError(`line ${i}: ${col} has ${arr.length} points but t has ${rec.t.length}`);
-          cols[col] = arr;
+    try {
+      const rec = parseLine(lines[i]!, i, RecordSchema) as Record<string, unknown> & BatchRecord;
+      const base = { seq: header.seq, batch: header.batchId, rid: header.reconcileId ?? null };
+      if (!KINDS_BY_TYPE[header.type]?.has(rec.k)) throw new BatchError(`line ${i}: record kind ${rec.k} is not allowed in a ${header.type} batch`);
+      switch (rec.k) {
+        case 'ws': {
+          const cols: StreamChunk['cols'] = {};
+          for (const col of STREAM_COLS) {
+            const arr = rec[col];
+            if (!arr) continue;
+            if (arr.length !== rec.t.length) throw new BatchError(`line ${i}: ${col} has ${arr.length} points but t has ${rec.t.length}`);
+            cols[col] = arr;
+          }
+          if (Object.keys(cols).length === 0) throw new BatchError(`line ${i}: stream chunk has no values`);
+          streams.push({ wid: rec.wid, st: rec.st, gen: rec.gen, unit: rec.u ?? null, t: rec.t, cols });
+          continue;
         }
-        if (Object.keys(cols).length === 0) throw new BatchError(`line ${i}: stream chunk has no values`);
-        streams.push({ wid: rec.wid, st: rec.st, gen: rec.gen, unit: rec.u ?? null, t: rec.t, cols });
-        continue;
+        case 'wd':
+          marks.push({ wid: rec.wid, gen: rec.gen, expected: rec.expected });
+          continue;
+        case 'day': {
+          const [y, m, d] = rec.day.split('-').map(Number) as [number, number, number];
+          const s = Date.UTC(y, m - 1, d);
+          if (new Date(s).toISOString().slice(0, 10) !== rec.day) throw new BatchError(`line ${i}: impossible date ${rec.day}`);
+          push(monthKey(s), { ...base, k: 'day', id: rec.day, s, e: s + 86_400_000, v: null, c: null, u: null, agg: null, src: null, bid: null, dev: null, tz: null, extra: JSON.stringify({ m: rec.m }) });
+          min = Math.min(min, s);
+          max = Math.max(max, s + 86_400_000);
+          continue;
+        }
+        case 'c':
+          // Unknown types (e.g. from a newer app) are skipped rather than failing the whole batch.
+          if (TYPES_BY_ID.has(rec.t)) statuses.push({ type: rec.t, at: rec.at, caughtUp: rec.cu });
+          continue;
+        case 'd':
+          tombstones.push(rec.id);
+          continue;
+        default: {
+          if (rec.e < rec.s) throw new BatchError(`line ${i}: end before start`);
+          const r = rec as Record<string, unknown>;
+          min = Math.min(min, rec.s);
+          max = Math.max(max, rec.e);
+          push(monthKey(rec.s), {
+            ...base,
+            k: rec.k,
+            id: rec.id,
+            s: rec.s,
+            e: rec.e,
+            v: typeof r.v === 'number' ? r.v : null,
+            c: typeof r.c === 'number' ? r.c : null,
+            u: typeof r.u === 'string' ? r.u : null,
+            agg: null,
+            src: (r.src as string) ?? null,
+            bid: (r.bid as string) ?? null,
+            dev: (r.dev as string) ?? null,
+            tz: (r.tz as string) ?? null,
+            extra: extraOf(r),
+          });
+        }
       }
-      case 'wd':
-        marks.push({ wid: rec.wid, gen: rec.gen, expected: rec.expected });
-        continue;
-      case 'day': {
-        const [y, m, d] = rec.day.split('-').map(Number) as [number, number, number];
-        const s = Date.UTC(y, m - 1, d);
-        if (new Date(s).toISOString().slice(0, 10) !== rec.day) throw new BatchError(`line ${i}: impossible date ${rec.day}`);
-        push(monthKey(s), { ...base, k: 'day', id: rec.day, s, e: s + 86_400_000, v: null, c: null, u: null, agg: null, src: null, bid: null, dev: null, tz: null, extra: JSON.stringify({ m: rec.m }) });
-        min = Math.min(min, s);
-        max = Math.max(max, s + 86_400_000);
-        continue;
-      }
-      case 'c':
-        // Unknown types (e.g. from a newer app) are skipped rather than failing the whole batch.
-        if (TYPES_BY_ID.has(rec.t)) statuses.push({ type: rec.t, at: rec.at, caughtUp: rec.cu });
-        continue;
-      case 'd':
-        tombstones.push(rec.id);
-        continue;
-      default: {
-        if (rec.e < rec.s) throw new BatchError(`line ${i}: end before start`);
-        const r = rec as Record<string, unknown>;
-        min = Math.min(min, rec.s);
-        max = Math.max(max, rec.e);
-        push(monthKey(rec.s), {
-          ...base,
-          k: rec.k,
-          id: rec.id,
-          s: rec.s,
-          e: rec.e,
-          v: typeof r.v === 'number' ? r.v : null,
-          c: typeof r.c === 'number' ? r.c : null,
-          u: typeof r.u === 'string' ? r.u : null,
-          agg: null,
-          src: (r.src as string) ?? null,
-          bid: (r.bid as string) ?? null,
-          dev: (r.dev as string) ?? null,
-          tz: (r.tz as string) ?? null,
-          extra: extraOf(r),
-        });
-      }
+    } catch (err) {
+      if (!(err instanceof BatchError)) throw err;
+      skipped++;
+      firstSkip ??= err.message;
     }
   }
+  if (skipped > 0 && skipped === lines.length - 1) throw new BatchError(`every record was invalid (first: ${firstSkip})`);
   return {
     header,
     partitions,
     tombstones,
     span: min === Infinity ? null : { start: min, end: max },
-    recordCount: isStatus ? 0 : lines.length - 1,
+    recordCount: isStatus ? 0 : lines.length - 1 - skipped,
+    skipped,
+    firstSkip,
     statuses,
     streams,
     marks,
