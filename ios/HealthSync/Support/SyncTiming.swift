@@ -92,7 +92,9 @@ final class SyncTiming: @unchecked Sendable {
                 guard let starts = inFlight[key], let oldest = starts.values.min() else { return nil }
                 return "\(starts.count) \(label) running (oldest \(Int(now.timeIntervalSince(oldest)))s)"
             }
-            let waits = [busy("hk.daily", "daily reads"), busy("upload", "uploads")].compactMap { $0 }
+            let waits = [busy("hk.recent", "recent-workout reads"), busy("hk.earliest", "oldest-date reads"),
+                         busy("hk.dailyChunk", "daily-year reads"), busy("hk.daily", "daily metric reads"),
+                         busy("hk.history", "workout-list pages"), busy("upload", "uploads")].compactMap { $0 }
             let uploads = stats["upload"]?.count ?? 0
             return (["startup: " + (parts.isEmpty ? "starting" : parts.joined(separator: " · "))] + waits + ["\(uploads) uploads done"]).joined(separator: "\n")
         }

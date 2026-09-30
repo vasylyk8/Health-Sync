@@ -9,6 +9,7 @@ import SwiftUI
 final class BenchModel: ObservableObject {
     @Published var text = "BENCH starting"
     var speed = ""
+    var engineOutcome: String?
     func log(_ s: String) {
         text += "\n" + s
         print("BENCH " + s)
@@ -67,6 +68,8 @@ enum HealthBench {
             m.log("seed: \(existing) workouts already there")
         }
 
+        await engineRun(scope, m)
+
         await source.benchmark { text in
             Task { @MainActor in m.speed = text }
         }
@@ -77,7 +80,6 @@ enum HealthBench {
 
         await endToEnd(source, m)
         await bulkScan(store, m)
-        await engineRun(scope, m)
         m.log("BENCH DONE")
     }
 
@@ -131,18 +133,20 @@ enum HealthBench {
                 m.log("engine \(Int(Date().timeIntervalSince(t0)))s: phase \(p.phase), details \(p.detailsDone)/\(p.detailsTotal) | " + SyncTiming.shared.startupSummary().replacingOccurrences(of: "\n", with: " | "))
             }
         }
-        let run = Task { try await engine.run() }
-        let outcome: String = await withTaskGroup(of: String.self) { group in
-            group.addTask {
-                do { return "finished: \(try await run.value)" } catch { return "failed: \(error)" }
+        // Polled instead of awaited, so a sync that never finishes is reported instead of hanging the bench.
+        m.engineOutcome = nil
+        let run = Task { @MainActor in
+            let result: String
+            do { result = "finished: \(try await engine.run())" } catch { result = "failed: \(error)" }
+            m.engineOutcome = result
+        }
+        var outcome = "TIMEOUT after 300 s (stuck)"
+        while Date().timeIntervalSince(t0) < 300 {
+            try? await Task.sleep(for: .seconds(1))
+            if let done = m.engineOutcome {
+                outcome = done
+                break
             }
-            group.addTask {
-                try? await Task.sleep(for: .seconds(600))
-                return "TIMEOUT after 600 s (stuck)"
-            }
-            let first = await group.next() ?? "?"
-            group.cancelAll()
-            return first
         }
         run.cancel()
         watcher.cancel()
