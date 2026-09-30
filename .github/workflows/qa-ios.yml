@@ -2,7 +2,7 @@
 name: qa-ios
 on:
   push:
-    branches: ['claude/krok-app-qa-testing-*', 'claude/krok-improvements-overnight-*']
+    branches: ['claude/krok-app-qa-testing-*', 'claude/krok-improvements-overnight-*', 'claude/sharp-brown-*']
     paths: ['ios/**', '.github/workflows/qa-ios.yml']
   workflow_dispatch:
 permissions:

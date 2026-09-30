@@ -14,6 +14,10 @@ li{margin:6px 0}
 a{color:var(--accent);text-underline-offset:3px}
 a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
 .lead{font-size:21px;color:var(--muted);margin:0 0 28px}
+.lead.small{font-size:15px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px 20px 12px;margin:16px 0}
 .foot{margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:14px;color:var(--muted)}
 .foot a{color:inherit}
+
+@media (max-width:480px){h1{font-size:24px}.lead{font-size:18px}.top nav a{margin-left:14px}}
+.skip{position:absolute;left:-999px;top:0;background:var(--accent);color:#fff;padding:8px 12px;border-radius:0 0 8px 0;z-index:10}.skip:focus{left:0}

@@ -47,7 +47,7 @@ struct SetupSheet: View {
                             .accessibilityHidden(true)
                         Text("Share your workouts with \(provider.name)?").font(.title2.bold()).multilineTextAlignment(.center)
                         Text("You'll get a private link. With it, \(provider.name) can read your workouts (including detailed measurements and GPS routes) and daily summaries whenever you ask it a question. \(provider.company) processes that data under its own terms. You can disconnect at any time.")
-                            .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center).foregroundStyle(Theme.mutedText)
                         Spacer(minLength: 0)
                     }
                     .padding(.horizontal, 24)
@@ -58,7 +58,7 @@ struct SetupSheet: View {
             VStack(spacing: 12) {
                 if let linkError {
                     Label(linkError, systemImage: "exclamationmark.triangle.fill")
-                        .font(.footnote).foregroundStyle(.orange).multilineTextAlignment(.center)
+                        .font(.footnote).foregroundStyle(Theme.warning).multilineTextAlignment(.center)
                         .accessibilityIdentifier("linkError")
                 }
                 Button {
@@ -126,7 +126,7 @@ struct SetupSheet: View {
                     }
                 }
                 if let tip = provider.tip {
-                    Label(tip, systemImage: "info.circle").font(.footnote).foregroundStyle(.secondary)
+                    Label(tip, systemImage: "info.circle").font(.footnote).foregroundStyle(Theme.mutedText)
                 }
                 waitingRow
             }
@@ -135,6 +135,7 @@ struct SetupSheet: View {
         .task { await model.waitUntilSetUp(provider) }
         .onChange(of: model.isSetUp(provider)) { _, isSetUp in
             guard isSetUp else { return }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
             Task {
                 try? await Task.sleep(for: .seconds(1.5))
                 dismiss()
@@ -145,11 +146,11 @@ struct SetupSheet: View {
     private var waitingRow: some View {
         HStack(spacing: 12) {
             if model.isSetUp(provider) {
-                Image(systemName: "checkmark.circle.fill").font(.title2).foregroundStyle(.green)
+                Image(systemName: "checkmark.circle.fill").font(.title2).foregroundStyle(Theme.success)
                 Text("\(provider.name) is set up").font(.headline)
             } else {
                 ProgressView()
-                Text("Waiting for \(provider.name) to connect…").foregroundStyle(.secondary)
+                Text("Waiting for \(provider.name) to connect…").foregroundStyle(Theme.mutedText)
             }
         }
         .frame(maxWidth: .infinity)
@@ -161,11 +162,11 @@ struct SetupSheet: View {
     private var connectedView: some View {
         VStack(spacing: 18) {
             Spacer()
-            Image(systemName: "checkmark.circle.fill").font(.system(size: 64)).foregroundStyle(.green)
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 64)).foregroundStyle(Theme.success)
                 .accessibilityHidden(true)
             Text("\(provider.name) is set up").font(.title2.bold())
             Text("Ask \(provider.name) about your runs, rides, heart rate zones, pace and recovery. It reads your workout data only when you ask.")
-                .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center).foregroundStyle(Theme.mutedText)
             Spacer()
             Button("Disconnect \(provider.name)", role: .destructive) { confirmDisconnect = true }
                 .accessibilityIdentifier("disconnect")
@@ -202,7 +203,7 @@ private struct StepCard<Actions: View>: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
-            Text(step.detail).font(.subheadline).foregroundStyle(.secondary)
+            Text(step.detail).font(.subheadline).foregroundStyle(Theme.mutedText)
             IllustrationView(kind: step.illustration, tint: tint)
             actions()
         }
