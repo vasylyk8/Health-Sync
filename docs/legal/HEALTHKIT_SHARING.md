@@ -7,7 +7,9 @@ Apple's rules (App Store Review Guideline 5.1.3 and the HealthKit privacy docume
 - **The third party is chosen by the user**, named on a consent screen ("Anthropic processes this data under its own terms"), and only receives data when the user asks it a question.
 - **No advertising, selling or data mining.** Server-side analytics never include health data.
 - **Read-only.** Nothing is written to HealthKit. HealthKit data is not stored in iCloud.
-- **Minimal scope.** Only workouts (with their routes and measurements) and a short list of daily fitness and recovery metrics are read; everything else in Apple Health is not requested. The purpose is unmistakably fitness.
+- **Scoped and opt-in.** Workouts (with routes and measurements) and daily/hourly fitness and recovery metrics are read by default. Additional groups (nutrition, heart alerts, glucose/insulin/blood pressure, mood and symptoms, cycle, medications, profile) are separate switches that are off until the user turns them on, and Apple Health's permission sheet for each appears only then. Each type is read only because a feature uses it (for example glucose around workouts, nutrition and recovery). Clinical records, reproductive/sexual-health data and questionnaires are not requested.
 - **Controls:** disconnect per assistant; delete all data; automatic deletion after a year of inactivity.
+
+- **Sensitive data:** assistants are instructed to describe the data and trends only, never to diagnose or to advise on medication or dosing, and KROK states it is not a medical device.
 
 **Residual risk (owner-accepted):** App Review may consider a general-purpose AI assistant not to be a "health or fitness service". If rejected, the likely remedies are to (a) emphasize the health-coaching use case in the app, (b) add in-app explanations of example health questions, or (c) request a call with App Review. Only review can settle this.

@@ -60,6 +60,23 @@ function run(d) {
   return { summary, streams };
 }
 
+/** Hourly heart rate (UTC hour h of any day): average 55 + h, minimum 5 lower, maximum 10 higher. Steps: 500 from 08:00 to 19:59 UTC. */
+export const hourHr = (h) => 55 + h;
+export const hourSteps = (h) => (h >= 8 && h < 20 ? 500 : 0);
+/** Glucose every 5 minutes in March 2024: 90 mg/dL while a run is on (all runs start 17:00 UTC), otherwise 100. */
+export const GLUCOSE_FROM = Date.UTC(2024, 2, 1);
+export const GLUCOSE_TO = Date.UTC(2024, 3, 1);
+export const glucoseAt = (t) => {
+  const d = Math.floor((t - start) / DAY);
+  const s0 = start + d * DAY + 17 * H;
+  return isRunDay(d) && t >= s0 && t < s0 + runKm(d) * PACE * 1000 ? 90 : 100;
+};
+/** A headache entry at 08:00 UTC on every fifth day. */
+export const headacheOn = (d) => d % 5 === 0;
+export const SYMPTOM_ID = (d) => `sym-${String(d).padStart(4, '0')}`;
+/** Categories the synthetic user has switched on. */
+export const CATEGORIES = ['core', 'devices', 'mind'];
+
 /** Returns the batches (arrays of JSON lines) to upload. */
 export function batches() {
   const out = [];
@@ -72,6 +89,29 @@ export function batches() {
     rows.push({ k: 'day', day: dateOf(d), m: { steps: stepsOn(d), restingHr: restingHrOn(d), sleepAsleepMin: sleepMinutes(d) } });
   }
   out.push([header('_daily', 'stats', { window: { start: start - DAY, end: Date.now() } }), ...rows]);
+
+  // Hourly heart rate and steps for the whole year.
+  const hT = [], hAvg = [], hLo = [], hHi = [], sT = [], sV = [];
+  for (let d = 0; d < days; d++) {
+    for (let h = 0; h < 24; h++) {
+      const t = start + d * DAY + h * H;
+      hT.push(t); hAvg.push(hourHr(h)); hLo.push(hourHr(h) - 5); hHi.push(hourHr(h) + 10);
+      if (hourSteps(h) > 0) { sT.push(t); sV.push(hourSteps(h)); }
+    }
+  }
+  out.push([
+    header('_hourly', 'stats', { window: { start, end: start + days * DAY } }),
+    { k: 'hs', st: 'HeartRate', u: 'count/min', t: hT, v: hAvg, lo: hLo, hi: hHi },
+    { k: 'hs', st: 'StepCount', u: 'count', t: sT, v: sV },
+  ]);
+
+  // Glucose (dense, no ids) and headache entries (with ids).
+  const gT = [], gV = [];
+  for (let t = GLUCOSE_FROM; t < GLUCOSE_TO; t += 5 * 60_000) { gT.push(t); gV.push(glucoseAt(t)); }
+  out.push([header('_events_devices', 'anchored', { caughtUp: true }), { k: 'ev', ty: 'BloodGlucose', u: 'mg/dL', src: 'Synthetic CGM', bid: 'synthetic.cgm', s: gT, v: gV }]);
+  const aT = [], aId = [], aC = [];
+  for (let d = 0; d < days; d++) if (headacheOn(d)) { aT.push(start + d * DAY + 8 * H); aId.push(SYMPTOM_ID(d)); aC.push(2); }
+  out.push([header('_events_mind', 'anchored', { caughtUp: true }), { k: 'ev', ty: 'Headache', src: 'Health', bid: 'com.apple.Health', s: aT, c: aC, ids: aId }]);
   return out;
 }
 
@@ -86,6 +126,8 @@ export function evalCases() {
   const juneRhr = range(dayIndex('2024-06-01'), dayIndex('2024-06-30')).map(restingHrOn);
   const mar4 = dayIndex('2024-03-04');
   const jan15 = dayIndex('2024-01-15');
+  const mar4Start = Date.UTC(2024, 2, 4, 17);
+  const headaches = range(dayIndex('2024-03-01'), dayIndex('2024-03-31')).filter(headacheOn);
   return [
     { q: 'How many running workouts did I do in the first quarter of 2024 (January to March)?', expect: [runsQ1.length] },
     { q: 'What total distance in km did I run in the first quarter of 2024? Round to a whole number.', expect: [sum(runsQ1.map(runKm))] },
@@ -96,5 +138,9 @@ export function evalCases() {
     { q: 'How many steps did I take in total in March 2024?', expect: [sum(march.map(stepsOn))] },
     { q: 'What was my average resting heart rate in June 2024? Give one decimal.', expect: [Math.round((sum(juneRhr) / juneRhr.length) * 10) / 10] },
     { q: 'How many minutes did I sleep on the night ending 2024-04-10?', expect: [sleepMinutes(dayIndex('2024-04-10'))] },
+    { q: 'What was my average heart rate in the hour from 14:00 to 15:00 local time (Europe/Berlin) on 2024-03-04? Use my hourly heart rate data.', expect: [hourHr(13)] },
+    { q: 'How many steps did I take between 09:00 and 11:00 local time (Europe/Berlin) on 2024-03-04, hour by hour from my hourly data?', expect: [hourSteps(8) + hourSteps(9)] },
+    { q: 'What was my average blood glucose in mg/dL during my run on 2024-03-04? Round to a whole number.', expect: [glucoseAt(mar4Start + 60_000)] },
+    { q: 'How many headaches did I log in March 2024?', expect: [headaches.length] },
   ];
 }

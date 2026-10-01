@@ -3,8 +3,9 @@
 This is the single source of truth shared by the iOS app (`ios/`) and the server (`firebase/functions/`).
 Any change bumps `schema` and must keep the server able to read older versions of what it still accepts.
 
-KROK syncs **workouts** (with everything Apple attaches to them) and **daily context**. Nothing else is
-accepted: the server rejects every other batch type and record kind.
+KROK syncs **workouts** (with everything Apple attaches to them), **daily context**, **hourly series** and,
+for the data categories the user switched on, **event/sample logs** (§7). Nothing else is accepted: the server
+rejects every other batch type and record kind, and drops batches of a category the user has not enabled.
 
 ## 1. Upload batches (phone → server)
 
@@ -29,7 +30,10 @@ accepted: the server rejects every other batch type and record kind.
 |---|---|---|---|
 | `HKWorkoutTypeIdentifier` | `recent`, `anchored`, `reconcile` | `w`, `d` | workout summaries and deletions |
 | `_wstream` | `workoutdata` | `ws`, `wd` | raw data of workouts (streams, GPS route) |
-| `_daily` | `stats` | `day` | daily context rows |
+| `_daily` | `stats` | `day` | daily context rows (core category) |
+| `_daily_nutrition`, `_daily_cycle`, `_daily_mind` | `stats` | `day` | daily rows of an optional category |
+| `_hourly` | `stats` | `hs` | hourly heart rate, steps and HRV buckets |
+| `_events_heart`, `_events_nutrition`, `_events_devices`, `_events_mind`, `_events_medications`, `_events_profile` | `anchored` | `ev`, `d` | event/sample logs of an optional category |
 | `_status` | `status` | `c` | "checked, nothing new" for the types above |
 
 - `seq`: per-type monotonic counter; the server keeps the highest `seq` per record id ("latest wins"). The app keeps its counters across upgrades.
@@ -43,7 +47,8 @@ All times are **UTC epoch milliseconds**.
 **`w` workout summary** (one per HealthKit workout, id = HKWorkout UUID):
 `id`, `s` start, `e` end, `act` activity type (int) + `actName`, `dur` seconds (Apple's duration, excluding pauses),
 `en` active kcal, `dist` metres, `hrAvg`, `hrMax`, `src`, `bid`, `dev`, `tz`, `srcVersion`,
-`ev` events `[{t,type,dur}]` (`type` = HKWorkoutEventType: 1 pause, 2 resume, 3 lap, 4 marker, 5 motionPaused, 6 motionResumed, 7 segment; max 2000),
+`ev` events `[{t,type,dur,md?}]` (`type` = HKWorkoutEventType: 1 pause, 2 resume, 3 lap, 4 marker, 5 motionPaused, 6 motionResumed, 7 segment; max 2000; `md` = Apple's details of a lap or segment, such as swim stroke style and lap length),
+`plan` the plan the workout was run from, when it has one (`{id, kind, desc}`; kind = goal, pacer, custom or swimBikeRun; `desc` a short description of its steps),
 `acts` sub-activities `[{s,e,act,actName}]` (multi-sport),
 `stats` = Apple's statistics per quantity type recorded during the workout, e.g. `{"HeartRate":{"avg":145,"min":110,"max":162,"u":"count/min"},"ActiveEnergyBurned":{"sum":310.5,"u":"kcal"}}`,
 `md` metadata (weather, indoor/outdoor, elevation ascended… scalar values; quantities as text; ≤ 8 KB).
@@ -54,7 +59,8 @@ Unknown fields are kept (stored in `extra`).
 **`ws` raw stream chunk** (in a `_wstream` batch): parallel arrays, one point per index.
 `wid` (workout id), `st` stream name (`[A-Za-z0-9_]{1,60}`), `gen` (epoch ms of the phone-side read), `u` unit, `t` timestamps (ms), and value columns:
 - quantity streams: `v`. Stream name = HealthKit type without prefix (`HeartRate`, `ActiveEnergyBurned`, `DistanceWalkingRunning`, `RunningSpeed`, `RunningPower`, `CyclingCadence`, `StepCount`, …). Discrete types are instantaneous readings stamped with the reading time; cumulative types (distance, energy, steps) are the amount added in an interval, stamped with the interval end. The full list is `workoutQuantityTypes` in `shared/coverage.json`.
-- `route` (GPS): `lat`, `lon`, `alt` (m), `spd` (m/s), `crs` (degrees), `ha`, `va` (horizontal/vertical accuracy, m). Values with invalid accuracy are `null`.
+- `route` (GPS): `lat`, `lon`, `alt` (m), `spd` (m/s), `ha` (horizontal accuracy, m). Values with invalid accuracy are `null`. Older uploads also carry `crs` (course) and `va` (vertical accuracy), which the server still accepts; the app no longer sends them.
+- Types marked `"stream": false` in `shared/coverage.json` (active and basal energy, exercise time, physical effort, environmental and headphone audio exposure) are not sent as streams; Apple's statistics for them stay in the workout summary (`stats`).
 At most 20,000 points per record; the phone sends ≤ 5,000. Arrays must have equal length; `null` = no value.
 The phone sorts and de-duplicates by `t` before counting, so `expected` below is exactly what is stored.
 
@@ -62,12 +68,16 @@ The phone sorts and de-duplicates by `t` before counting, so `expected` below is
 - `{"m": M, "o": 1|2, "d": [..n integers..], "x": [null positions]}`: the value at index *i* is `X[i] / M`, where `X` is rebuilt from `d` by cumulative sums. `o: 1`: `d[0]` is `X[0]`, `d[i]` is `X[i] - X[i-1]`. `o: 2`: `d[0]` is `X[0]`, `d[1]` is `X[1] - X[0]`, and for *i* ≥ 2 `d[i]` is the change of that step, so steady motion and regular timestamps become runs of zeros. `x` (optional, increasing) lists the indexes whose value is null; the running value carries over them (the phone repeats the previous value there). `M` is an integer 1–10¹⁵ and the division is IEEE division of two exact integers, so phone and server get the identical double.
 - `{"r": [..n numbers or null..]}`: plain numbers for a column that is not a whole number of 1/M for any M ≤ 10⁶ (sent as is, so nothing is lost).
 - `t` must be whole milliseconds (`M` = 1, no `x`) inside the usual range.
-Precision (set on the phone, the server accepts any `M`): quantity streams (`v`) are exact (the smallest `M` in 1, 10, … 10⁶ that reproduces every value exactly, else `r`); the route is rounded to about a metre: `lat`/`lon` M = 10⁵ (1.1 m), `alt` M = 10, `spd` M = 10, `crs`, `ha`, `va` M = 1. Every point is kept. The server decodes to plain arrays before anything else, so Parquet files and tools see ordinary doubles. Test vectors shared with the iOS tests: `shared/compact-fixtures.json`. **The server must be deployed before an app that sends `enc: 1`**: an older server would skip the records and the phone would believe them stored.
+Precision (set on the phone, the server accepts any `M`): quantity streams (`v`) are rounded to 3 decimals (`M` = 1000, far below sensor precision; this removes floating-point noise such as 61.99999999999999 that would force plain numbers); the route is rounded to about a metre: `lat`/`lon` M = 10⁵ (1.1 m), `alt` M = 10, `spd` M = 10, `ha` M = 1. Every point is kept. The server decodes to plain arrays before anything else, so Parquet files and tools see ordinary doubles. Test vectors shared with the iOS tests: `shared/compact-fixtures.json`. **The server must be deployed before an app that sends `enc: 1`**: an older server would skip the records and the phone would believe them stored.
 
 **`wd` completeness marker** (last record of a workout's raw data): `wid`, `gen`, `expected` = `{stream: pointCount}`. The server sets `rawComplete` once every expected stream of that `gen` has arrived in full.
 Re-reading a workout uses a new `gen`: a newer generation replaces older files of that stream, an older one is ignored, and streams absent from a newer marker are dropped.
 
 **`day` daily context row** (in a `_daily` batch): `day` (local calendar date `YYYY-MM-DD`), `m` = metrics object (numbers, strings, booleans or null). Sent for every local day with at least one metric. Keys are listed in §2.
+
+**`hs` hourly buckets** (in a `_hourly` batch): `st` series name, `u` unit, `enc: 1`, `n`, `t` (start of each local hour as epoch ms), `v` (average, or the sum for cumulative types), optional `lo` / `hi` (minimum / maximum). Columns use the compact encoding above (plain arrays are accepted too). Hours without readings are not sent. Series: `HeartRate` (avg/min/max), `StepCount` (sum), `HeartRateVariabilitySDNN` and `HeartRateVariabilityRMSSD` (avg).
+
+**`ev` event / sample chunk** (in an `_events_<category>` batch): `ty` event type (names in `eventTypes` of `shared/coverage.json`), `u` unit, `src` / `bid` writing app, `enc: 1`, `n`, `s` start times, optional `e` end times, `v` / `v2` values (compact columns), `c` category value (integers), `ids` (HealthKit UUIDs) and `meta` (per-event metadata, scalar values). A chunk holds the samples of one type from one source. Dense series (blood glucose readings, blood pressure) are sent **without** `ids` and `meta` to stay small; their identity is `(type, start, source)`. The `Profile` event (`_events_profile`) is one entry with `meta` = `{dob, sex, wheelchair, moveMode}`. The `Medication` event lists the medications the user chose to share (names only, no dose history).
 
 **`c` status entry**: `t` batch type, `at` time checked, `cu` = its full history is delivered.
 
@@ -78,12 +88,15 @@ Computed on the phone in the user's local calendar (`dailyMetrics` in `shared/co
 - Fitness trends: `vo2max`, `walkingSpeedMps`, `walkingStepLengthM`, `walkingAsymmetryPct`, `walkingDoubleSupportPct`, `walkingSteadinessPct`, `stairAscentSpeedMps`, `stairDescentSpeedMps`, `sixMinuteWalkM`.
 - Body: `bodyMassKg`, `bodyFatPct`, `leanMassKg`, `bmi`, `heightM`, `waistM` (latest value of the day).
 - Nutrition and hydration (only if logged): `dietaryKcal`, `proteinG`, `carbsG`, `fatG`, `sugarG`, `fiberG`, `sodiumG`, `waterL`, `caffeineG`.
-- Mind and cycle: `mindfulMin`, `moodValenceAvg`, `moodEntries`, `basalBodyTempC`, and menstrual-cycle category values as lists of HealthKit values (`cycleMenstrualFlow`, `cycleIntermenstrualBleeding`, `cycleOvulationTestResult`, `cycleCervicalMucusQuality`, `cycleInfrequentMenstrualCycles`, `cycleIrregularMenstrualCycles`, `cyclePersistentIntermenstrualBleeding`, `cycleProlongedMenstrualPeriods`). Sexual activity, contraceptive, pregnancy and lactation data are deliberately **not** read.
+- Mind and cycle (optional categories): `mindfulMin`, `moodValenceAvg`, `moodEntries`, `basalBodyTempC`, and menstrual-cycle category values as lists of HealthKit values (`cycleMenstrualFlow`, `cycleIntermenstrualBleeding`, `cycleOvulationTestResult`, `cycleCervicalMucusQuality`, `cycleInfrequentMenstrualCycles`, `cycleIrregularMenstrualCycles`, `cyclePersistentIntermenstrualBleeding`, `cycleProlongedMenstrualPeriods`). Sexual activity, contraceptive, pregnancy and lactation data are deliberately **not** read.
+- Heart and body extras (core): `hrAvg`, `hrMin`, `hrMax`, `hrvMin`, `hrvMax`, `hrvRmssd`, `respiratoryMin`, `respiratoryMax`, `spo2Max`, `bodyTempC`, `perfusionIndexPct`, `uvExposure`, `moveMin`, `nikeFuel`, `timesFallen`, `pushCount`, `swimStrokes`, per-sport distances (`wheelchairDistanceM`, `snowDistanceM`, `xcSkiDistanceM`, `paddleDistanceM`, `rowingDistanceM`, `skatingDistanceM`), audio exposure (`envAudioAvg/Max`, `headphoneAudioAvg/Max`, `soundReductionAvg`, `envAudioEvents`, `headphoneAudioEvents` as counts). `restingHr`, HRV, respiratory, SpO₂, wrist temperature and VO₂ max use only Apple's own sources (Apple Watch, iPhone), so another app writing its own value does not blend in. `alcoholBeverages` is in the nutrition category.
 
 ## 3. What the phone sends, and when
 
 1. **Recent** (`mode:recent`): workouts of the last 30 days, so the AI is useful within seconds.
-2. **Daily context** (`_daily`, `mode:stats`): the whole history the first time and once a week (so data added later is included), otherwise the last 3 days on every sync. One year per batch.
+2. **Daily context** (`_daily*`, `mode:stats`): the whole history the first time and once a week (so data added later is included), otherwise the last 3 days. One year per batch and category. A chunk whose content hash equals the last one sent is not uploaded again, and incremental reads happen at most every 15 minutes.
+2b. **Hourly series** (`_hourly`, `mode:stats`): the whole history the first time (a year per batch, newest data included), then the last 3 days about once an hour.
+2c. **Event logs** (`_events_*`, `mode:anchored`): one anchored query per event type, only for categories the user switched on; pages of ≤ 5,000 samples, then change capture. Deletions are sent for non-dense types only.
 3. **Workout history** (`mode:anchored`): pages of ≤ 200 workouts from `HKAnchoredObjectQuery` (nil anchor first). The same query continues forever as change capture (adds + deletions).
 4. **Workout raw data** (`_wstream`): for every workout without raw data on the server, newest first, one upload per workout (split if large): every recorded quantity stream, the GPS route, then the `wd` marker. Read from HealthKit: samples associated with the workout (for heart rate also the same source's samples during the workout, for workouts imported from other apps).
 5. **Status** (`_status`): reports the workout type as fully synced when the anchored pass found nothing new (at most once an hour).
@@ -100,9 +113,9 @@ After 30+ days without a sync (deletion records expire in HealthKit): a full `re
 
 ## 4. Server storage
 
-- Workouts and daily rows: Parquet, `data/{uid}/{type}/{yyyy-mm}/{batchId}.parquet`, partitioned by the **UTC month of the start**. One generic row shape (`k, id, s, e, v, c, u, agg, src, bid, dev, tz, extra, seq, batch, rid`); workout-specific fields are in the `extra` JSON.
+- Workouts, daily rows, hourly buckets and events: Parquet (format V2, zstd), `data/{uid}/{type}/{yyyy-mm}/{batchId}.parquet`, partitioned by the **UTC month of the start**. One generic row shape (`k, id, s, e, v, v2, v3, c, u, agg, src, bid, dev, tz, extra, seq, batch, rid`); workout-specific fields are in the `extra` JSON. For `hs` rows `agg` = series name, `v` = avg/sum, `v2` = min, `v3` = max; for `ev` rows `agg` = event type. Rows without an `id` are identified by `(k, agg, s, src)`.
 - Tombstones: `data/{uid}/{type}/_tombstones/{batchId}.parquet`.
-- Raw streams: `data/{uid}/wstream/{workoutId}/{stream}/{gen}-{batchId}.parquet`, columns `t, v, lat, lon, alt, spd, crs, ha, va` (unused columns are NULL), zstd, sorted by time.
+- Raw streams: `data/{uid}/wstream/{workoutId}/{stream}/{gen}-{batchId}.parquet`, columns `t, v, lat, lon, alt, spd, crs, ha, va` (unused columns are NULL), zstd, sorted by time. Value columns are stored as scaled integers (`FileRef.scale` in the manifest, e.g. lat/lon × 10⁵, quantity values × 1000) with delta encoding, so a file is about the size of the upload; reads divide by the scale.
 - Compaction (every 6 h): merges partitions with more than 8 files, keeping the latest version of each record and dropping tombstoned ones. Raw stream files are already one per stream and read together.
 
 ### Manifest and index (Firestore, server-owned)
@@ -133,3 +146,11 @@ The phone's upload ack only means **accepted**. "Synced" in the app and every to
 - Raw workout data (`workoutdata` batches) may carry several workouts (the app sends up to 24 per upload, 4 when running under a background time limit). Each workout keeps its own `wd` marker; the server already publishes per workout id.
 - The app records a group of workouts as done only after every batch of that upload was accepted, so an interrupted first sync resumes without losing or duplicating data.
 - Header `perf` accepts only `readMs` and `uploadMs` (strict schema); on-device timing lives in `sync-timing.json`, not in batches.
+
+## 7. Data categories and consent
+Every batch type belongs to one category (`categories` and `types[].category` in `shared/coverage.json`). `core` (workouts, activity, sleep and recovery, hourly series) is always on. The others are off until the user switches them on in the app (**Your data**): `nutrition` (nutrition, alcohol), `heart` (heart alerts, lung function), `devices` (glucose, insulin, blood pressure), `mind` (state of mind, mindful minutes, symptoms), `cycle` (menstrual cycle), `medications` (medication list), `profile` (date of birth, sex, wheelchair use, move mode).
+- The phone asks HealthKit for the types of a category only when it is switched on.
+- The `setCategories` callable stores the choice (`users/{uid}.categories`, `core` always included). The app calls it **before** it starts syncing a newly enabled category. Switching a category off deletes its Parquet files, manifests and coverage on the server and resets the phone's anchors for it, so switching it on again resends everything.
+- The server drops (acknowledges but does not store) batches of a category that is not enabled, and tools never serve a disabled category.
+- `getStatus` returns the enabled `categories`; a reinstalled app adopts them.
+- Sensitive categories (`devices`, `mind`, `cycle`, `medications`, `profile`) never appear in logs or analytics, and tools that return them tell the AI to describe data and trends only, with no diagnosis and no medication or dosing advice.
