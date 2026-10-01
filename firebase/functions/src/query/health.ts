@@ -166,7 +166,7 @@ export async function getHourlySeries(deps: QueryDeps, args: HourlyArgs): Promis
     const where = `agg = ${lit(def.name)} AND s >= ${a} AND s < ${b}`;
     const local = localTs('s', r.tz);
     const base = {
-      ...envelope(deps, [['_hourly', man]], isComplete(man, a, b, deps.now()), [
+      ...envelope(deps, [['_hourly', man]], isComplete(man, a, b, deps.now(), true), [
         'One value per local hour that had readings (hours without readings are missing). Heart rate outside workouts is recorded roughly every 5 minutes, so an hour averages several readings.',
       ]),
       series: def.name, unit: def.unit, timezone: r.tz, resolution: res,
