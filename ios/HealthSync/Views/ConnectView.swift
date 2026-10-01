@@ -131,6 +131,14 @@ struct SyncStatusView: View {
                 }
                 Text("Keep the app open while your workouts sync. You can connect an assistant meanwhile.")
                     .font(.footnote).foregroundStyle(Theme.mutedText)
+                if (1...3).contains(progress.phase) {
+                    // Refreshed every few seconds so a slow step can be told apart from a stuck one.
+                    TimelineView(.periodic(from: .now, by: 3)) { _ in
+                        Text(SyncTiming.shared.startupSummary())
+                            .font(.caption2.monospaced()).foregroundStyle(Theme.mutedText)
+                    }
+                    .accessibilityIdentifier("syncStartup")
+                }
                 if progress.phase == 4, let speed = SyncTiming.shared.liveSummary() {
                     Text(speed)
                         .font(.caption2.monospaced()).foregroundStyle(Theme.mutedText)

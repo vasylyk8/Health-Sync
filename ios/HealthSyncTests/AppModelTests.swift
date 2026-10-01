@@ -109,3 +109,59 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(AppModel.message(for: NSError(domain: "x", code: 1)), "Something went wrong. Please try again.")
     }
 }
+
+/// Health source whose permission request fails or never answers (as seen on a real iPhone).
+final class AuthProblemSource: HealthSource, @unchecked Sendable {
+    var authError: Error?
+    var hang = false
+    var isAvailable: Bool { true }
+    func requestAuthorization(scope: SyncScope) async throws {
+        if hang { try await Task.sleep(for: .seconds(3600)) }
+        if let authError { throw authError }
+    }
+    func workouts(from: Date, to: Date) async throws -> [Record] { [] }
+    func anchoredPage(_ type: SyncType, anchor: Data?, limit: Int) async throws -> AnchoredPage {
+        AnchoredPage(records: [], newAnchor: nil, objectCount: 0)
+    }
+    func workoutIndex() async throws -> [WorkoutRef] { [] }
+    func workoutDetail(id: String, gen: Int64) async throws -> [Record]? { nil }
+    func dailyContext(from: Date, to: Date) async throws -> [Record] { [] }
+    func earliestDailyDate() async throws -> Date? { nil }
+    func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {}
+}
+
+@MainActor
+final class ConnectPermissionTests: XCTestCase {
+    private func makeModel(_ source: AuthProblemSource) -> AppModel {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let defaults = UserDefaults(suiteName: "connect-\(UUID().uuidString)")!
+        return AppModel(backend: StubBackend(), source: source, outbox: Outbox(root: root), scope: .empty, telemetry: NoTelemetry(), defaults: defaults)
+    }
+
+    func testHealthKitSourceLookupErrorTellsTheUserToRestart() async {
+        let source = AuthProblemSource()
+        source.authError = NSError(domain: "com.apple.healthkit", code: 3,
+                                   userInfo: [NSLocalizedDescriptionKey: "Failed to look up source with bundle identifier \"app.test\""])
+        let model = makeModel(source)
+        await model.connectHealth()
+        XCTAssertEqual(model.phase, .welcome)
+        XCTAssertEqual(model.errorMessage?.contains("Restart your iPhone"), true)
+        XCTAssertEqual(model.errorMessage?.contains("health-permission: com.apple.healthkit 3"), true)
+        XCTAssertEqual(model.errorMessage?.contains("Failed to look up source"), true)
+        XCTAssertFalse(model.busy)
+    }
+
+    func testSilentPermissionRequestShowsWhatToDo() async throws {
+        let source = AuthProblemSource()
+        source.hang = true
+        let model = makeModel(source)
+        model.permissionHintDelay = .milliseconds(100)
+        let connecting = Task { await model.connectHealth() }
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(model.connectStage, "Waiting for Apple Health…")
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(model.connectStage, AppModel.permissionStallHint)
+        XCTAssertTrue(model.busy)
+        connecting.cancel()
+    }
+}

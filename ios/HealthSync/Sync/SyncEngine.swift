@@ -244,7 +244,7 @@ actor SyncEngine {
         let end = now()
         let start = end.addingTimeInterval(-Double(config.recentDays) * 86_400)
         let started = Date()
-        let records = try await source.workouts(from: start, to: end)
+        let records = try await SyncTiming.shared.measure("hk.recent") { try await source.workouts(from: start, to: end) }
         let readMs = Self.ms(since: started)
         if records.isEmpty {
             // Nothing recent: skip the upload. The full-history pass reports the type anyway.
@@ -263,7 +263,7 @@ actor SyncEngine {
         let full = outbox.state.dailyFullAt.map { end.timeIntervalSince($0) > config.dailyFullEvery } ?? true
         var start: Date
         if full {
-            start = try await source.earliestDailyDate() ?? end.addingTimeInterval(-365 * 86_400)
+            start = try await SyncTiming.shared.measure("hk.earliest") { try await source.earliestDailyDate() } ?? end.addingTimeInterval(-365 * 86_400)
         } else {
             start = end.addingTimeInterval(-Double(config.dailyIncrementalDays) * 86_400)
         }
@@ -275,7 +275,7 @@ actor SyncEngine {
             try checkTime()
             let chunkEnd = min(cal.date(byAdding: .year, value: 1, to: chunkStart) ?? end, end)
             let started = Date()
-            let records = try await source.dailyContext(from: chunkStart, to: chunkEnd)
+            let records = try await SyncTiming.shared.measure("hk.dailyChunk") { try await source.dailyContext(from: chunkStart, to: chunkEnd) }
             let readMs = Self.ms(since: started)
             let header = BatchHeader(type: HealthTypes.dailyId, mode: .stats, seq: try outbox.nextSeq(HealthTypes.dailyId), window: (chunkStart, chunkEnd), checkedAt: end)
             let last = chunkEnd >= end
@@ -291,7 +291,7 @@ actor SyncEngine {
         let checked = now()
         let limit = config.workoutPageLimit
         let started = Date()
-        let page = try await source.anchoredPage(t, anchor: anchor, limit: limit)
+        let page = try await SyncTiming.shared.measure("hk.history") { try await source.anchoredPage(t, anchor: anchor, limit: limit) }
         let readMs = Self.ms(since: started)
         let caughtUp = page.objectCount < limit
         if page.objectCount == 0 && reconcileId == nil {

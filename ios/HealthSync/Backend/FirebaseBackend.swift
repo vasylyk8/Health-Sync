@@ -74,7 +74,11 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
     func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {
         guard let uid = Auth.auth().currentUser?.uid else { throw BackendError.notSignedIn }
         guard let projectId = FirebaseApp.app()?.options.projectID else { throw BackendError.notConfigured }
-        let ref = Storage.storage(url: "gs://\(projectId)-incoming").reference(withPath: "incoming/\(uid)/\(batchId).ndjson.gz")
+        let storage = Storage.storage(url: "gs://\(projectId)-incoming")
+        // Fail after a minute instead of Firebase's default ten, so a stalled upload shows up as a paused
+        // sync (retried later, nothing lost) instead of a progress bar that never moves.
+        storage.maxUploadRetryTime = 60
+        let ref = storage.reference(withPath: "incoming/\(uid)/\(batchId).ndjson.gz")
         let meta = StorageMetadata()
         meta.contentType = "application/gzip"
         meta.customMetadata = ["schema": "1", "sha256": sha256]

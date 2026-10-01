@@ -18,6 +18,8 @@ final class SyncTiming: @unchecked Sendable {
     }
 
     private var stats: [String: Stat] = [:]
+    /// Operations still running (name -> start times), to show what a stalled sync is waiting on.
+    private var inFlight: [String: [UUID: Date]] = [:]
     private var counters: [String: Int] = [:]
     private let started = Date()
     private var detailStart: Date?
@@ -40,8 +42,11 @@ final class SyncTiming: @unchecked Sendable {
         let id = signposter.makeSignpostID()
         let state = signposter.beginInterval(name, id: id)
         let t0 = DispatchTime.now().uptimeNanoseconds
+        let token = UUID()
+        lock.withLock { inFlight["\(name)", default: [:]][token] = Date() }
         defer {
             signposter.endInterval(name, state)
+            lock.withLock { inFlight["\(name)"]?[token] = nil }
             record("\(name)", ms: Double(DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000)
         }
         return try await body()
@@ -66,6 +71,32 @@ final class SyncTiming: @unchecked Sendable {
             cpuAtStart = Self.cpuSeconds()
             lastCpu = cpuAtStart
             lastWall = Date()
+        }
+    }
+
+    /// What the sync is doing right now, for the sync screen during steps 1-3 (and when it seems stuck):
+    /// finished steps with their time, the running step with its time so far, and HealthKit reads and
+    /// uploads still in progress with the age of the oldest. No health data.
+    func startupSummary() -> String {
+        lock.withLock {
+            let now = Date()
+            var parts: [String] = []
+            for (key, label) in [("phase.index", "list"), ("phase.recent", "recent"), ("phase.daily", "daily"), ("phase.history", "history")] {
+                if let running = inFlight[key]?.values.min() {
+                    parts.append("\(label) \(Int(now.timeIntervalSince(running)))s so far")
+                } else if let s = stats[key] {
+                    parts.append("\(label) \(Int(s.totalMs / 1000))s")
+                }
+            }
+            func busy(_ key: String, _ label: String) -> String? {
+                guard let starts = inFlight[key], let oldest = starts.values.min() else { return nil }
+                return "\(starts.count) \(label) running (oldest \(Int(now.timeIntervalSince(oldest)))s)"
+            }
+            let waits = [busy("hk.recent", "recent-workout reads"), busy("hk.earliest", "oldest-date reads"),
+                         busy("hk.dailyChunk", "daily-year reads"), busy("hk.daily", "daily metric reads"),
+                         busy("hk.history", "workout-list pages"), busy("upload", "uploads")].compactMap { $0 }
+            let uploads = stats["upload"]?.count ?? 0
+            return (["startup: " + (parts.isEmpty ? "starting" : parts.joined(separator: " · "))] + waits + ["\(uploads) uploads done"]).joined(separator: "\n")
         }
     }
 

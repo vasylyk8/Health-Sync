@@ -76,7 +76,15 @@ final class AppModel: ObservableObject {
             // and show "No readable Health data found" later if nothing arrives.
             stage = "health-permission"
             connectStage = "Waiting for Apple Health…"
+            // If Apple Health neither shows its permission screen nor answers, say what to do instead of
+            // spinning silently (seen on a real iPhone after many reinstalls; a restart clears it).
+            let hint = Task { @MainActor [weak self, delay = permissionHintDelay] in
+                try await Task.sleep(for: delay)
+                self?.connectStage = Self.permissionStallHint
+            }
+            defer { hint.cancel() }
             try await source.requestAuthorization(scope: scope)
+            hint.cancel()
             stage = "sign-in"
             connectStage = "Signing in…"
             let backend = self.backend
@@ -99,6 +107,10 @@ final class AppModel: ObservableObject {
             errorMessage = friendly(error) + "\n\n(\(stage): \(ns.domain) \(ns.code))\(detail)"
         }
     }
+
+    /// How long to wait for Apple Health before showing `permissionStallHint` (tests shorten it).
+    var permissionHintDelay: Duration = .seconds(12)
+    static let permissionStallHint = "Apple Health isn't responding. If you don't see its permission screen, restart your iPhone, then open KROK and try again."
 
     private struct StepTimeout: LocalizedError {
         var errorDescription: String? { "This is taking too long. Check your connection and try again." }
@@ -281,6 +293,11 @@ final class AppModel: ObservableObject {
         if let e = error as? LocalizedError, let d = e.errorDescription { return d }
         let ns = error as NSError
         if ns.domain == NSURLErrorDomain { return "You appear to be offline. Try again when you're connected." }
+        // HealthKit error 3 at the permission step ("Failed to look up source with bundle identifier") comes
+        // from the phone's Health database losing track of the app, e.g. after reinstalling; a restart fixes it.
+        if ns.domain == "com.apple.healthkit" && ns.code == 3 {
+            return "Apple Health couldn't set up KROK (this can happen after reinstalling). Restart your iPhone, then open KROK and try again."
+        }
         if ns.domain == "com.firebase.functions" {
             switch ns.code {
             case 8: return "Too many attempts. Please wait a while and try again."

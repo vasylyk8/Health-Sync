@@ -38,7 +38,9 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let types = HealthTypes.readPermissions(for: scope)
         do {
             try await store.requestAuthorization(toShare: [], read: types)
-        } catch let error as NSError where error.domain == HKErrorDomain && error.code == HKError.Code.errorInvalidArgument.rawValue {
+        } catch let error as NSError where error.domain == HKErrorDomain && error.code == HKError.Code.errorInvalidArgument.rawValue
+                    && !error.localizedDescription.localizedCaseInsensitiveContains("source") {
+            // (A "failed to look up source" error is about the app itself, not a type: nothing to skip.)
             // iOS rejects the whole request if it no longer accepts one type (e.g. after an iOS update).
             // Find those types without showing anything (a status check fails the same way) and ask for the rest.
             var accepted = Set<HKObjectType>()

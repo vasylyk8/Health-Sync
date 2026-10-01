@@ -2,6 +2,7 @@
 import CoreLocation
 import HealthKit
 import SwiftUI
+import os
 
 /// Test harness (debug builds only, launched by CI with `-healthBench`): fills the simulator's HealthKit
 /// with synthetic workouts, then times reading them back the same way the app does. Never part of a release.
@@ -9,9 +10,12 @@ import SwiftUI
 final class BenchModel: ObservableObject {
     @Published var text = "BENCH starting"
     var speed = ""
+    var engineOutcome: String?
+    private static let logger = Logger(subsystem: "app.healthsync", category: "bench")
     func log(_ s: String) {
         text += "\n" + s
         print("BENCH " + s)
+        Self.logger.notice("BENCH \(s, privacy: .public)")
     }
 }
 
@@ -30,7 +34,28 @@ struct BenchView: View {
 
 @MainActor
 enum HealthBench {
+    /// Logs when the main thread stops answering (a blocked main thread also stops the bench's own checks).
+    private static func startMainThreadWatchdog() {
+        let logger = Logger(subsystem: "app.healthsync", category: "bench")
+        final class Beat: @unchecked Sendable {
+            let lock = NSLock()
+            var lastSeen = Date()
+        }
+        let beat = Beat()
+        Thread.detachNewThread {
+            while true {
+                DispatchQueue.main.async { beat.lock.withLock { beat.lastSeen = Date() } }
+                Thread.sleep(forTimeInterval: 5)
+                let stalled = Date().timeIntervalSince(beat.lock.withLock { beat.lastSeen })
+                if stalled > 8 { logger.notice("BENCH main thread blocked for \(Int(stalled), privacy: .public) s") }
+                // Engine progress straight from the timing summary, independent of the main thread.
+                logger.notice("BENCH tick: \(SyncTiming.shared.startupSummary().replacingOccurrences(of: "\n", with: " | "), privacy: .public)")
+            }
+        }
+    }
+
     static func run(_ m: BenchModel) async {
+        startMainThreadWatchdog()
         let args = ProcessInfo.processInfo.arguments
         let count = args.firstIndex(of: "-benchCount").flatMap { Int(args[$0 + 1]) } ?? 300
         let store = HKHealthStore()
@@ -41,6 +66,8 @@ enum HealthBench {
         let share: Set<HKSampleType> = [HKObjectType.workoutType(), hr, energy, distance, HKSeriesType.workoutRoute()]
         let read = HealthTypes.readPermissions(for: scope).union(share)
         m.log("authorizing")
+        // One request only: a second permission request right after a first one never answers in the
+        // simulator (no sheet, no callback), which hung earlier runs before the sync started.
         do {
             try await store.requestAuthorization(toShare: share, read: read)
         } catch {
@@ -58,6 +85,8 @@ enum HealthBench {
         } else {
             m.log("seed: \(existing) workouts already there")
         }
+
+        await engineRun(scope, m)
 
         await source.benchmark { text in
             Task { @MainActor in m.speed = text }
@@ -105,6 +134,42 @@ enum HealthBench {
             let secs = Date().timeIntervalSince(t0)
             m.log(String(format: "e2e width %d: %d workouts in %.1f s = %.1f workouts/min (%d records)", width, done, secs, Double(done) / secs * 60, points))
         }
+    }
+
+    /// The app's whole first sync (steps 1-4) with the real HealthKit reader and an in-memory server,
+    /// to catch a step that never finishes. Logs what is running every 15 s; gives up after 10 minutes.
+    private static func engineRun(_ scope: SyncScope, _ m: BenchModel) async {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("bench-\(UUID().uuidString)")
+        let engine = SyncEngine(source: HealthKitSource(scope: scope), uploader: FakeBackend(), outbox: Outbox(root: root), scope: scope)
+        let t0 = Date()
+        m.log("engine: first sync starting")
+        let watcher = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(15))
+                if Task.isCancelled { break }
+                let p = await engine.progress
+                m.log("engine \(Int(Date().timeIntervalSince(t0)))s: phase \(p.phase), details \(p.detailsDone)/\(p.detailsTotal) | " + SyncTiming.shared.startupSummary().replacingOccurrences(of: "\n", with: " | "))
+            }
+        }
+        // Polled instead of awaited, so a sync that never finishes is reported instead of hanging the bench.
+        m.engineOutcome = nil
+        let run = Task { @MainActor in
+            let result: String
+            do { result = "finished: \(try await engine.run())" } catch { result = "failed: \(error)" }
+            m.engineOutcome = result
+        }
+        var outcome = "TIMEOUT after 300 s (stuck)"
+        while Date().timeIntervalSince(t0) < 300 {
+            try? await Task.sleep(for: .seconds(1))
+            if let done = m.engineOutcome {
+                outcome = done
+                break
+            }
+        }
+        run.cancel()
+        watcher.cancel()
+        let p = await engine.progress
+        m.log("engine: \(outcome) in \(Int(Date().timeIntervalSince(t0))) s, details \(p.detailsDone)/\(p.detailsTotal) | " + SyncTiming.shared.startupSummary().replacingOccurrences(of: "\n", with: " | "))
     }
 
     /// All-day heart rate outside workouts (a watch records it every few minutes), so the database is
