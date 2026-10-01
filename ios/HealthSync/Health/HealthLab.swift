@@ -155,6 +155,34 @@ enum HealthLab {
             m.log("E0 \(label): all \(everyId.count) workouts in \(f(secs)) s = \(f(Double(everyId.count) / secs * 60)) workouts/min")
         }
 
+        // E6: the same reads by time window + same source instead of the workout association
+        // (cheaper per query in E3), and whether they return exactly the same samples.
+        let windowTypes = typesHeavy.map { HKQuantityType($0.0) }
+        func windowPredicate(_ w: HKWorkout) -> NSPredicate {
+            NSCompoundPredicate(andPredicateWithSubpredicates: [
+                HKQuery.predicateForSamples(withStart: w.startDate, end: w.endDate, options: [.strictStartDate, .strictEndDate]),
+                HKQuery.predicateForObjects(from: [w.sourceRevision.source]),
+            ])
+        }
+        for (name, ws) in [("heavy", heavy), ("light", light)] where !ws.isEmpty {
+            var same = 0, total = 0
+            for w in ws.prefix(10) {
+                for t in windowTypes {
+                    let a = Set(await query(store, t, HKQuery.predicateForObjects(from: w)).map(\.uuid))
+                    let b = Set(await query(store, t, windowPredicate(w)).map(\.uuid))
+                    total += 1
+                    if a == b { same += 1 }
+                }
+            }
+            let pairs = ws.flatMap { w in windowTypes.map { (w, $0) } }
+            let jobsA: [@Sendable () async -> Void] = pairs.map { p in { _ = await query(store, p.1, HKQuery.predicateForObjects(from: p.0)) } }
+            let jobsW: [@Sendable () async -> Void] = pairs.map { p in { _ = await query(store, p.1, windowPredicate(p.0)) } }
+            let tA = await parallel(jobsA, width: 9)
+            let tW = await parallel(jobsW, width: 9)
+            let tA2 = await parallel(jobsA, width: 9)
+            m.log("E6 \(name): association \(f(Double(ws.count) / tA * 60))/\(f(Double(ws.count) / tA2 * 60)) vs window+source \(f(Double(ws.count) / tW * 60)) workouts/min (9 at once); identical \(same)/\(total) type-workout pairs")
+        }
+
         // E1: the app's whole per-workout read at several widths.
         for (name, ws) in [("heavy", heavy), ("light", light)] where !ws.isEmpty {
             for width in [1, 8, 32] {
