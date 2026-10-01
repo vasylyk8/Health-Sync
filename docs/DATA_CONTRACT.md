@@ -58,6 +58,12 @@ Unknown fields are kept (stored in `extra`).
 At most 20,000 points per record; the phone sends ≤ 5,000. Arrays must have equal length; `null` = no value.
 The phone sorts and de-duplicates by `t` before counting, so `expected` below is exactly what is stored.
 
+**Compact `ws` chunk** (`enc: 1`, in a `_wstream` batch; plain chunks above are still accepted): the same record with `n` (number of points, 1–20,000) and every column (`t`, `v`, `lat`, …) an object instead of an array:
+- `{"m": M, "o": 1|2, "d": [..n integers..], "x": [null positions]}`: the value at index *i* is `X[i] / M`, where `X` is rebuilt from `d` by cumulative sums. `o: 1`: `d[0]` is `X[0]`, `d[i]` is `X[i] - X[i-1]`. `o: 2`: `d[0]` is `X[0]`, `d[1]` is `X[1] - X[0]`, and for *i* ≥ 2 `d[i]` is the change of that step, so steady motion and regular timestamps become runs of zeros. `x` (optional, increasing) lists the indexes whose value is null; the running value carries over them (the phone repeats the previous value there). `M` is an integer 1–10¹⁵ and the division is IEEE division of two exact integers, so phone and server get the identical double.
+- `{"r": [..n numbers or null..]}`: plain numbers for a column that is not a whole number of 1/M for any M ≤ 10⁶ (sent as is, so nothing is lost).
+- `t` must be whole milliseconds (`M` = 1, no `x`) inside the usual range.
+Precision (set on the phone, the server accepts any `M`): quantity streams (`v`) are exact (the smallest `M` in 1, 10, … 10⁶ that reproduces every value exactly, else `r`); the route is rounded to about a metre: `lat`/`lon` M = 10⁵ (1.1 m), `alt` M = 10, `spd` M = 10, `crs`, `ha`, `va` M = 1. Every point is kept. The server decodes to plain arrays before anything else, so Parquet files and tools see ordinary doubles. Test vectors shared with the iOS tests: `shared/compact-fixtures.json`. **The server must be deployed before an app that sends `enc: 1`**: an older server would skip the records and the phone would believe them stored.
+
 **`wd` completeness marker** (last record of a workout's raw data): `wid`, `gen`, `expected` = `{stream: pointCount}`. The server sets `rawComplete` once every expected stream of that `gen` has arrived in full.
 Re-reading a workout uses a new `gen`: a newer generation replaces older files of that stream, an older one is ignored, and streams absent from a newer marker are dropped.
 
