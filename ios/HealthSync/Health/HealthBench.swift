@@ -81,6 +81,7 @@ enum HealthBench {
         // The in-app speed test, exactly as on a phone (its rows are logged as they appear).
         let printed = BenchCounter()
         let t0 = Date()
+        if !args.contains("-benchSkipSpeedTest") {
         await HealthKitSource(scope: scope).benchmark { text in
             let rows = text.components(separatedBy: "\n").filter { !$0.hasPrefix("Running") }
             let new = Array(rows.dropFirst(printed.take(rows.count)))
@@ -89,7 +90,16 @@ enum HealthBench {
                 for row in new { m.log(String(format: "speed test %.0fs: ", at) + row) }
             }
         }
-        await engineRun(scope, m)
+        }
+        // Whole sync A/B over a simulated network (per-upload speed, optional limit for all uploads together):
+        // A = one raw-data group uploaded at a time (as shipped), B = groups upload while the next are read.
+        for (pipelined, rate, cap) in [(false, 0.6, nil), (true, 0.6, nil), (false, 0.2, nil), (true, 0.2, nil),
+                                       (false, 0.2, 0.6), (true, 0.2, 0.6), (true, 0.6, nil), (false, 0.6, nil)] as [(Bool, Double, Double?)] {
+            var config = SyncEngine.Config()
+            config.detailGroupsUploading = pipelined ? 3 : 1
+            let net = SimNet(perUploadMBs: rate, capMBs: cap)
+            await engineRun(scope, m, label: "\(pipelined ? "B pipelined" : "A one group at a time") · \(rate) MB/s per upload\(cap.map { ", \($0) MB/s total" } ?? "")", config: config, uploader: net)
+        }
         m.log("BENCH DONE")
     }
 
@@ -130,9 +140,9 @@ enum HealthBench {
 
     /// The app's whole first sync (steps 1-4) with the real HealthKit reader and an in-memory server,
     /// to catch a step that never finishes. Logs what is running every 15 s; gives up after 10 minutes.
-    private static func engineRun(_ scope: SyncScope, _ m: BenchModel) async {
+    private static func engineRun(_ scope: SyncScope, _ m: BenchModel, label: String = "", config: SyncEngine.Config = SyncEngine.Config(), uploader: Uploader = FakeBackend()) async {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("bench-\(UUID().uuidString)")
-        let engine = SyncEngine(source: HealthKitSource(scope: scope), uploader: FakeBackend(), outbox: Outbox(root: root), scope: scope)
+        let engine = SyncEngine(source: HealthKitSource(scope: scope), uploader: uploader, outbox: Outbox(root: root), scope: scope, config: config)
         let t0 = Date()
         m.log("engine: first sync starting")
         let watcher = Task { @MainActor in
@@ -161,7 +171,8 @@ enum HealthBench {
         run.cancel()
         watcher.cancel()
         let p = await engine.progress
-        m.log("engine: \(outcome) in \(Int(Date().timeIntervalSince(t0))) s, details \(p.detailsDone)/\(p.detailsTotal) | " + SyncTiming.shared.startupSummary().replacingOccurrences(of: "\n", with: " | "))
+        let netInfo = (uploader as? SimNet)?.summary(wall: Date().timeIntervalSince(t0)) ?? ""
+        m.log("engine \(label): \(outcome) in \(String(format: "%.1f", Date().timeIntervalSince(t0))) s, details \(p.detailsDone)/\(p.detailsTotal) \(netInfo)")
     }
 
     /// All-day heart rate outside workouts (a watch records it every few minutes), so the database is
@@ -356,6 +367,55 @@ enum HealthBench {
             }
         }
         m.log(String(format: "seed done: %d workouts, %d samples in %.0f s", count - failures, samplesTotal, Date().timeIntervalSince(t0)))
+    }
+}
+
+/// Simulated network for the sync A/B: each upload takes 0.3 s plus its size at `perUploadMBs`, slowed down
+/// when all uploads together would exceed `capMBs`.
+final class SimNet: Uploader, @unchecked Sendable {
+    private let perUpload: Double
+    private let cap: Double?
+    private let lock = NSLock()
+    private var active = 0
+    private var peak = 0
+    private var uploads = 0
+    private var bytes = 0
+    private var busy = 0.0
+
+    init(perUploadMBs: Double, capMBs: Double?) {
+        perUpload = perUploadMBs * 1_000_000
+        cap = capMBs.map { $0 * 1_000_000 }
+    }
+
+    func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {
+        let t0 = Date()
+        lock.withLock {
+            active += 1
+            peak = max(peak, active)
+        }
+        defer {
+            lock.withLock {
+                active -= 1
+                uploads += 1
+                bytes += gz.count
+                busy += Date().timeIntervalSince(t0)
+            }
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        var left = Double(gz.count)
+        while left > 0 {
+            let now = Double(lock.withLock { active })
+            let speed = cap.map { min(perUpload, $0 / max(1, now)) } ?? perUpload
+            let step = min(left, speed * 0.05)
+            try await Task.sleep(for: .milliseconds(Int(step / speed * 1000)))
+            left -= step
+        }
+    }
+
+    func summary(wall: Double) -> String {
+        lock.withLock {
+            String(format: "· %d uploads, %.1f MB, %.1f in flight on average (peak %d)", uploads, Double(bytes) / 1_000_000, busy / max(wall, 0.001), peak)
+        }
     }
 }
 

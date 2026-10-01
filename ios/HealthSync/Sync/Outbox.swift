@@ -137,6 +137,16 @@ final class Outbox: @unchecked Sendable {
         return n
     }
 
+    /// Reserves `count` consecutive sequence numbers for a type with one state write; returns the first.
+    func reserveSeqs(_ typeId: String, count: Int) throws -> Int64 {
+        var first: Int64 = 0
+        try update { s in
+            first = (s.seq[typeId] ?? 0) + 1
+            s.seq[typeId] = first + Int64(max(1, count)) - 1
+        }
+        return first
+    }
+
     func enqueue(typeId: String, batches: [Batch], anchor: Data?, completes: Completion?) throws -> Entry {
         for b in batches { try write(b.gz, to: batchURL(b.id)) }
         // Sortable id: entries are always retried in the order they were created.
