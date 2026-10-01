@@ -103,6 +103,19 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.busy)
     }
 
+    func testSwitchingACategoryOnTellsTheServerFirstAndOffDeletesIt() async {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        await model.setCategory("devices", on: true)
+        XCTAssertTrue(model.isEnabled("devices"))
+        XCTAssertEqual(backend.categoryCalls.last, ["core", "devices"])
+        await model.setCategory("devices", on: false)
+        XCTAssertFalse(model.isEnabled("devices"))
+        XCTAssertEqual(backend.categoryCalls.last, ["core"])
+        await model.setCategory("core", on: false)
+        XCTAssertEqual(backend.categoryCalls.count, 2, "core is always on and never sent as a change")
+    }
+
     func testErrorMessagesAreActionable() {
         XCTAssertTrue(AppModel.message(for: URLError(.notConnectedToInternet)).contains("offline"))
         XCTAssertTrue(AppModel.message(for: NSError(domain: "com.firebase.functions", code: 8)).contains("Too many"))
@@ -165,18 +178,5 @@ final class ConnectPermissionTests: XCTestCase {
         XCTAssertEqual(model.connectStage, AppModel.permissionStallHint)
         XCTAssertTrue(model.busy)
         connecting.cancel()
-    }
-
-    func testSwitchingACategoryOnTellsTheServerFirstAndOffDeletesIt() async {
-        let backend = StubBackend()
-        let model = makeModel(backend)
-        await model.setCategory("devices", on: true)
-        XCTAssertTrue(model.isEnabled("devices"))
-        XCTAssertEqual(backend.categoryCalls.last, ["core", "devices"])
-        await model.setCategory("devices", on: false)
-        XCTAssertFalse(model.isEnabled("devices"))
-        XCTAssertEqual(backend.categoryCalls.last, ["core"])
-        await model.setCategory("core", on: false)
-        XCTAssertEqual(backend.categoryCalls.count, 2, "core is always on and never sent as a change")
     }
 }
