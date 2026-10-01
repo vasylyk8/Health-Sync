@@ -258,3 +258,52 @@ describe('get_daily_context', () => {
     await fails(getDailyContext(q(), { start_date: '2020-01-01', end_date: '2024-06-21' }), 'too_large');
   });
 });
+
+describe('finding one workout', () => {
+  const countDownloads = () => {
+    let n = 0;
+    const orig = env.data.download.bind(env.data);
+    env.data.download = async (p: string, l: string) => { n++; return orig(p, l); };
+    return () => n;
+  };
+
+  it('reads only the months around the raw data, not every month', async () => {
+    // Summaries in many other months.
+    for (let m = 1; m <= 12; m++) {
+      const s = Date.UTC(2023, m - 1, 10);
+      await upload(env, { type: 'HKWorkoutTypeIdentifier' }, [{ k: 'w', id: `aaaaaaaa-0000-4000-8000-${String(m).padStart(12, '0')}`, s, e: s + 60_000, act: 37 }]);
+    }
+    expect(env.meta.workoutData.get(`${env.uid}/${RUN}`)?.firstT).toBeTypeOf('number');
+    const downloads = countDownloads();
+    const r = await getWorkout(q(), { workout_id: RUN });
+    expect((r.workout as Record<string, unknown>).id).toBe(RUN);
+    expect(downloads()).toBeLessThanOrEqual(3);
+  });
+
+  it('still finds workouts uploaded before the first raw time was stored', async () => {
+    const doc = env.meta.workoutData.get(`${env.uid}/${RUN}`)!;
+    delete doc.firstT;
+    const r = await workoutHrZones(q(), { workout_id: RUN, max_hr: 190 });
+    expect(r).toBeTruthy();
+  });
+
+  it('finds a workout that starts just before a month boundary', async () => {
+    const wid = '77777777-7777-4777-8777-777777777777';
+    const s = Date.UTC(2024, 4, 31, 23, 58);
+    const gen = Date.UTC(2024, 5, 21);
+    await upload(env, { type: 'HKWorkoutTypeIdentifier' }, [{ k: 'w', id: wid, s, e: s + 1_800_000, act: 37 }]);
+    await upload(env, { type: '_wstream', mode: 'workoutdata' }, [
+      { k: 'ws', wid, st: 'HeartRate', gen, u: 'count/min', t: [s + 180_000, s + 240_000], v: [120, 130] },
+      { k: 'wd', wid, gen, expected: { HeartRate: 2 } },
+    ]);
+    const r = await getWorkoutSeries(q(), { workout_id: wid, stream: 'HeartRate' });
+    expect(r).toBeTruthy();
+  });
+
+  it('works for a workout without raw data', async () => {
+    const wid = '88888888-8888-4888-8888-888888888888';
+    await upload(env, { type: 'HKWorkoutTypeIdentifier' }, [{ k: 'w', id: wid, s: Date.UTC(2022, 1, 3), e: Date.UTC(2022, 1, 3, 1), act: 37 }]);
+    const r = await getWorkout(q(), { workout_id: wid });
+    expect((r.raw_data as Record<string, unknown>).status).toBe('none');
+  });
+});

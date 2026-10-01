@@ -82,10 +82,12 @@ export interface WorkoutDataDoc {
   /** True once every expected stream of `expectedGen` has arrived in full. */
   rawComplete: boolean;
   updatedAt: number;
+  /** Earliest raw-data timestamp (UTC ms), to find the workout's summary partition without scanning all. */
+  firstT?: number | null;
 }
 
 export function emptyWorkoutData(wid: string): WorkoutDataDoc {
-  return { wid, version: 0, streams: {}, expected: null, expectedGen: null, rawComplete: false, updatedAt: 0 };
+  return { wid, version: 0, streams: {}, expected: null, expectedGen: null, rawComplete: false, updatedAt: 0, firstT: null };
 }
 
 export interface MetaStore {

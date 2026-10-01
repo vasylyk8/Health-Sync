@@ -92,8 +92,9 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     func workoutIndex() async throws -> [WorkoutRef] {
-        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
-        let samples = try await fetch(HKObjectType.workoutType(), predicate: nil, sort: sort)
+        // Unsorted and sorted here: asking HealthKit to sort is much slower (speed test row B1).
+        let samples = try await fetch(HKObjectType.workoutType(), predicate: nil, sort: nil)
+            .sorted { $0.startDate != $1.startDate ? $0.startDate > $1.startDate : $0.uuid.uuidString < $1.uuid.uuidString }
         let workouts = samples.compactMap { $0 as? HKWorkout }
         cacheLock.withLock { workoutCache = Dictionary(workouts.map { ($0.uuid.uuidString, $0) }, uniquingKeysWith: { first, _ in first }) }
         return samples.map { WorkoutRef(id: $0.uuid.uuidString, start: $0.startDate) }
@@ -733,6 +734,12 @@ extension HealthKitSource {
         let hours = all.reduce(0) { $0 + $1.duration } / 3600
         let withStats = all.filter { !$0.allStatistics.isEmpty }.count
         let typesAvg = Double(all.reduce(0) { $0 + specs(for: $1).count }) / Double(all.count)
+        var unsortedCount = 0
+        let tUnsorted = await Self.timed { unsortedCount = (try? await self.benchRaw(self.store, HKObjectType.workoutType(), nil, HKObjectQueryNoLimit, nil))?.count ?? 0 }
+        let desc2 = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
+        let tSorted2 = await Self.timed { _ = try? await self.benchRaw(self.store, HKObjectType.workoutType(), nil, HKObjectQueryNoLimit, desc2) }
+        let tUnsorted2 = await Self.timed { _ = try? await self.benchRaw(self.store, HKObjectType.workoutType(), nil, HKObjectQueryNoLimit, nil) }
+        emit("B0 listing all workouts (start of every sync): sorted by Apple Health \(f(tList))/\(f(tSorted2)) s, unsorted \(f(tUnsorted))/\(f(tUnsorted2)) s (\(unsortedCount))")
         emit("B1 \(all.count) workouts listed in \(f(tList)) s · \(n0(hours)) h total · by age " + buckets.indices.map { "\(buckets[$0].label) \(byBucket[$0].count)" }.joined(separator: ", ") + " · \(withStats) with Apple statistics · \(f(typesAvg)) types to read per workout")
         var bySource: [String: Int] = [:]
         for w in all { bySource[Self.sourceLabel(w.sourceRevision.source), default: 0] += 1 }

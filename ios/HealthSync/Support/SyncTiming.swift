@@ -23,6 +23,7 @@ final class SyncTiming: @unchecked Sendable {
     private var counters: [String: Int] = [:]
     private let started = Date()
     private var detailStart: Date?
+    private var detailEnd: Date?
     /// CPU seconds used by this process (all threads), to tell whether the app itself is the limit.
     private var cpuAtStart = 0.0
     private var lastCpu = 0.0
@@ -74,6 +75,11 @@ final class SyncTiming: @unchecked Sendable {
         }
     }
 
+    /// Marks the end of Step 4, so its total time and upload speed can be reported.
+    func markDetailsEnd() {
+        lock.withLock { if detailStart != nil { detailEnd = Date() } }
+    }
+
     /// What the sync is doing right now, for the sync screen during steps 1-3 (and when it seems stuck):
     /// finished steps with their time, the running step with its time so far, and HealthKit reads and
     /// uploads still in progress with the age of the oldest. No health data.
@@ -114,6 +120,8 @@ final class SyncTiming: @unchecked Sendable {
             let rate = String(format: "%.1f", Double(workouts) / minutes)
             let perWorkout = String(format: "%.0f", Double(counters["hk.samples"] ?? 0) / Double(max(counters["hk.workouts"] ?? 0, 1)))
             func secs(_ key: String) -> String { stats[key].map { String(format: "%.0f", $0.totalMs / 1000) } ?? "-" }
+            let wall = max(Date().timeIntervalSince(start), 0.001)
+            let waits = String(format: "waiting on uploads %.0f%%, on Apple Health %.0f%%", (stats["detail.send"]?.totalMs ?? 0) / 10 / wall, (stats["detail.readWait"]?.totalMs ?? 0) / 10 / wall)
             let startup = "startup: list \(secs("phase.index"))s · recent \(secs("phase.recent"))s · daily \(secs("phase.daily"))s · history \(secs("phase.history"))s"
             // CPU used by the app (1.0 = one core fully busy): near a full core means the app's own work is the limit.
             let cpuNow = Self.cpuSeconds()
@@ -133,7 +141,7 @@ final class SyncTiming: @unchecked Sendable {
             @unknown default: heat = "?"
             }
             let device = "app cpu \(String(format: "%.2f", avgCores)) cores avg, \(String(format: "%.2f", recentCores)) now (of \(ProcessInfo.processInfo.activeProcessorCount)) · heat \(heat) · low power \(ProcessInfo.processInfo.isLowPowerModeEnabled ? "ON" : "off")"
-            return startup + "\n" + device + "\n" + "\(rate) workouts/min · \(counters["read.limit"] ?? 0) queries in flight · \(perWorkout) samples per workout · \(String(format: "%.0f", Double(counters["hk.samples"] ?? 0) / max(Date().timeIntervalSince(start), 1))) samples/s · read \(avg("detail.read"))s per workout · encode \(avg("detail.encode"))s per workout · compress \(avg("batch.compress"))s · save \(avg("outbox.enqueue"))s · upload \(avg("upload"))s per batch (\(String(format: "%.1f", mb)) MB) · \(uploads) uploads"
+            return startup + "\n" + device + "\n" + "\(rate) workouts/min · \(counters["read.limit"] ?? 0) queries in flight · \(perWorkout) samples per workout · \(String(format: "%.0f", Double(counters["hk.samples"] ?? 0) / max(Date().timeIntervalSince(start), 1))) samples/s · read \(avg("detail.read"))s per workout · encode \(avg("detail.encode"))s per workout · compress \(avg("batch.compress"))s · save \(avg("outbox.enqueue"))s · upload \(avg("upload"))s per batch (\(String(format: "%.1f", mb)) MB) · \(uploads) uploads · \(waits)"
         }
     }
 
@@ -146,8 +154,16 @@ final class SyncTiming: @unchecked Sendable {
             let avgSecs = s.totalMs / Double(s.count) / 1000
             let mb = bytes / batches / 1_000_000
             let workouts = counters["detail.workouts"] ?? 0
-            return String(format: "last sync: %d uploads, %.2f MB each, %.2f s each (max %.1f s), %.2f MB/s per upload, %d workouts read, %.1f workouts per upload",
-                          s.count, mb, avgSecs, s.maxMs / 1000, mb / max(avgSecs, 0.001), workouts, Double(workouts) / Double(s.count))
+            var line = String(format: "last sync: %d uploads, %.2f MB each, %.2f s each (max %.1f s), %.2f MB/s per upload, %d workouts read, %.1f workouts per upload",
+                              s.count, mb, avgSecs, s.maxMs / 1000, mb / max(avgSecs, 0.001), workouts, Double(workouts) / Double(s.count))
+            if let start = detailStart {
+                let wall = max((detailEnd ?? Date()).timeIntervalSince(start), 0.001)
+                func share(_ key: String) -> Double { (stats[key]?.totalMs ?? 0) / 1000 / wall * 100 }
+                // Mostly waiting on uploads: the network is the limit. Mostly waiting on reads: Apple Health is.
+                line += String(format: " · step 4 %@ %.0f s, %.0f workouts/min, %.2f MB/s all uploads together, %.0f%% waiting on uploads, %.0f%% waiting on Apple Health",
+                               detailEnd == nil ? "so far" : "took", wall, Double(workouts) / wall * 60, bytes / wall / 1_000_000, share("detail.send"), share("detail.readWait"))
+            }
+            return line
         }
     }
 

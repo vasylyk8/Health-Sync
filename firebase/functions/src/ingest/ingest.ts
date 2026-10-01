@@ -77,12 +77,15 @@ export async function ingestObject(objectPath: string, deps: IngestDeps, opts: {
   // Up to 4 ingestions share an instance (2 GiB), so each gets a bounded DuckDB memory budget.
   await withDuck(async (c, dir) => {
     let i = 0;
+    const uploads: (() => Promise<void>)[] = [];
     for (const [partition, rows] of parsed.partitions) {
       const local = await rowsToParquet(c, dir, rows, `p${i++}`);
       const path = dataPath(uid, type, partition, batchId);
-      await data.write(path, await readFile(local));
-      written[partition] = { path, bytes: (await stat(local)).size };
+      const bytes = await readFile(local);
+      written[partition] = { path, bytes: bytes.length };
+      uploads.push(() => data.write(path, bytes));
     }
+    await pool(uploads, WRITE_CONCURRENCY);
     if (parsed.tombstones.length) {
       const local = await idsToParquet(c, dir, parsed.tombstones, 'tomb');
       const path = dataPath(uid, type, '_tombstones', batchId);
@@ -125,7 +128,26 @@ export async function dropWorkoutData(deps: Pick<IngestDeps, 'meta' | 'data'>, u
   await Promise.all(files.map((f) => deps.data.delete(f.path).catch(() => undefined)));
 }
 
-interface WrittenStream { wid: string; st: string; gen: number; ref: FileRef; points: number; unit: string | null; cols: string[] }
+interface WrittenStream { wid: string; st: string; gen: number; ref: FileRef; points: number; unit: string | null; cols: string[]; firstT?: number }
+
+/** Runs `jobs` with at most `limit` at a time; results in input order. */
+async function pool<T>(jobs: (() => Promise<T>)[], limit: number): Promise<T[]> {
+  const out: T[] = new Array(jobs.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < jobs.length) {
+      const i = next++;
+      out[i] = await jobs[i]!();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, jobs.length) }, worker));
+  return out;
+}
+
+/** Parallel storage writes per batch (Parquet conversion itself stays one at a time on the DuckDB connection). */
+const WRITE_CONCURRENCY = 8;
+/** Workout index updates per batch at once (separate documents, so they do not contend). */
+const PUBLISH_CONCURRENCY = 4;
 
 /** A `workoutdata` batch: raw streams (and completeness markers) of one or more workouts. */
 async function ingestStreams(uid: string, batchId: string, objectPath: string, parsed: ParsedBatch, generation: number, deps: IngestDeps): Promise<IngestOutcome> {
@@ -136,25 +158,38 @@ async function ingestStreams(uid: string, batchId: string, objectPath: string, p
   }
   const written: WrittenStream[] = [];
   await withDuck(async (c, dir) => {
+    // Conversions run one after another on the connection; each file is uploaded while the next is converted.
+    const uploads: Promise<void>[] = [];
+    const slots = new Set<Promise<void>>();
     let i = 0;
     for (const chunks of groups.values()) {
       const first = chunks[0]!;
       const local = await streamToParquet(c, dir, chunks, `s${i++}`);
       const path = streamPath(uid, first.wid, first.st, first.gen, batchId);
-      await deps.data.write(path, await readFile(local.path));
+      const bytes = await readFile(local.path);
+      let firstT = Infinity;
+      for (const ch of chunks) for (const t of ch.t) if (t < firstT) firstT = t;
       written.push({
         wid: first.wid, st: first.st, gen: first.gen, points: local.points,
-        ref: { path, bytes: (await stat(local.path)).size },
+        ref: { path, bytes: bytes.length },
         unit: first.unit,
         cols: [...new Set(chunks.flatMap((ch) => Object.keys(ch.cols)))],
+        ...(Number.isFinite(firstT) ? { firstT } : {}),
       });
+      while (slots.size >= WRITE_CONCURRENCY) await Promise.race(slots);
+      const job: Promise<void> = deps.data.write(path, bytes).finally(() => slots.delete(job));
+      slots.add(job);
+      uploads.push(job);
     }
+    await Promise.all(uploads);
   }, { memoryLimit: '384MB' });
 
   const now = (deps.now ?? Date.now)();
   const wids = [...new Set([...written.map((w) => w.wid), ...parsed.marks.map((m) => m.wid)])];
   let result: IngestOutcome = 'published';
-  for (const wid of wids) {
+  let discarded = false;
+  await pool(wids.map((wid) => async () => {
+    if (discarded) return;
     let outcome: ReturnType<typeof applyWorkoutData> | undefined;
     const mine = written.filter((w) => w.wid === wid);
     const r = await deps.meta.publishWorkoutData({
@@ -170,13 +205,17 @@ async function ingestStreams(uid: string, batchId: string, objectPath: string, p
       },
     });
     if (r === 'discarded') {
-      await Promise.all(written.map((w) => deps.data.delete(w.ref.path).catch(() => undefined)));
-      result = 'discarded';
-      break;
+      discarded = true;
+      return;
     }
     if (r === 'published' && outcome) {
       await Promise.all([...outcome.superseded, ...outcome.ignored].map((f) => deps.data.delete(f.path).catch(() => undefined)));
     }
+  }), PUBLISH_CONCURRENCY);
+  if (discarded) {
+    // The user was deleted (or reset) meanwhile: remove what this batch wrote.
+    await Promise.all(written.map((w) => deps.data.delete(w.ref.path).catch(() => undefined)));
+    result = 'discarded';
   }
   await deps.meta.markBatch(uid, batchId, result === 'discarded' ? 'discarded' : 'published');
   await deps.incoming.delete(objectPath).catch(() => undefined);
@@ -228,7 +267,9 @@ export function applyWorkoutData(
     }
   }
   const rawComplete = !!expected && expectedGen !== null && Object.entries(expected).every(([name, n]) => streams[name]?.gen === expectedGen && streams[name]!.points >= n);
-  return { doc: { ...doc, version: doc.version + 1, streams, expected, expectedGen, rawComplete, updatedAt: now }, superseded, ignored };
+  let firstT = doc.firstT ?? null;
+  for (const w of written) if (w.firstT !== undefined && (firstT === null || w.firstT < firstT)) firstT = w.firstT;
+  return { doc: { ...doc, version: doc.version + 1, streams, expected, expectedGen, rawComplete, updatedAt: now, firstT }, superseded, ignored };
 }
 
 /** A `status` batch: many types checked with nothing new. Updates each type's freshness (and
