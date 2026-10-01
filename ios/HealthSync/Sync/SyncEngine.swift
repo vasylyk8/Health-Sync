@@ -151,6 +151,9 @@ actor SyncEngine {
 
         stepErrors = []
         uploadFailed = false
+        // Runs alongside the workout steps; always finished (or stopped) before the run returns, so two runs
+        // never overlap.
+        var daily: Task<Void, Error>?
         do {
             // Listing every workout is slow on a large history, so it runs alongside the other startup steps.
             let source = self.source
@@ -158,8 +161,10 @@ actor SyncEngine {
             defer { indexTask.cancel() }
             phase = 1
             try await step { try await SyncTiming.shared.measure("phase.recent") { try await self.recentWorkouts() } }
-            phase = 2
-            try await step { try await SyncTiming.shared.measure("phase.daily") { try await self.dailyContext() } }
+            // Years of daily history take minutes on a large history and do not depend on workouts, so they
+            // are read alongside the workout steps instead of before them (the workouts are what people wait for).
+            let dailyTask = Task { try await self.step { try await SyncTiming.shared.measure("phase.daily") { try await self.dailyContext() } } }
+            daily = dailyTask
             phase = 3
             try await step {
                 guard let wt = self.scope.workout else { return }
@@ -178,10 +183,19 @@ actor SyncEngine {
                 self.report(syncing: true)
                 try await self.uploadDetails(index)
             }
+            phase = 2
+            report(syncing: true)
+            try await dailyTask.value
             try await sendStatus()
         } catch is OutOfTime {
+            daily?.cancel()
+            _ = await daily?.result
             try? await sendStatus()
             return .outOfTime
+        } catch {
+            daily?.cancel()
+            _ = await daily?.result
+            throw error
         }
         // A step that failed (e.g. one HealthKit query error) didn't stop the others; report the run
         // as failed so it is retried, but everything else is already synced.

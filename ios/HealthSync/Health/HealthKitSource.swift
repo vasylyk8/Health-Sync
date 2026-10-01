@@ -715,6 +715,56 @@ extension HealthKitSource {
         emit("5 8 at once, 4 connections: \(f(Double(d.workouts) / max(d.seconds, 0.001))) workouts/s, \(f(Double(d.samples) / max(d.seconds, 0.001))) samples/s")
         let e = await benchParallel(sample, stores: readStores, width: 32, sorted: true, cap: 15)
         emit("6 32 at once, 4 connections: \(f(Double(e.workouts) / max(e.seconds, 0.001))) workouts/s, \(f(Double(e.samples) / max(e.seconds, 0.001))) samples/s")
+        // Unsorted (what the app does now): does running several at once help?
+        for (width, stores, label) in [(8, [store], "8 at once, 1 connection"), (8, readStores, "8 at once, 4 connections"), (32, readStores, "32 at once, 4 connections")] {
+            let u = await benchParallel(sample, stores: stores, width: width, sorted: false, cap: 15)
+            emit("6u unsorted \(label): \(f(Double(u.workouts) / max(u.seconds, 0.001))) workouts/s, \(f(Double(u.samples) / max(u.seconds, 0.001))) samples/s")
+        }
+
+        // Which data types cost the most per workout (all types Apple recorded, for 10 workouts, one at a time).
+        var perType: [String: (secs: Double, samples: Int)] = [:]
+        for w in sample.prefix(10) {
+            for q in scope.workoutQuantities where w.allStatistics[q.type] != nil || q.name == "HeartRate" {
+                var n = 0
+                let secs = await Self.timed { n = (try? await self.benchRaw(self.store, q.type, HKQuery.predicateForObjects(from: w), HKObjectQueryNoLimit, nil).count) ?? 0 }
+                let old = perType[q.name] ?? (secs: 0.0, samples: 0)
+                perType[q.name] = (old.secs + secs, old.samples + n)
+            }
+        }
+        let typeQueries = perType.count
+        let top = perType.sorted { $0.value.secs > $1.value.secs }.prefix(6).map { "\($0.key) \(f($0.value.secs * 100)) ms/\($0.value.samples / 10)" }
+        emit("6t types per workout: \(typeQueries), slowest (ms/samples per workout): " + top.joined(separator: ", "))
+
+        // The app's whole per-workout read (all types, series and route), one at a time and 16 at once.
+        for width in [1, 16] {
+            let ws = Array(sample.prefix(32))
+            var done = 0, records = 0
+            let secs = await Self.timed {
+                await withTaskGroup(of: Int.self) { group in
+                    var next = 0
+                    func add() {
+                        guard next < ws.count else { return }
+                        let id = ws[next].uuid.uuidString
+                        next += 1
+                        group.addTask { (try? await self.workoutDetail(id: id, gen: 1))?.count ?? 0 }
+                    }
+                    for _ in 0 ..< width { add() }
+                    while let r = await group.next() {
+                        done += 1
+                        records += r
+                        add()
+                    }
+                }
+            }
+            emit("6w whole workout, \(width) at once: \(f(Double(done) / max(secs, 0.001) * 60)) workouts/min")
+        }
+
+        // Daily history (the slow start before workouts upload).
+        var earliest: Date?
+        let eSecs = await Self.timed { earliest = try? await self.earliestDailyDate() }
+        let years = earliest.map { Date().timeIntervalSince($0) / 31_557_600 } ?? 0
+        let oneYear = await Self.timed { _ = try? await self.dailyContext(from: Date().addingTimeInterval(-365 * 86_400), to: Date()) }
+        emit("6d daily: oldest date \(f(eSecs)) s (\(f(years)) years of history), one year of daily metrics \(f(oneYear)) s")
 
         // 3. Does a time-window query return the same heart rate as the workout association?
         var same = 0, assoc = 0, window = 0, checkedN = 0
