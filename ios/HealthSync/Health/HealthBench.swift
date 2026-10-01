@@ -77,7 +77,18 @@ enum HealthBench {
         let light = max(0, count - heavy)
         await HealthLab.seed(store, heavy: heavy, light: light, m)
         await seedBackground(store, count: 100_000, m)
-        await HealthLab.run(store, scope: scope, m)
+        if args.contains("-benchLab") { await HealthLab.run(store, scope: scope, m) }
+        // The in-app speed test, exactly as on a phone (its rows are logged as they appear).
+        let printed = BenchCounter()
+        let t0 = Date()
+        await HealthKitSource(scope: scope).benchmark { text in
+            let rows = text.components(separatedBy: "\n").filter { !$0.hasPrefix("Running") }
+            let new = Array(rows.dropFirst(printed.take(rows.count)))
+            let at = Date().timeIntervalSince(t0)
+            Task { @MainActor in
+                for row in new { m.log(String(format: "speed test %.0fs: ", at) + row) }
+            }
+        }
         await engineRun(scope, m)
         m.log("BENCH DONE")
     }
@@ -348,3 +359,16 @@ enum HealthBench {
     }
 }
 #endif
+
+/// How many speed-test rows were already logged.
+private final class BenchCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    /// Returns the rows logged so far and records that `total` are now logged.
+    func take(_ total: Int) -> Int {
+        lock.withLock {
+            defer { n = max(n, total) }
+            return n
+        }
+    }
+}
