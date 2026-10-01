@@ -7,6 +7,8 @@ struct CoverageEntry: Decodable, Sendable {
     let kind: String
     let group: String
     let record: String
+    /// Consent category the type belongs to (default "core").
+    let category: String?
 }
 
 /// A quantity type read for every workout (raw series and Apple's statistics).

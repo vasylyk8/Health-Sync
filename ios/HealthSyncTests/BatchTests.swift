@@ -57,7 +57,8 @@ final class BatchTests: XCTestCase {
 
     func testCoverageResolvesOnThisOS() throws {
         let file = try XCTUnwrap(HealthTypes.loadCoverage(bundle: Bundle(for: AppModel.self)))
-        XCTAssertEqual(file.types.map(\.id).sorted(), ["HKWorkoutTypeIdentifier", "_daily", "_wstream"])
+        XCTAssertTrue(Set(file.types.map(\.id)).isSuperset(of: ["HKWorkoutTypeIdentifier", "_daily", "_wstream", "_hourly"]))
+        XCTAssertTrue(file.types.allSatisfy { t in (file.categories ?? []).contains { $0.id == (t.category ?? "core") } }, "every batch type belongs to a known category")
         let scope = HealthTypes.scope(file)
         // Every unit must be buildable and compatible, or the type is dropped.
         XCTAssertGreaterThan(Double(scope.workoutQuantities.count), Double(file.workoutQuantityTypes.count) * 0.9, "too many workout types failed to resolve")
