@@ -116,11 +116,12 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertEqual(outcome, .finished)
         // Daily history runs alongside the workout steps, so it may land anywhere between recent and status;
         // the workout uploads keep their order.
-        XCTAssertEqual(up.modes.filter { $0 != "stats" }, ["recent", "anchored", "workoutdata", "status"], "both workouts' raw data go in one upload")
-        XCTAssertEqual(up.modes.filter { $0 == "stats" }.count, 1)
+        // Daily history and the workout summaries run alongside the raw data, so they may land anywhere
+        // between the recent workouts (first) and the status batch (last).
         XCTAssertEqual(up.modes.first, "recent")
         XCTAssertEqual(up.modes.last, "status")
-        XCTAssertEqual(up.uploaded.map { $0.type }.filter { $0 != HealthTypes.dailyId }, [HealthTypes.workoutId, HealthTypes.workoutId, HealthTypes.streamId, HealthTypes.statusId])
+        XCTAssertEqual(up.modes.sorted(), ["anchored", "recent", "stats", "status", "workoutdata"], "both workouts' raw data go in one upload")
+        XCTAssertEqual(up.uploaded.filter { $0.type == HealthTypes.workoutId }.map { $0.header["mode"] as? String }, ["recent", "anchored"])
         // The first page was full (2 of limit 2), so not caught up; the second was empty and is
         // reported in the status batch instead of its own upload.
         XCTAssertEqual(up.uploaded.first { $0.header["mode"] as? String == "anchored" }?.header["caughtUp"] as? Bool, false)

@@ -57,7 +57,7 @@ actor SyncEngine {
         /// Workouts read from HealthKit at the same time while raw data is collected.
         var detailReadConcurrency = 24
         /// Batches of one raw-data upload sent at the same time (only for `_wstream`, whose parts have no ordering).
-        var uploadConcurrency = 3
+        var uploadConcurrency = 6
         /// Workouts whose raw data goes into one upload (fewer round trips and file writes).
         var detailGroupSize = 48
         /// Smaller groups when there is a deadline (background wake-ups) so the time limit is respected.
@@ -151,9 +151,13 @@ actor SyncEngine {
 
         stepErrors = []
         uploadFailed = false
-        // Runs alongside the workout steps; always finished (or stopped) before the run returns, so two runs
-        // never overlap.
-        var daily: Task<Void, Error>?
+        // Steps that run alongside the workout raw data; always finished (or stopped) before the run returns,
+        // so two runs never overlap.
+        var background: [Task<Void, Error>] = []
+        func stopBackground() async {
+            for task in background { task.cancel() }
+            for task in background { _ = await task.result }
+        }
         do {
             // Listing every workout is slow on a large history, so it runs alongside the other startup steps.
             let source = self.source
@@ -161,21 +165,23 @@ actor SyncEngine {
             defer { indexTask.cancel() }
             phase = 1
             try await step { try await SyncTiming.shared.measure("phase.recent") { try await self.recentWorkouts() } }
-            // Years of daily history take minutes on a large history and do not depend on workouts, so they
-            // are read alongside the workout steps instead of before them (the workouts are what people wait for).
-            let dailyTask = Task { try await self.step { try await SyncTiming.shared.measure("phase.daily") { try await self.dailyContext() } } }
-            daily = dailyTask
-            phase = 3
-            try await step {
-                guard let wt = self.scope.workout else { return }
-                try await SyncTiming.shared.measure("phase.history") {
-                    while true {
-                        try self.checkTime()
-                        if try await self.anchoredPage(wt) { break }
-                        self.report(syncing: true)
+            // Years of daily history and the summaries of every workout take a minute or more on a large
+            // history and do not depend on the raw data (or on each other), so they run alongside it: the raw
+            // data starts as soon as the list of workouts is known.
+            background.append(Task { try await self.step { try await SyncTiming.shared.measure("phase.daily") { try await self.dailyContext() } } })
+            let history = Task {
+                try await self.step {
+                    guard let wt = self.scope.workout else { return }
+                    try await SyncTiming.shared.measure("phase.history") {
+                        while true {
+                            try self.checkTime()
+                            if try await self.anchoredPage(wt) { break }
+                            self.report(syncing: true)
+                        }
                     }
                 }
             }
+            background.append(history)
             phase = 4
             try await step {
                 let index = try await indexTask.value
@@ -183,18 +189,19 @@ actor SyncEngine {
                 self.report(syncing: true)
                 try await self.uploadDetails(index)
             }
+            phase = 3
+            report(syncing: true)
+            try await history.value
             phase = 2
             report(syncing: true)
-            try await dailyTask.value
+            for task in background { try await task.value }
             try await sendStatus()
         } catch is OutOfTime {
-            daily?.cancel()
-            _ = await daily?.result
+            await stopBackground()
             try? await sendStatus()
             return .outOfTime
         } catch {
-            daily?.cancel()
-            _ = await daily?.result
+            await stopBackground()
             throw error
         }
         // A step that failed (e.g. one HealthKit query error) didn't stop the others; report the run
@@ -348,11 +355,11 @@ actor SyncEngine {
         }
 
         try checkTime()
-        // The next group is read while this one is still finishing and while the previous one is uploaded.
+        // The next two groups are read while this one is still finishing and while it is uploaded.
         var reads: [Int: Task<[EncodedWorkout?], Error>] = [:]
         defer { reads.values.forEach { $0.cancel() } }
         for (i, group) in groups.enumerated() {
-            for j in i ... min(i + 1, groups.count - 1) where reads[j] == nil { reads[j] = read(groups[j]) }
+            for j in i ... min(i + 2, groups.count - 1) where reads[j] == nil { reads[j] = read(groups[j]) }
             let results = try await reads[i]!.value
             reads[i] = nil
             try checkTime()

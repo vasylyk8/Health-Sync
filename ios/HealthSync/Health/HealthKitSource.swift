@@ -721,6 +721,41 @@ extension HealthKitSource {
             emit("6u unsorted \(label): \(f(Double(u.workouts) / max(u.seconds, 0.001))) workouts/s, \(f(Double(u.samples) / max(u.seconds, 0.001))) samples/s")
         }
 
+        // More connections than the app's 4? (On one iPhone, 4 gave 1.35x over 1.)
+        let manyStores = (0 ..< 16).map { _ in HKHealthStore() }
+        let u16 = await benchParallel(sample, stores: manyStores, width: 32, sorted: false, cap: 15)
+        emit("6u unsorted 32 at once, 16 connections: \(f(Double(u16.workouts) / max(u16.seconds, 0.001))) workouts/s, \(f(Double(u16.samples) / max(u16.seconds, 0.001))) samples/s")
+
+        // GPS route points: one route at a time vs 8 at once (routes are the largest part of a run).
+        var someRoutes: [HKWorkoutRoute] = []
+        for w in sample where someRoutes.count < 16 {
+            if let found = try? await benchRaw(store, HKSeriesType.workoutRoute(), HKQuery.predicateForObjects(from: w), HKObjectQueryNoLimit, nil) {
+                someRoutes.append(contentsOf: found.compactMap { $0 as? HKWorkoutRoute })
+            }
+        }
+        if !someRoutes.isEmpty {
+            for width in [1, 8] {
+                var points = 0
+                let secs = await Self.timed {
+                    await withTaskGroup(of: Int.self) { group in
+                        var next = 0
+                        func add() {
+                            guard next < someRoutes.count else { return }
+                            let r = someRoutes[next]
+                            next += 1
+                            group.addTask { (try? await self.locations(of: r))?.count ?? 0 }
+                        }
+                        for _ in 0 ..< width { add() }
+                        while let n = await group.next() {
+                            points += n
+                            add()
+                        }
+                    }
+                }
+                emit("6r routes \(width) at once: \(f(Double(points) / max(secs, 0.001))) points/s (\(someRoutes.count) routes)")
+            }
+        }
+
         // Which data types cost the most per workout (all types Apple recorded, for 10 workouts, one at a time).
         var perType: [String: (secs: Double, samples: Int)] = [:]
         for w in sample.prefix(10) {

@@ -60,10 +60,7 @@ enum HealthBench {
         let count = args.firstIndex(of: "-benchCount").flatMap { Int(args[$0 + 1]) } ?? 300
         let store = HKHealthStore()
         let scope = HealthTypes.scope(HealthTypes.loadCoverage())
-        let hr = HKQuantityType(.heartRate)
-        let energy = HKQuantityType(.activeEnergyBurned)
-        let distance = HKQuantityType(.distanceWalkingRunning)
-        let share: Set<HKSampleType> = [HKObjectType.workoutType(), hr, energy, distance, HKSeriesType.workoutRoute()]
+        let share = HealthLab.shareTypes
         let read = HealthTypes.readPermissions(for: scope).union(share)
         m.log("authorizing")
         // One request only: a second permission request right after a first one never answers in the
@@ -76,28 +73,12 @@ enum HealthBench {
             return
         }
         m.log("authorized")
-        let source = HealthKitSource(scope: scope)
-        let existing = (try? await source.workoutIndex().count) ?? 0
-        if existing < count {
-            await seed(store, count: count - existing, m)
-            let background = args.firstIndex(of: "-benchBackground").flatMap { Int(args[$0 + 1]) } ?? 300_000
-            await seedBackground(store, count: background, m)
-        } else {
-            m.log("seed: \(existing) workouts already there")
-        }
-
+        let heavy = args.firstIndex(of: "-benchHeavy").flatMap { Int(args[$0 + 1]) } ?? 60
+        let light = max(0, count - heavy)
+        await HealthLab.seed(store, heavy: heavy, light: light, m)
+        await seedBackground(store, count: 100_000, m)
+        await HealthLab.run(store, scope: scope, m)
         await engineRun(scope, m)
-
-        await source.benchmark { text in
-            Task { @MainActor in m.speed = text }
-        }
-        // Give the last update a moment to land, then replay the summary as plain log lines.
-        try? await Task.sleep(for: .seconds(1))
-        m.log("--- speed test ---")
-        m.log(m.speed)
-
-        await endToEnd(source, m)
-        await bulkScan(store, m)
         m.log("BENCH DONE")
     }
 
