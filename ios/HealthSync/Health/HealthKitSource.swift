@@ -891,7 +891,7 @@ extension HealthKitSource {
                         for (col, values, perUnit) in fields {
                             guard let rec = r[col], let back = CompactColumns.decode(rec, count: Int(n)) else { continue }
                             var worst = 0.0
-                            for (a, b) in zip(values, back) { if let a, let b { worst = max(worst, abs(a - b) * perUnit) } else if (a == nil) != (b == nil) { worst = .infinity } }
+                            for (x, y) in zip(values, back) { if let x, let y { worst = max(worst, abs(x - y) * perUnit) } else if (x == nil) != (y == nil) { worst = .infinity } }
                             routeErr[col] = max(routeErr[col] ?? 0, worst)
                         }
                     } else if let points = original[name], case let v? = r["v"] {
