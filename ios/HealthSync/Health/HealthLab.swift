@@ -140,6 +140,21 @@ enum HealthLab {
         source.setQueryConcurrency(96)
         func f(_ v: Double) -> String { String(format: "%.1f", v) }
 
+        // E0: A/B of read settings on the same data, the way the sync reads (24 workouts in progress):
+        // A = before (routes behind the shared query gate at 16), B = route lane of 8 + query gate 32.
+        let everyId = all.map(\.uuid.uuidString)
+        for (label, shared, queries, routes) in [("A shared gate 16", true, 16, 8), ("B route lane 8, gate 32", false, 32, 8),
+                                                  ("A shared gate 16 (again)", true, 16, 8), ("B route lane 8, gate 32 (again)", false, 32, 8),
+                                                  ("C route lane 16, gate 32", false, 32, 16)] {
+            let src = HealthKitSource(scope: scope)
+            src.routesShareQueryGate = shared
+            src.setQueryConcurrency(queries)
+            src.setRouteConcurrency(routes)
+            let jobs: [@Sendable () async -> Void] = everyId.map { id in { _ = try? await src.workoutDetail(id: id, gen: 1) } }
+            let secs = await parallel(jobs, width: 24)
+            m.log("E0 \(label): all \(everyId.count) workouts in \(f(secs)) s = \(f(Double(everyId.count) / secs * 60)) workouts/min")
+        }
+
         // E1: the app's whole per-workout read at several widths.
         for (name, ws) in [("heavy", heavy), ("light", light)] where !ws.isEmpty {
             for width in [1, 8, 32] {

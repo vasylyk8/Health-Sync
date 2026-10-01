@@ -23,6 +23,11 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     /// GPS route points have their own lane: on a real iPhone they read 8x faster with 8 routes at once
     /// (11k -> 95k points/s), but behind the shared query gate only one or two ran at a time.
     private let routeGate = ReadGate(limit: 8)
+    #if DEBUG
+    /// Bench only: read route points behind the shared query gate, as before the route lane existed.
+    var routesShareQueryGate = false
+    func setRouteConcurrency(_ n: Int) { routeGate.setLimit(n) }
+    #endif
     var queryConcurrency: Int { queryGate.currentLimit }
     func setQueryConcurrency(_ n: Int) { queryGate.setLimit(n) }
     /// Workouts from the last `workoutIndex()`, so each one is not fetched a second time by uuid before its
@@ -329,8 +334,13 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     private func locations(of route: HKWorkoutRoute) async throws -> [CLLocation] {
-        await routeGate.acquire()
-        defer { routeGate.release() }
+        #if DEBUG
+        let gate = routesShareQueryGate ? queryGate : routeGate
+        #else
+        let gate = routeGate
+        #endif
+        await gate.acquire()
+        defer { gate.release() }
         return try await withCheckedThrowingContinuation { cont in
             var acc: [CLLocation] = []
             let query = HKWorkoutRouteQuery(route: route) { _, batch, done, error in
