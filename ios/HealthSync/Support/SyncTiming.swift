@@ -137,6 +137,20 @@ final class SyncTiming: @unchecked Sendable {
         }
     }
 
+    /// Upload numbers of this app session's sync, for the speed test (nil before the first upload).
+    func uploadSummary() -> String? {
+        lock.withLock {
+            guard let s = stats["upload"], s.count > 0 else { return nil }
+            let bytes = Double(counters["upload.bytes"] ?? 0)
+            let batches = Double(max(counters["upload.batches"] ?? s.count, 1))
+            let avgSecs = s.totalMs / Double(s.count) / 1000
+            let mb = bytes / batches / 1_000_000
+            let workouts = counters["detail.workouts"] ?? 0
+            return String(format: "last sync: %d uploads, %.2f MB each, %.2f s each (max %.1f s), %.2f MB/s per upload, %d workouts read, %.1f workouts per upload",
+                          s.count, mb, avgSecs, s.maxMs / 1000, mb / max(avgSecs, 0.001), workouts, Double(workouts) / Double(s.count))
+        }
+    }
+
     /// A value that is replaced, not added to (for example the current number of parallel readers).
     func set(_ name: String, _ value: Int) {
         lock.withLock { counters[name] = value }

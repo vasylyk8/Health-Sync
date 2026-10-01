@@ -55,6 +55,9 @@ struct ConnectView: View {
                     .navigationTitle("Speed test")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            if !model.benchmarkRunning { ShareLink("Share", item: model.benchmarkText) }
+                        }
                         ToolbarItem(placement: .topBarTrailing) {
                             if model.benchmarkRunning { ProgressView() } else { Button("Done") { model.showBenchmark = false } }
                         }
