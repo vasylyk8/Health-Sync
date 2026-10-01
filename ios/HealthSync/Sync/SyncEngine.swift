@@ -57,7 +57,7 @@ actor SyncEngine {
         /// Workouts read from HealthKit at the same time while raw data is collected.
         var detailReadConcurrency = 24
         /// Batches of one raw-data upload sent at the same time (only for `_wstream`, whose parts have no ordering).
-        var uploadConcurrency = 3
+        var uploadConcurrency = 6
         /// Workouts whose raw data goes into one upload (fewer round trips and file writes).
         var detailGroupSize = 48
         /// Smaller groups when there is a deadline (background wake-ups) so the time limit is respected.
@@ -355,11 +355,11 @@ actor SyncEngine {
         }
 
         try checkTime()
-        // The next group is read while this one is still finishing and while the previous one is uploaded.
+        // The next two groups are read while this one is still finishing and while it is uploaded.
         var reads: [Int: Task<[EncodedWorkout?], Error>] = [:]
         defer { reads.values.forEach { $0.cancel() } }
         for (i, group) in groups.enumerated() {
-            for j in i ... min(i + 1, groups.count - 1) where reads[j] == nil { reads[j] = read(groups[j]) }
+            for j in i ... min(i + 2, groups.count - 1) where reads[j] == nil { reads[j] = read(groups[j]) }
             let results = try await reads[i]!.value
             reads[i] = nil
             try checkTime()
