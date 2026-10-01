@@ -4,6 +4,7 @@ struct ConnectView: View {
     @EnvironmentObject var model: AppModel
     @State private var selected: AIProvider?
     @State private var confirmDelete = false
+    @State private var showChoices = false
 
     var body: some View {
         NavigationStack {
@@ -32,6 +33,7 @@ struct ConnectView: View {
                     Menu {
                         Link(destination: Theme.supportURL) { Label("Help & Support", systemImage: "questionmark.circle") }
                         Link(destination: Theme.privacyURL) { Label("Privacy Policy", systemImage: "hand.raised") }
+                        Button { showChoices = true } label: { Label("Your data", systemImage: "slider.horizontal.3") }
                         Button { model.runSpeedTest() } label: { Label("Run speed test (pauses sync)", systemImage: "speedometer") }
                         Button(role: .destructive) { confirmDelete = true } label: { Label("Delete All My Data", systemImage: "trash") }
                     } label: {
@@ -39,6 +41,9 @@ struct ConnectView: View {
                     }
                     .accessibilityIdentifier("moreMenu")
                 }
+            }
+            .sheet(isPresented: $showChoices) {
+                DataChoicesView().environmentObject(model)
             }
             .sheet(item: $selected) { provider in
                 SetupSheet(provider: provider)

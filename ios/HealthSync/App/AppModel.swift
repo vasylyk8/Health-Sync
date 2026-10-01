@@ -33,6 +33,9 @@ final class AppModel: ObservableObject {
     private let scope: SyncScope
     private let telemetry: Telemetry
     private let defaults: UserDefaults
+    private let consent: ConsentStore
+    /// Data categories switched on (core is always on).
+    @Published private(set) var enabledCategories: Set<String> = ["core"]
     private var started = false
     private var observing = false
 
@@ -43,10 +46,13 @@ final class AppModel: ObservableObject {
         self.scope = scope
         self.telemetry = telemetry
         self.defaults = defaults
+        let consent = ConsentStore(defaults: defaults)
+        self.consent = consent
+        enabledCategories = consent.enabled
         var config = SyncEngine.Config()
         config.device = UIDevice.current.model
         config.appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
-        engine = SyncEngine(source: source, uploader: backend, outbox: outbox, scope: scope, config: config, telemetry: telemetry)
+        engine = SyncEngine(source: source, uploader: backend, outbox: outbox, scope: scope, config: config, telemetry: telemetry, categories: { consent.enabled })
         phase = defaults.bool(forKey: "healthConnected") ? .home : .welcome
     }
 
@@ -83,7 +89,7 @@ final class AppModel: ObservableObject {
                 self?.connectStage = Self.permissionStallHint
             }
             defer { hint.cancel() }
-            try await source.requestAuthorization(scope: scope)
+            try await source.requestAuthorization(scope: scope, categories: consent.enabled)
             hint.cancel()
             stage = "sign-in"
             connectStage = "Signing in…"
@@ -220,7 +226,49 @@ final class AppModel: ObservableObject {
     static let backgroundTaskId = "app.healthsync.sync"
 
     func refreshStatus() async {
-        if let s = try? await backend.status() { status = s }
+        guard let s = try? await backend.status() else { return }
+        status = s
+        // After a reinstall the phone has no choice yet: adopt what the server already holds.
+        if !consent.hasChoice, let remote = s.categories {
+            consent.set(Set(remote))
+            enabledCategories = consent.enabled
+        }
+    }
+
+    // MARK: Data categories
+
+    /// Categories offered in Settings (everything in the coverage file except the always-on core group).
+    var optionalCategories: [CoverageCategory] { scope.categories.filter { $0.id != "core" } }
+
+    func isEnabled(_ id: String) -> Bool { enabledCategories.contains(id) }
+
+    /// Switches a data category on (asks Apple Health for access to its types) or off (its data is deleted on the server).
+    func setCategory(_ id: String, on: Bool) async {
+        guard id != "core", isEnabled(id) != on else { return }
+        busy = true
+        defer { busy = false }
+        var next = consent.enabled
+        do {
+            if on {
+                next.insert(id)
+                try await source.requestAuthorization(scope: scope, categories: next)
+            } else {
+                next.remove(id)
+            }
+            // The server first: a failed call leaves the choice unchanged instead of syncing data it would reject.
+            try await backend.setCategories(next.sorted())
+            consent.set(next)
+            enabledCategories = consent.enabled
+            if on { try await engine.categoryEnabled(id) } else { try await engine.categoryDisabled(id) }
+            telemetry.event(on ? "category_on" : "category_off", ["category": id])
+            await refreshStatus()
+            if on {
+                syncTask?.cancel()
+                syncTask = Task { await syncNow() }
+            }
+        } catch {
+            errorMessage = friendly(error)
+        }
     }
 
     // MARK: Providers

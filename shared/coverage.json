@@ -311,56 +311,64 @@
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierRestingHeartRate",
    "unit": "count/min",
-   "agg": "avg"
+   "agg": "avg",
+   "source": "apple"
   },
   {
    "key": "hrv",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
    "unit": "ms",
-   "agg": "avg"
+   "agg": "avg",
+   "source": "apple"
   },
   {
    "key": "respiratoryRate",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierRespiratoryRate",
    "unit": "count/min",
-   "agg": "avg"
+   "agg": "avg",
+   "source": "apple"
   },
   {
    "key": "sleepingWristTempC",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierAppleSleepingWristTemperature",
    "unit": "degC",
-   "agg": "avg"
+   "agg": "avg",
+   "source": "apple"
   },
   {
    "key": "spo2Avg",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierOxygenSaturation",
    "unit": "%",
-   "agg": "avg"
+   "agg": "avg",
+   "source": "apple"
   },
   {
    "key": "spo2Min",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierOxygenSaturation",
    "unit": "%",
-   "agg": "min"
+   "agg": "min",
+   "source": "apple"
   },
   {
    "key": "walkingHrAvg",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierWalkingHeartRateAverage",
    "unit": "count/min",
-   "agg": "avg"
+   "agg": "avg",
+   "source": "apple"
   },
   {
    "key": "sleepBreathingDisturbances",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierAppleSleepingBreathingDisturbances",
    "unit": "count",
-   "agg": "avg"
+   "agg": "avg",
+   "source": "apple"
   },
   {
    "key": "sleep",
@@ -472,7 +480,8 @@
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierVO2Max",
    "unit": "ml/(kg*min)",
-   "agg": "last"
+   "agg": "last",
+   "source": "apple"
   },
   {
    "key": "walkingSpeedMps",
@@ -751,42 +760,48 @@
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
    "unit": "ms",
-   "agg": "min"
+   "agg": "min",
+   "source": "apple"
   },
   {
    "key": "hrvMax",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
    "unit": "ms",
-   "agg": "max"
+   "agg": "max",
+   "source": "apple"
   },
   {
    "key": "hrvRmssd",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierHeartRateVariabilityRMSSD",
    "unit": "ms",
-   "agg": "avg"
+   "agg": "avg",
+   "source": "apple"
   },
   {
    "key": "respiratoryMin",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierRespiratoryRate",
    "unit": "count/min",
-   "agg": "min"
+   "agg": "min",
+   "source": "apple"
   },
   {
    "key": "respiratoryMax",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierRespiratoryRate",
    "unit": "count/min",
-   "agg": "max"
+   "agg": "max",
+   "source": "apple"
   },
   {
    "key": "spo2Max",
    "kind": "quantity",
    "id": "HKQuantityTypeIdentifierOxygenSaturation",
    "unit": "%",
-   "agg": "max"
+   "agg": "max",
+   "source": "apple"
   },
   {
    "key": "alcoholBeverages",

@@ -9,6 +9,13 @@ struct AnchoredPage: Sendable {
     var objectCount: Int
 }
 
+/// Daily-context rows of one consent category, uploaded as their own batch type.
+struct DailyBatch: Sendable {
+    var typeId: String
+    var category: String
+    var records: [Record]
+}
+
 /// A workout on this iPhone (id only), used to find those whose raw data is not uploaded yet.
 struct WorkoutRef: Sendable, Equatable {
     let id: String
@@ -20,6 +27,8 @@ struct WorkoutRef: Sendable, Equatable {
 protocol HealthSource: Sendable {
     var isAvailable: Bool { get }
     func requestAuthorization(scope: SyncScope) async throws
+    /// Asks for the types of the given consent categories ("core" is always included).
+    func requestAuthorization(scope: SyncScope, categories: Set<String>) async throws
     /// Workout summaries started in [from, to), newest first (the fast "recent" pass).
     func workouts(from: Date, to: Date) async throws -> [Record]
     /// Workout summaries and deletions from the anchored query (full history and change capture).
@@ -31,6 +40,12 @@ protocol HealthSource: Sendable {
     func workoutDetail(id: String, gen: Int64) async throws -> [Record]?
     /// One `day` record per local calendar day in [from, to) that has any metric.
     func dailyContext(from: Date, to: Date) async throws -> [Record]
+    /// The same, split by consent category (each category's rows are their own batch type).
+    func dailyContextBatches(from: Date, to: Date, categories: Set<String>) async throws -> [DailyBatch]
+    /// Hourly buckets (heart rate, steps, HRV) in [from, to) as `hs` records.
+    func hourlySeries(from: Date, to: Date) async throws -> [Record]
+    /// The profile entry (date of birth, sex, wheelchair use, move mode) as one `ev` record, or none.
+    func profileRecords() async throws -> [Record]
     /// Earliest sample across the daily-context metrics, to know how far back to start.
     func earliestDailyDate() async throws -> Date?
     /// How many HealthKit queries may run at the same time (raw workout data), adjusted while syncing.
@@ -43,6 +58,12 @@ protocol HealthSource: Sendable {
 }
 
 extension HealthSource {
+    func requestAuthorization(scope: SyncScope, categories: Set<String>) async throws { try await requestAuthorization(scope: scope) }
+    func dailyContextBatches(from: Date, to: Date, categories: Set<String>) async throws -> [DailyBatch] {
+        [DailyBatch(typeId: HealthTypes.dailyId, category: "core", records: try await dailyContext(from: from, to: to))]
+    }
+    func hourlySeries(from: Date, to: Date) async throws -> [Record] { [] }
+    func profileRecords() async throws -> [Record] { [] }
     var queryConcurrency: Int { 1 }
     func setQueryConcurrency(_ n: Int) {}
     func benchmark(onUpdate: @escaping @Sendable (String) -> Void) async { onUpdate("The speed test needs Apple Health on a real iPhone.") }

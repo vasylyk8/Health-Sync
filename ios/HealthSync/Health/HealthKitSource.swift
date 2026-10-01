@@ -40,7 +40,11 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
 
     func requestAuthorization(scope: SyncScope) async throws {
-        let types = HealthTypes.readPermissions(for: scope)
+        try await requestAuthorization(scope: scope, categories: ["core"])
+    }
+
+    func requestAuthorization(scope: SyncScope, categories: Set<String>) async throws {
+        let types = HealthTypes.readPermissions(for: scope, categories: categories.union(["core"]))
         do {
             try await store.requestAuthorization(toShare: [], read: types)
         } catch let error as NSError where error.domain == HKErrorDomain && error.code == HKError.Code.errorInvalidArgument.rawValue
@@ -85,8 +89,15 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             }
             store.execute(q)
         }
-        var records = samples.compactMap { ($0 as? HKWorkout).map(workout) }
-        records.append(contentsOf: deleted.map { ["k": "d", "id": .string($0.uuid.uuidString)] })
+        var records: [Record]
+        if let event = type.event {
+            records = eventRecords(samples, event: event)
+            // Dense series carry no ids, so a deleted reading cannot be matched on the server.
+            if !event.dense { records.append(contentsOf: deleted.map { ["k": "d", "id": .string($0.uuid.uuidString)] }) }
+        } else {
+            records = samples.compactMap { ($0 as? HKWorkout).map(workout) }
+            records.append(contentsOf: deleted.map { ["k": "d", "id": .string($0.uuid.uuidString)] })
+        }
         let anchorData = newAnchor.flatMap { try? NSKeyedArchiver.archivedData(withRootObject: $0, requiringSecureCoding: true) }
         return AnchoredPage(records: records, newAnchor: anchorData, objectCount: samples.count + deleted.count)
     }
@@ -376,9 +387,22 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     func dailyContext(from: Date, to: Date) async throws -> [Record] {
+        try await dailyRecords(scope.dailyMetrics.filter { $0.category == "core" }, from: from, to: to)
+    }
+
+    func dailyContextBatches(from: Date, to: Date, categories: Set<String>) async throws -> [DailyBatch] {
+        var out: [DailyBatch] = []
+        for category in categories.union(["core"]).sorted() {
+            let metrics = scope.dailyMetrics.filter { $0.category == category }
+            guard !metrics.isEmpty else { continue }
+            out.append(DailyBatch(typeId: HealthTypes.dailyBatchType(category), category: category, records: try await dailyRecords(metrics, from: from, to: to)))
+        }
+        return out
+    }
+
+    private func dailyRecords(_ metrics: [DailyMetric], from: Date, to: Date) async throws -> [Record] {
         let cal = Calendar.current
         let start = cal.startOfDay(for: from)
-        let metrics = scope.dailyMetrics
         // The metrics are independent queries (dozens per year of history), so several run at the same time;
         // results are merged in the metrics' order so the output does not depend on which finished first.
         var perMetric = [[DailyCell]?](repeating: nil, count: metrics.count)
@@ -426,7 +450,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         var out: [DailyCell] = []
         switch metric.kind {
         case .quantity(let type, let unit, let agg, let scale):
-            for (day, value) in try await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal) {
+            for (day, value) in try await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal, appleOnly: metric.appleOnly) {
                 out.append(DailyCell(day: day, key: metric.key, value: .double(value)))
             }
         case .category(let type, let mode):
@@ -481,7 +505,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
     }
 
-    private func dailyStatistics(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date, calendar: Calendar) async throws -> [(String, Double)] {
+    private func dailyStatistics(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date, calendar: Calendar, appleOnly: Bool = false) async throws -> [(String, Double)] {
         let options: HKStatisticsOptions
         switch agg {
         case .sum: options = .cumulativeSum
@@ -490,7 +514,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         case .max: options = .discreteMax
         case .last: options = .mostRecent
         }
-        let predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
+        var predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
+        if appleOnly, let sources = await appleSourcesPredicate(type) { predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [predicate, sources]) }
         let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
             let q = HKStatisticsCollectionQuery(quantityType: type, quantitySamplePredicate: predicate, options: options, anchorDate: from, intervalComponents: DateComponents(day: 1))
             q.initialResultsHandler = { _, collection, error in
@@ -524,6 +549,10 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             var minutes: [String: Double] = [:]
             for s in found { minutes[SleepNights.dayKey(s.startDate, calendar: calendar), default: 0] += s.endDate.timeIntervalSince(s.startDate) / 60 }
             for (day, total) in minutes { out.append((day, RecordValue.double((total * 10).rounded() / 10))) }
+        case .count:
+            var counts: [String: Int] = [:]
+            for s in found { counts[SleepNights.dayKey(s.startDate, calendar: calendar), default: 0] += 1 }
+            for (day, n) in counts { out.append((day, RecordValue.int(Int64(n)))) }
         case .values:
             var values: [String: Set<Int>] = [:]
             for s in found { values[SleepNights.dayKey(s.startDate, calendar: calendar), default: []].insert(s.value) }
@@ -584,6 +613,133 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             out.append((day, ["moodValenceAvg": RecordValue.double(mean), "moodEntries": RecordValue.int(Int64(values.count))]))
         }
         return out
+    }
+
+    // MARK: Hourly series, events, profile
+
+    private let sourceLock = NSLock()
+    private var appleSourceCache: [String: NSPredicate?] = [:]
+
+    /// Predicate matching only samples written by Apple's own sources (Apple Watch, iPhone) for `type`, or nil when
+    /// there is no such source (then nothing is filtered). Some apps write their own resting heart rate or HRV.
+    private func appleSourcesPredicate(_ type: HKQuantityType) async -> NSPredicate? {
+        if let cached = sourceLock.withLock({ appleSourceCache[type.identifier] }) { return cached }
+        let sources: Set<HKSource> = await withCheckedContinuation { cont in
+            let q = HKSourceQuery(sampleType: type, samplePredicate: nil) { _, sources, _ in cont.resume(returning: sources ?? []) }
+            store.execute(q)
+        }
+        let apple = sources.filter { $0.bundleIdentifier.hasPrefix("com.apple.health") }
+        let predicate: NSPredicate? = apple.isEmpty ? nil : HKQuery.predicateForObjects(from: apple)
+        sourceLock.withLock { appleSourceCache[type.identifier] = .some(predicate) }
+        return predicate
+    }
+
+    func hourlySeries(from: Date, to: Date) async throws -> [Record] {
+        var records: [Record] = []
+        var firstError: Error?
+        for metric in scope.hourly {
+            do {
+                let buckets = try await SyncTiming.shared.measure("hk.hourly") { try await self.hourlyBuckets(metric, from: from, to: to) }
+                records.append(contentsOf: SeriesRecords.hourlyChunks(name: metric.name, unit: metric.unitLabel, hours: buckets))
+            } catch {
+                // One series failing (no permission, a type this iOS lacks) must not lose the others.
+                firstError = firstError ?? error
+            }
+        }
+        if records.isEmpty, let firstError { throw firstError }
+        return records
+    }
+
+    private func hourlyBuckets(_ metric: HourlyMetric, from: Date, to: Date) async throws -> [HourBucket] {
+        var options: HKStatisticsOptions = []
+        if metric.cumulative {
+            options = .cumulativeSum
+        } else {
+            if metric.cols.contains("avg") { options.insert(.discreteAverage) }
+            if metric.cols.contains("min") { options.insert(.discreteMin) }
+            if metric.cols.contains("max") { options.insert(.discreteMax) }
+        }
+        var predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
+        if metric.appleOnly, let sources = await appleSourcesPredicate(metric.type) { predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [predicate, sources]) }
+        let anchor = Calendar.current.dateInterval(of: .hour, for: from)?.start ?? from
+        await queryGate.acquire()
+        defer { queryGate.release() }
+        let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
+            let q = HKStatisticsCollectionQuery(quantityType: metric.type, quantitySamplePredicate: predicate, options: options, anchorDate: anchor, intervalComponents: DateComponents(hour: 1))
+            q.initialResultsHandler = { _, collection, error in
+                if let collection { cont.resume(returning: collection) } else { cont.resume(throwing: error ?? HealthSourceError.noResults) }
+            }
+            store.execute(q)
+        }
+        var out: [HourBucket] = []
+        let unit = metric.unit
+        collection.enumerateStatistics(from: anchor, to: to) { stats, _ in
+            func value(_ q: HKQuantity?) -> Double? { q.map { $0.doubleValue(for: unit) }.flatMap { $0.isFinite ? $0 : nil } }
+            let bucket: HourBucket
+            if metric.cumulative {
+                bucket = HourBucket(t: stats.startDate.msValue, v: value(stats.sumQuantity()), lo: nil, hi: nil)
+            } else {
+                bucket = HourBucket(t: stats.startDate.msValue, v: value(stats.averageQuantity()), lo: value(stats.minimumQuantity()), hi: value(stats.maximumQuantity()))
+            }
+            if bucket.v != nil || bucket.lo != nil || bucket.hi != nil { out.append(bucket) }
+        }
+        return out
+    }
+
+    /// Turns the samples of one event type into `ev` chunks, one group per writing app.
+    private func eventRecords(_ samples: [HKSample], event: EventType) -> [Record] {
+        let scale: Double = event.unitLabel == "%" ? 100 : 1
+        var groups: [String: (source: HKSource, points: [EventPoint])] = [:]
+        for sample in samples {
+            var point = EventPoint(start: sample.startDate.msValue, end: sample.endDate.msValue)
+            switch event.kind {
+            case .quantity:
+                guard let q = sample as? HKQuantitySample, let unit = event.unit else { continue }
+                let v = q.quantity.doubleValue(for: unit) * scale
+                guard v.isFinite else { continue }
+                point.v = v
+            case .category:
+                guard let c = sample as? HKCategorySample else { continue }
+                point.c = c.value
+            default:
+                continue
+            }
+            if !event.dense {
+                point.id = sample.uuid.uuidString
+                var md = sample.metadata ?? [:]
+                for key in SeriesRecords.ignoredMetadataKeys { md[key] = nil }
+                if case .object(let o)? = metadata(md, maxBytes: 1_000), !o.isEmpty { point.meta = o }
+            }
+            let key = sample.sourceRevision.source.bundleIdentifier + "|" + sample.sourceRevision.source.name
+            var group = groups[key] ?? (sample.sourceRevision.source, [])
+            group.points.append(point)
+            groups[key] = group
+        }
+        var out: [Record] = []
+        for key in groups.keys.sorted() {
+            let group = groups[key]!
+            out.append(contentsOf: SeriesRecords.eventChunks(type: event.name, unit: event.unitLabel, source: group.source.name, bundle: group.source.bundleIdentifier, points: group.points))
+        }
+        return out
+    }
+
+    func profileRecords() async throws -> [Record] {
+        var meta: [String: RecordValue] = [:]
+        if let dob = try? store.dateOfBirthComponents(), let y = dob.year, let m = dob.month, let d = dob.day {
+            meta["dob"] = .string(String(format: "%04d-%02d-%02d", y, m, d))
+        }
+        if let sex = try? store.biologicalSex().biologicalSex {
+            switch sex {
+            case .female: meta["sex"] = "female"
+            case .male: meta["sex"] = "male"
+            case .other: meta["sex"] = "other"
+            default: break
+            }
+        }
+        if let wheelchair = try? store.wheelchairUse().wheelchairUse, wheelchair != .notSet { meta["wheelchair"] = .bool(wheelchair == .yes) }
+        if let mode = try? store.activityMoveMode().activityMoveMode { meta["moveMode"] = mode == .appleMoveTime ? "appleMoveTime" : "activeEnergy" }
+        guard !meta.isEmpty else { return [] }
+        return [["k": "ev", "ty": "Profile", "s": .array([Date().ms]), "ids": .array(["profile"]), "meta": .array([.object(meta)])]]
     }
 
     // MARK: Background delivery

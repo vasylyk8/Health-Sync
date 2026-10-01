@@ -13,6 +13,8 @@ final class StubBackend: Backend, @unchecked Sendable {
     func createLink(provider: String) async throws -> String { "https://example.test/mcp/\(provider)" }
     func disconnect(provider: String) async throws {}
     func deleteAllData() async throws {}
+    var categoryCalls: [[String]] = []
+    func setCategories(_ ids: [String]) async throws { categoryCalls.append(ids) }
     func status() async throws -> ServerStatus { .empty }
     func batchExists(batchId: String) async throws -> Bool { true }
     func signOut() async {}
