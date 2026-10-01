@@ -114,11 +114,16 @@ final class SyncEngineTests: XCTestCase {
         let (engine, box) = makeEngine(source, up, config: config)
         let outcome = try await engine.run()
         XCTAssertEqual(outcome, .finished)
-        XCTAssertEqual(up.modes, ["recent", "stats", "anchored", "workoutdata", "status"], "both workouts' raw data go in one upload")
-        XCTAssertEqual(up.uploaded.map { $0.type }, [HealthTypes.workoutId, HealthTypes.dailyId, HealthTypes.workoutId, HealthTypes.streamId, HealthTypes.statusId])
+        // Daily history runs alongside the workout steps, so it may land anywhere between recent and status;
+        // the workout uploads keep their order.
+        XCTAssertEqual(up.modes.filter { $0 != "stats" }, ["recent", "anchored", "workoutdata", "status"], "both workouts' raw data go in one upload")
+        XCTAssertEqual(up.modes.filter { $0 == "stats" }.count, 1)
+        XCTAssertEqual(up.modes.first, "recent")
+        XCTAssertEqual(up.modes.last, "status")
+        XCTAssertEqual(up.uploaded.map { $0.type }.filter { $0 != HealthTypes.dailyId }, [HealthTypes.workoutId, HealthTypes.workoutId, HealthTypes.streamId, HealthTypes.statusId])
         // The first page was full (2 of limit 2), so not caught up; the second was empty and is
         // reported in the status batch instead of its own upload.
-        XCTAssertEqual(up.uploaded[2].header["caughtUp"] as? Bool, false)
+        XCTAssertEqual(up.uploaded.first { $0.header["mode"] as? String == "anchored" }?.header["caughtUp"] as? Bool, false)
         XCTAssertEqual(up.uploaded[0].header["schema"] as? Int, 2)
         XCTAssertEqual(box.state.anchors[workoutType.id], Data("A1".utf8))
         XCTAssertTrue(box.state.caughtUp.contains(workoutType.id))
