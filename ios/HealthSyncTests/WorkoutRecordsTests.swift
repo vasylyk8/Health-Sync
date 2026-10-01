@@ -61,9 +61,15 @@ final class WorkoutRecordsTests: XCTestCase {
     }
 
     func testRouteIsRoundedToAboutAMetreAndKeepsEveryPoint() {
-        let pts = (0..<2000).map { i in
-            RoutePoint(t: Int64(i) * 1000, lat: 50.123456789 + Double(i) * 0.0000271, lon: 30.987654321 + Double(i) * 0.0000193, alt: 180.234 + Double(i % 17) * 0.37,
-                       spd: 3.14159 + Double(i % 5) * 0.0123, crs: 87.654 + Double(i % 9), ha: 3.79, va: 2.1)
+        var pts: [RoutePoint] = []
+        for i in 0..<2000 {
+            let step = Double(i)
+            let lat: Double = 50.123456789 + step * 0.0000271
+            let lon: Double = 30.987654321 + step * 0.0000193
+            let alt: Double = 180.234 + Double(i % 17) * 0.37
+            let spd: Double = 3.14159 + Double(i % 5) * 0.0123
+            let crs: Double = 87.654 + Double(i % 9)
+            pts.append(RoutePoint(t: Int64(i) * 1000, lat: lat, lon: lon, alt: alt, spd: spd, crs: crs, ha: 3.79, va: 2.1))
         }
         let built = WorkoutRecords.route(wid: "W", gen: 1, points: pts)
         XCTAssertEqual(built.count, 2000, "no point is dropped")
@@ -74,7 +80,14 @@ final class WorkoutRecordsTests: XCTestCase {
             XCTAssertEqual(decoded!, original.lat, accuracy: 0.5e-5 + 1e-12, "within half of 0.00001 degrees (about 0.6 m)")
         }
         // Much smaller than the older form.
-        func size(_ records: [Record]) -> Int { records.reduce(0) { $0 + ((try? BatchWriter.encodeLines([$1]))?.first?.count ?? 0) } }
+        func size(_ records: [Record]) -> Int {
+            var total = 0
+            for record in records {
+                let lines: [Data] = (try? BatchWriter.encodeLines([record])) ?? []
+                total += lines.first?.count ?? 0
+            }
+            return total
+        }
         let plain = WorkoutRecords.route(wid: "W", gen: 1, points: pts, format: .plain).records
         XCTAssertLessThan(size(built.records), size(plain) / 3)
     }
