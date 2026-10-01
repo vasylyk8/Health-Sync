@@ -19,7 +19,10 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     private let scope: SyncScope
     private let quantitiesById: [String: WorkoutQuantity]
     /// Apple documents no limit on parallel queries, so the number in flight is tuned while syncing (`ReadTuner`).
-    private let queryGate = ReadGate(limit: 24)
+    private let queryGate = ReadGate(limit: 32)
+    /// GPS route points have their own lane: on a real iPhone they read 8x faster with 8 routes at once
+    /// (11k -> 95k points/s), but behind the shared query gate only one or two ran at a time.
+    private let routeGate = ReadGate(limit: 8)
     var queryConcurrency: Int { queryGate.currentLimit }
     func setQueryConcurrency(_ n: Int) { queryGate.setLimit(n) }
     /// Workouts from the last `workoutIndex()`, so each one is not fetched a second time by uuid before its
@@ -326,8 +329,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     private func locations(of route: HKWorkoutRoute) async throws -> [CLLocation] {
-        await queryGate.acquire()
-        defer { queryGate.release() }
+        await routeGate.acquire()
+        defer { routeGate.release() }
         return try await withCheckedThrowingContinuation { cont in
             var acc: [CLLocation] = []
             let query = HKWorkoutRouteQuery(route: route) { _, batch, done, error in
