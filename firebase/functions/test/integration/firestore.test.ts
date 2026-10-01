@@ -3,7 +3,7 @@ import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { FirestoreMeta } from '../../src/store/firestore.js';
 import { emptyManifest } from '../../src/store/types.js';
-import { beginDeletion, createConnectorLink, disconnect, purgeUserData, registerDevice, sweepDeletions } from '../../src/account.js';
+import { beginDeletion, createConnectorLink, disconnect, purgeUserData, registerDevice, setCategories, sweepDeletions } from '../../src/account.js';
 import { hashToken } from '../../src/auth/tokens.js';
 import { DirBlobs } from '../helpers/memory.js';
 
@@ -96,6 +96,27 @@ describe('accounts', () => {
   });
 });
 
+describe('setCategories', () => {
+  it('stores the choice (core is always on) and deletes the data of a category that was switched off', async () => {
+    await registerDevice(db, 'u8', 'UTC');
+    const data = new DirBlobs();
+    const deps = { meta, data };
+    expect(await setCategories(db, deps, 'u8', ['devices', 'nutrition'])).toEqual({ categories: ['core', 'devices', 'nutrition'], removed: [] });
+    await meta.publish({ uid: 'u8', type: '_events_devices', batchId: 'g1', generation: 1, mutate: (m) => add(m, 'data/u8/_events_devices/2024-06/g1.parquet') });
+    await meta.publish({ uid: 'u8', type: '_events_nutrition', batchId: 'n1', generation: 1, mutate: (m) => add(m, 'data/u8/_events_nutrition/2024-06/n1.parquet') });
+    await data.write('data/u8/_events_devices/2024-06/g1.parquet', Buffer.from('x'));
+    await data.write('data/u8/_events_nutrition/2024-06/n1.parquet', Buffer.from('x'));
+    const out = await setCategories(db, deps, 'u8', ['nutrition']);
+    expect(out).toEqual({ categories: ['core', 'nutrition'], removed: ['devices'] });
+    expect([...data.paths]).toEqual(['data/u8/_events_nutrition/2024-06/n1.parquet']);
+    expect(await meta.getManifest('u8', '_events_devices')).toBeNull();
+    expect(await meta.getManifest('u8', '_events_nutrition')).not.toBeNull();
+    expect((await db.doc('users/u8').get()).get('categories')).toEqual(['core', 'nutrition']);
+    await expect(setCategories(db, deps, 'u8', ['bogus'])).rejects.toThrow(/categories must be/);
+    await expect(setCategories(db, deps, 'nobody', [])).rejects.toThrow(/Register the device/);
+  });
+});
+
 describe('sweepDeletions', () => {
   it('finishes accounts stuck in deleting and leaves others alone', async () => {
     await registerDevice(db, 'stuck1', 'UTC');
@@ -140,6 +161,6 @@ describe('getStatus', () => {
     await db.doc('users/u7').update({ 'connections.claude': { setUpAt: 1, lastUsedAt: 1 }, lastVisibleAt: 5 });
     await db.doc('users/u7/types/HR').set({ coverage: { caughtUp: true, earliest: 100 } });
     await db.doc('users/u7/types/Steps').set({ coverage: { caughtUp: false, earliest: 50 } });
-    expect(await getStatus(db, 'u7')).toEqual({ registered: true, deleting: false, setUp: { claude: true, chatgpt: false }, lastVisibleAt: 5, historySyncedBackTo: 100, typesWithData: 2 });
+    expect(await getStatus(db, 'u7')).toEqual({ registered: true, deleting: false, setUp: { claude: true, chatgpt: false }, lastVisibleAt: 5, historySyncedBackTo: 100, typesWithData: 2, categories: ['core'] });
   });
 });
