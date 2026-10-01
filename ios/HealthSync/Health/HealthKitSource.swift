@@ -240,7 +240,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         // from other apps carry no Apple statistics but often have heart rate samples.
         var wanted = Set(w.allStatistics.keys.map(\.identifier))
         wanted.insert(HealthTypes.quantityPrefix + "HeartRate")
-        let specs = scope.workoutQuantities.filter { wanted.contains($0.id) }
+        let specs = scope.workoutQuantities.filter { wanted.contains($0.id) && $0.stream }
 
         // Every quantity type and the route are read at the same time (each is an independent query);
         // results are put back in a fixed order so the output does not depend on which finished first.
@@ -687,7 +687,7 @@ extension HealthKitSource {
     private func specs(for w: HKWorkout) -> [WorkoutQuantity] {
         var wanted = Set(w.allStatistics.keys.map(\.identifier))
         wanted.insert(HealthTypes.quantityPrefix + "HeartRate")
-        return scope.workoutQuantities.filter { wanted.contains($0.id) }
+        return scope.workoutQuantities.filter { wanted.contains($0.id) && $0.stream }
     }
 
     private func windowPredicate(_ w: HKWorkout, strict: Bool) -> NSPredicate {
@@ -899,7 +899,16 @@ extension HealthKitSource {
                         if case .object(let o) = v, o["r"] != nil { rawColumns[name]!.raw += 1 }
                         let slice = Array(points[offset ..< offset + Int(n)])
                         exactChecked += 1
-                        if let back = CompactColumns.decode(v, count: Int(n)), back == slice.map({ Optional($0.v) }) {} else { exactDiffering += 1 }
+                        // Quantity values are rounded to 3 decimals before encoding: the check allows exactly that.
+                        let expectedValues: [Double?] = slice.map { Optional($0.v) }
+                        let matches: Bool = {
+                            guard let back = CompactColumns.decode(v, count: Int(n)), back.count == expectedValues.count else { return false }
+                            return zip(back, expectedValues).allSatisfy { a, b in
+                                if let a, let b { return abs(a - b) <= 0.0005 + 1e-9 }
+                                return a == nil && b == nil
+                            }
+                        }()
+                        if !matches { exactDiffering += 1 }
                     }
                 }
             }
@@ -910,7 +919,7 @@ extension HealthKitSource {
         }
         let raws = rawColumns.sorted { $0.value.all > $1.value.all }.prefix(6).map { "\($0.key) \(n0(Double($0.value.raw) / Double(max($0.value.all, 1)) * 100))%" }
         emit("K projected upload for all \(all.count) workouts: today \(n0(projected[0])) MB → new \(n0(projected[1])) MB (finer precision \(n0(projected[2])) MB) · without routes: today \(n0(projected[4])) MB → new \(n0(projected[3])) MB")
-        emit("K2 encoding check on your data: \(exactChecked) quantity chunks, \(exactDiffering) differ from what was read (must be 0) · route worst error: " + ["lat", "lon", "alt", "spd", "crs"].map { "\($0) \(String(format: "%.2f", routeErr[$0] ?? 0))\($0 == "lat" || $0 == "lon" || $0 == "alt" ? " m" : "")" }.joined(separator: ", ") + " · chunks stored as plain numbers (not a short decimal): " + raws.joined(separator: ", "))
+        emit("K2 encoding check on your data: \(exactChecked) quantity chunks, \(exactDiffering) differ from what was read by more than the 0.0005 rounding (must be 0) · route worst error: " + ["lat", "lon", "alt", "spd", "crs"].map { "\($0) \(String(format: "%.2f", routeErr[$0] ?? 0))\($0 == "lat" || $0 == "lon" || $0 == "alt" ? " m" : "")" }.joined(separator: ", ") + " · chunks stored as plain numbers (not a short decimal): " + raws.joined(separator: ", "))
 
         // D. Time window + same app vs the workout association: exactly the same samples? Faster?
         for (b, ws) in picks.enumerated() where !ws.isEmpty {

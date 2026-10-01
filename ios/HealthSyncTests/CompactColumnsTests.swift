@@ -23,6 +23,7 @@ final class CompactColumnsTests: XCTestCase {
             let input = c["input"] as! [String: Any]
             let plans = (c["plans"] as! [String: Any]).mapValues { plan -> CompactColumns.Plan in
                 if let o = plan as? [String: Any], let m = o["m"] as? NSNumber { return .step(m.int64Value) }
+                if let o = plan as? [String: Any], let r = o["rounded"] as? NSNumber { return .rounded(r.intValue) }
                 return .exact
             }
             return Fixture(
@@ -77,6 +78,22 @@ final class CompactColumnsTests: XCTestCase {
                 if a == nil { XCTAssertNil(b) } else if case .step(let m) = plan { XCTAssertEqual(b!, a!, accuracy: 0.5 / Double(m) + 1e-12) } else { XCTAssertEqual(b, a) }
             }
         }
+    }
+
+    func testRoundedPlanRemovesFloatNoiseAndKeepsShortDecimals() {
+        let noisy: [Double?] = [61.99999999999999, 62, 64.00000000000001, 63, 65.4999999, nil, 0.30000000000000004]
+        let column = CompactColumns.encode(noisy, plan: .rounded(3))
+        guard case .object(let o) = column, case .int(let m)? = o["m"] else { return XCTFail("rounded values must use integer columns, not plain numbers") }
+        XCTAssertEqual(m, 10, "the smallest divisor that keeps every rounded value exactly")
+        XCTAssertEqual(CompactColumns.decode(column, count: noisy.count)!, [62, 62, 64, 63, 65.5, nil, 0.3])
+    }
+
+    func testRoundedPlanStaysWithinHalfAThousandthOfTheInput() {
+        var seed: UInt64 = 3
+        func rnd() -> Double { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return Double(seed >> 11) / Double(1 << 53) }
+        let values: [Double?] = (0..<2000).map { _ in Optional(rnd() * 300) }
+        guard let back = CompactColumns.decode(CompactColumns.encode(values, plan: .rounded(3)), count: values.count) else { return XCTFail("could not decode") }
+        for (a, b) in zip(values, back) { XCTAssertEqual(b!, a!, accuracy: 0.0005 + 1e-9) }
     }
 
     func testAllNullAndSinglePointColumns() {

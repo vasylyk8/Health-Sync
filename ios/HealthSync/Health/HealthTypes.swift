@@ -14,6 +14,8 @@ struct WorkoutQuantitySpec: Decodable, Sendable {
     let id: String
     let unit: String
     let agg: String
+    /// `false`: Apple's workout statistics are kept but the per-sample stream is not read or uploaded.
+    let stream: Bool?
 }
 
 /// One daily-context metric (see docs/DATA_CONTRACT.md §2).
@@ -57,6 +59,8 @@ struct WorkoutQuantity: @unchecked Sendable {
     let unit: HKUnit
     let unitLabel: String
     let cumulative: Bool
+    /// Whether the per-sample stream is read and uploaded (statistics are always kept).
+    let stream: Bool
 }
 
 enum DailyAgg: String, Sendable { case sum, avg, min, max, last }
@@ -118,7 +122,7 @@ enum HealthTypes {
         let quantities: [WorkoutQuantity] = file.workoutQuantityTypes.compactMap { s in
             guard let qt = HKObjectType.quantityType(forIdentifier: HKQuantityTypeIdentifier(rawValue: s.id)),
                   let unit = unit(named: s.unit), qt.is(compatibleWith: unit) else { return nil }
-            return WorkoutQuantity(id: s.id, name: shortName(s.id), type: qt, unit: unit, unitLabel: s.unit, cumulative: s.agg == "cumulative")
+            return WorkoutQuantity(id: s.id, name: shortName(s.id), type: qt, unit: unit, unitLabel: s.unit, cumulative: s.agg == "cumulative", stream: s.stream ?? true)
         }
         let metrics: [DailyMetric] = file.dailyMetrics.compactMap(dailyMetric)
         return SyncScope(types: types, workoutQuantities: quantities, dailyMetrics: metrics)

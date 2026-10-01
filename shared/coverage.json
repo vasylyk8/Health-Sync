@@ -1,6 +1,6 @@
 {
  "version": 2,
- "note": "KROK syncs workouts (with all raw data) and daily context only. Shared by the iOS app and the server.",
+ "note": "KROK syncs workouts (with all raw data) and daily context. Shared by the iOS app and the server. A workout quantity with \"stream\": false keeps Apple's workout summary statistics but no per-sample stream.",
  "excluded": {
   "everything else": "v2: only workouts and daily context are synced (owner decision)",
   "SexualActivity/Contraceptive/Pregnancy*/Lactation/Progesterone*/Bleeding*Pregnancy": "data minimisation: only menstrual-cycle context is read",
@@ -81,12 +81,14 @@
   {
    "id": "HKQuantityTypeIdentifierBasalEnergyBurned",
    "unit": "kcal",
-   "agg": "cumulative"
+   "agg": "cumulative",
+   "stream": false
   },
   {
    "id": "HKQuantityTypeIdentifierActiveEnergyBurned",
    "unit": "kcal",
-   "agg": "cumulative"
+   "agg": "cumulative",
+   "stream": false
   },
   {
    "id": "HKQuantityTypeIdentifierFlightsClimbed",
@@ -106,12 +108,14 @@
   {
    "id": "HKQuantityTypeIdentifierAppleExerciseTime",
    "unit": "min",
-   "agg": "cumulative"
+   "agg": "cumulative",
+   "stream": false
   },
   {
    "id": "HKQuantityTypeIdentifierPhysicalEffort",
    "unit": "kcal/(hr*kg)",
-   "agg": "discrete"
+   "agg": "discrete",
+   "stream": false
   },
   {
    "id": "HKQuantityTypeIdentifierCyclingPower",
@@ -216,12 +220,14 @@
   {
    "id": "HKQuantityTypeIdentifierEnvironmentalAudioExposure",
    "unit": "dBASPL",
-   "agg": "discrete"
+   "agg": "discrete",
+   "stream": false
   },
   {
    "id": "HKQuantityTypeIdentifierHeadphoneAudioExposure",
    "unit": "dBASPL",
-   "agg": "discrete"
+   "agg": "discrete",
+   "stream": false
   }
  ],
  "dailyMetrics": [
