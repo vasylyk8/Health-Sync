@@ -166,4 +166,17 @@ final class ConnectPermissionTests: XCTestCase {
         XCTAssertTrue(model.busy)
         connecting.cancel()
     }
+
+    func testSwitchingACategoryOnTellsTheServerFirstAndOffDeletesIt() async {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        await model.setCategory("devices", on: true)
+        XCTAssertTrue(model.isEnabled("devices"))
+        XCTAssertEqual(backend.categoryCalls.last, ["core", "devices"])
+        await model.setCategory("devices", on: false)
+        XCTAssertFalse(model.isEnabled("devices"))
+        XCTAssertEqual(backend.categoryCalls.last, ["core"])
+        await model.setCategory("core", on: false)
+        XCTAssertEqual(backend.categoryCalls.count, 2, "core is always on and never sent as a change")
+    }
 }
