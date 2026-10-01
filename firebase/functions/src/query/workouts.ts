@@ -2,7 +2,7 @@ import type { DuckDBConnection } from '@duckdb/node-api';
 import { join } from 'node:path';
 import { LIMITS } from '../config.js';
 import { DAILY_TYPE, WORKOUT_TYPE } from '../ingest/batch.js';
-import type { StreamInfo, WorkoutDataDoc } from '../store/types.js';
+import type { StreamInfo, TypeManifest, WorkoutDataDoc } from '../store/types.js';
 import {
   bestEfforts, distanceFromIncrements, elevationProfile, EVENT_NAMES, heartRateDrift, heartRateZones, movingMs, pausesFromEvents,
   round, routeDistance, splits, thin, trimRouteIndexes, weightReadings, zoneBounds, type DistSeries, type Pause, type RoutePoints, type WorkoutEvent,
@@ -60,12 +60,42 @@ const toWorkoutRow = (r: Record<string, unknown>): WorkoutRow => ({
 const SELECT_W = (tz: string) => `SELECT id, s, e, src, bid, dev, extra,
   strftime(${localTs('s', tz)}, '%Y-%m-%d %H:%M') AS start_local, strftime(${localTs('e', tz)}, '%Y-%m-%d %H:%M') AS end_local FROM w`;
 
+/** Earliest raw-data time of a workout: stored on its index, or read from its smallest stream file (older uploads). */
+async function firstRawTime(c: DuckDBConnection, dir: string, deps: QueryDeps, doc: WorkoutDataDoc | null): Promise<number | null> {
+  if (!doc) return null;
+  if (typeof doc.firstT === 'number') return doc.firstT;
+  const files = Object.values(doc.streams).flatMap((s) => s.files).sort((a, b) => a.bytes - b.bytes);
+  const f = files[0];
+  if (!f) return null;
+  const p = join(dir, 'first_t.parquet');
+  await deps.data.download(f.path, p);
+  const r = await rows(c, `SELECT min(t) AS t FROM read_parquet(${lit(p)})`);
+  return r[0]?.t == null ? null : Number(r[0].t);
+}
+
+/**
+ * Loads the workout's summary row (table `w`) and its raw-data index. Summaries are stored by month: with
+ * the raw data's first timestamp only the 1-2 months around it are read; otherwise (no raw data, or not
+ * found there) every month, as before.
+ */
 async function findWorkout(c: DuckDBConnection, dir: string, deps: QueryDeps, id: string, tz: string) {
   if (!ID_RE.test(id)) throw new ToolError('bad_request', 'workout_id must be an id returned by get_workouts.');
-  const man = await loadType(c, dir, deps, WORKOUT_TYPE, 'all', 'w', { what: 'raw', budget: { bytes: 0 } });
-  const found = await rows(c, `${SELECT_W(tz)} WHERE id = ${lit(id)} AND k = 'w' LIMIT 1`);
+  const doc = await deps.meta.getWorkoutData(deps.uid, id);
+  const first = await firstRawTime(c, dir, deps, doc).catch(() => null);
+  const query = `${SELECT_W(tz)} WHERE id = ${lit(id)} AND k = 'w' LIMIT 1`;
+  let man: TypeManifest | null = null;
+  let found: Record<string, unknown>[] = [];
+  if (first !== null) {
+    // A workout starts before its first sample; two days covers a start just before a month boundary.
+    man = await loadType(c, dir, deps, WORKOUT_TYPE, [first - 2 * 86_400_000, first + 86_400_000], 'w', { what: 'raw', budget: { bytes: 0 } });
+    found = await rows(c, query);
+  }
+  if (!found.length) {
+    man = await loadType(c, dir, deps, WORKOUT_TYPE, 'all', 'w', { what: 'raw', budget: { bytes: 0 } });
+    found = await rows(c, query);
+  }
   if (!found.length) throw new ToolError('not_found', 'No workout with that id. Call get_workouts to list workout ids.');
-  return { man, row: toWorkoutRow(found[0]!) };
+  return { man, row: toWorkoutRow(found[0]!), doc };
 }
 
 export interface LoadedStream {
@@ -105,8 +135,7 @@ async function loadStream(c: DuckDBConnection, dir: string, deps: QueryDeps, doc
   return { name, unit: info.unit, t, cols, info };
 }
 
-async function loadDoc(deps: QueryDeps, id: string): Promise<WorkoutDataDoc> {
-  const doc = await deps.meta.getWorkoutData(deps.uid, id);
+function rawDoc(doc: WorkoutDataDoc | null): WorkoutDataDoc {
   if (!doc || Object.keys(doc.streams).length === 0) {
     throw new ToolError('no_data', 'No raw data has been synced for this workout yet. It may still be uploading (the summary arrives first). Ask the user to open KROK and pull down to sync, then try again.');
   }
@@ -201,8 +230,7 @@ export async function getWorkouts(deps: QueryDeps, args: { start_date: string; e
 export async function getWorkout(deps: QueryDeps, args: { workout_id: string; timezone?: string }): Promise<ToolResult> {
   const tz = validTz(args.timezone ?? deps.tz);
   return withDuck(async (c, dir) => {
-    const { man, row } = await findWorkout(c, dir, deps, args.workout_id, tz);
-    const doc = await deps.meta.getWorkoutData(deps.uid, row.id);
+    const { man, row, doc } = await findWorkout(c, dir, deps, args.workout_id, tz);
     const x = row.extra;
     const events = eventsOf(x);
     const pauses = pausesFromEvents(events, row.e);
@@ -283,8 +311,9 @@ export async function getWorkoutSeries(deps: QueryDeps, args: SeriesArgs): Promi
     throw new ToolError('bad_request', 'start_offset_seconds is after end_offset_seconds.');
   }
   return withDuck(async (c, dir) => {
-    const { man, row } = await findWorkout(c, dir, deps, args.workout_id, validTz(args.timezone ?? deps.tz));
-    const doc = await loadDoc(deps, row.id);
+    const found = await findWorkout(c, dir, deps, args.workout_id, validTz(args.timezone ?? deps.tz));
+    const { man, row } = found;
+    const doc = rawDoc(found.doc);
     const name = resolveStreamName(doc, args.stream);
     if (name === 'route') throw new ToolError('bad_request', 'Use get_workout_route for GPS data.');
     const s = await loadStream(c, dir, deps, doc, name, { bytes: 0 });
@@ -350,8 +379,9 @@ async function loadRoute(c: DuckDBConnection, dir: string, deps: QueryDeps, doc:
 export async function getWorkoutRoute(deps: QueryDeps, args: RouteArgs): Promise<ToolResult> {
   const limit = pointLimit(args.max_points);
   return withDuck(async (c, dir) => {
-    const { man, row } = await findWorkout(c, dir, deps, args.workout_id, validTz(args.timezone ?? deps.tz));
-    const doc = await loadDoc(deps, row.id);
+    const found = await findWorkout(c, dir, deps, args.workout_id, validTz(args.timezone ?? deps.tz));
+    const { man, row } = found;
+    const doc = rawDoc(found.doc);
     const route = await loadRoute(c, dir, deps, doc);
     const all = routeDistance(route);
     const total = all.d[all.d.length - 1] ?? 0;
@@ -405,8 +435,9 @@ interface CalcContext {
 }
 
 async function calcContext(c: DuckDBConnection, dir: string, deps: QueryDeps, workoutId: string, timezone?: string): Promise<CalcContext> {
-  const { man, row } = await findWorkout(c, dir, deps, workoutId, validTz(timezone ?? deps.tz));
-  const doc = await loadDoc(deps, row.id);
+  const found = await findWorkout(c, dir, deps, workoutId, validTz(timezone ?? deps.tz));
+  const { man, row } = found;
+  const doc = rawDoc(found.doc);
   return { c, dir, row, doc, man, pauses: pausesFromEvents(eventsOf(row.extra), row.e), budget: { bytes: 0 } };
 }
 

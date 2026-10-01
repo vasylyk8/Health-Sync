@@ -371,7 +371,7 @@ actor SyncEngine {
         do {
             for (i, group) in groups.enumerated() {
                 for j in i ... min(i + 2, groups.count - 1) where reads[j] == nil { reads[j] = read(groups[j]) }
-                let results = try await reads[i]!.value
+                let results = try await timing.measure("detail.readWait") { try await reads[i]!.value }
                 reads[i] = nil
                 try checkTime()
 
@@ -419,6 +419,7 @@ actor SyncEngine {
                 try await timing.measure("detail.send") { try await oldest.value }
                 report(syncing: true)
             }
+            timing.markDetailsEnd()
         } catch {
             // Stop the uploads still running; what they did not finish stays in the outbox for the next run.
             sending.forEach { $0.cancel() }
