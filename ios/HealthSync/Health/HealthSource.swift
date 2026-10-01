@@ -44,6 +44,8 @@ protocol HealthSource: Sendable {
     func dailyContextBatches(from: Date, to: Date, categories: Set<String>) async throws -> [DailyBatch]
     /// Hourly buckets (heart rate, steps, HRV) in [from, to) as `hs` records.
     func hourlySeries(from: Date, to: Date) async throws -> [Record]
+    /// The medications the user chose to share, as `ev` records (names only; no dose history).
+    func medicationRecords() async throws -> [Record]
     /// The profile entry (date of birth, sex, wheelchair use, move mode) as one `ev` record, or none.
     func profileRecords() async throws -> [Record]
     /// Earliest sample across the daily-context metrics, to know how far back to start.
@@ -64,6 +66,7 @@ extension HealthSource {
     }
     func hourlySeries(from: Date, to: Date) async throws -> [Record] { [] }
     func profileRecords() async throws -> [Record] { [] }
+    func medicationRecords() async throws -> [Record] { [] }
     var queryConcurrency: Int { 1 }
     func setQueryConcurrency(_ n: Int) {}
     func benchmark(onUpdate: @escaping @Sendable (String) -> Void) async { onUpdate("The speed test needs Apple Health on a real iPhone.") }

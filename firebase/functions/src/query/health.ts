@@ -193,13 +193,13 @@ const SEVERITY: Record<number, string> = { 0: 'unspecified', 1: 'not present', 2
 export interface EventsArgs { types?: string[]; category?: string; start_date: string; end_date: string; timezone?: string; limit?: number }
 
 /** Loads rows of event types from their category tables into `ev_<category>` and returns the union as table `ev`. */
-async function loadEvents(c: DuckDBConnection, dir: string, deps: QueryDeps, cats: Set<string>, categories: string[], a: number, b: number) {
+async function loadEvents(c: DuckDBConnection, dir: string, deps: QueryDeps, cats: Set<string>, categories: string[], range: [number, number] | 'all') {
   const mans: [string, TypeManifest | null][] = [];
   const parts: string[] = [];
   for (const category of categories) {
     requireCategory(cats, category, 'This kind of data');
     const type = `_events_${category}`;
-    const man = await loadType(c, dir, deps, type, [a, b], `ev_${category}`, { what: 'raw', budget: { bytes: 0 } });
+    const man = await loadType(c, dir, deps, type, range, `ev_${category}`, { what: 'raw', budget: { bytes: 0 } });
     mans.push([type, man]);
     parts.push(`SELECT * FROM ev_${category}`);
   }
@@ -226,9 +226,12 @@ export async function getHealthEvents(deps: QueryDeps, args: EventsArgs): Promis
   const cats = await enabledCategories(deps);
   return withDuck(async (c, dir) => {
     const [a, b] = await localRangeToUtc(c, r.tz, r.start, r.end);
-    const mans = await loadEvents(c, dir, deps, cats, categories, a, b);
+    // The medication list is a current snapshot, not something that happened on a date: it ignores the range.
+    const snapshot = names.every((n) => n === 'Medication');
+    const mans = await loadEvents(c, dir, deps, cats, categories, snapshot ? 'all' : [a, b]);
     const list = names.map(lit).join(',');
-    const out = await rows(c, `SELECT ${fmtLocal(localTs('s', r.tz))} AS t, agg AS type, v, v2, c, u, src, extra, s FROM ev WHERE agg IN (${list}) AND s >= ${a} AND s < ${b} ORDER BY s, agg DESC LIMIT ${limit + 1}`);
+    const when = snapshot ? 'TRUE' : `s >= ${a} AND s < ${b}`;
+    const out = await rows(c, `SELECT ${fmtLocal(localTs('s', r.tz))} AS t, agg AS type, v, v2, c, u, src, extra, s FROM ev WHERE agg IN (${list}) AND ${when} ORDER BY s, agg DESC LIMIT ${limit + 1}`);
     const truncated = out.length > limit;
     if (truncated) out.length = limit;
     const notes = [

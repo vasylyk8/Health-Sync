@@ -210,6 +210,7 @@ actor SyncEngine {
                     try await SyncTiming.shared.measure("phase.events") {
                         try await self.eventsSync()
                         try await self.profileSync()
+                        try await self.medicationSync()
                     }
                 }
             })
@@ -413,6 +414,18 @@ actor SyncEngine {
         try await send(type, header: header, records: records, anchor: nil, completes: .profileAt(at))
     }
 
+    /// The medication list (names only) the user chose to share: sent once, then about weekly.
+    private func medicationSync() async throws {
+        guard enabledCategories.contains("medications"), scope.events.contains(where: { $0.kind == .medication }) else { return }
+        let at = now()
+        if let last = outbox.state.medicationsAt, at.timeIntervalSince(last) < config.profileEvery { return }
+        let records = try await source.medicationRecords()
+        guard !records.isEmpty else { return }
+        let type = "_events_medications"
+        let header = BatchHeader(type: type, mode: .anchored, seq: try outbox.nextSeq(type), checkedAt: at)
+        try await send(type, header: header, records: records, anchor: nil, completes: .medicationsAt(at))
+    }
+
     /// A category was switched off: forget what was synced for it, so switching it on again sends it from the beginning.
     func categoryDisabled(_ id: String) throws {
         let eventIds = scope.events.filter { $0.category == id }.map(\.typeId)
@@ -424,6 +437,7 @@ actor SyncEngine {
             }
             s.dailyHashes = s.dailyHashes.filter { !$0.key.contains("|\(daily)|") && $0.key != "inc|\(daily)" }
             if id == "profile" { s.profileAt = nil }
+            if id == "medications" { s.medicationsAt = nil }
         }
     }
 

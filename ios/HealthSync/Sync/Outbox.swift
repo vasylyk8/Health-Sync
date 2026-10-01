@@ -37,6 +37,8 @@ final class Outbox: @unchecked Sendable {
         case hourly(through: Date, at: Date?)
         /// The profile entry was sent at this time.
         case profileAt(Date)
+        /// The medication list was sent at this time.
+        case medicationsAt(Date)
     }
 
     struct State: Codable, Equatable {
@@ -61,12 +63,13 @@ final class Outbox: @unchecked Sendable {
         var hourlyThrough: Date?
         var hourlyAt: Date?
         var profileAt: Date?
+        var medicationsAt: Date?
 
         init() {}
 
         private enum CodingKeys: String, CodingKey {
             case schemaVersion, anchors, seq, recentDone, caughtUp, reconcile, dailyFullAt, detailsDone, workoutTotal, lastSyncAt
-            case dailyHashes, hourlyThrough, hourlyAt, profileAt
+            case dailyHashes, hourlyThrough, hourlyAt, profileAt, medicationsAt
         }
 
         /// Tolerant decoding: a state file written by an older app version (missing or extra keys)
@@ -87,6 +90,7 @@ final class Outbox: @unchecked Sendable {
             hourlyThrough = try c.decodeIfPresent(Date.self, forKey: .hourlyThrough)
             hourlyAt = try c.decodeIfPresent(Date.self, forKey: .hourlyAt)
             profileAt = try c.decodeIfPresent(Date.self, forKey: .profileAt)
+        medicationsAt = try c.decodeIfPresent(Date.self, forKey: .medicationsAt)
         }
     }
 
@@ -211,6 +215,7 @@ final class Outbox: @unchecked Sendable {
                 s.hourlyThrough = max(s.hourlyThrough ?? through, through)
                 if let at { s.hourlyAt = at }
             case .profileAt(let date): s.profileAt = date
+            case .medicationsAt(let date): s.medicationsAt = date
             case nil: break
             }
         }

@@ -171,6 +171,9 @@ describe('glucose, events, nutrition and profile (opt-in categories)', () => {
     expect((bp.events as { value: number }[]).map((e) => e.value)).toEqual([118, 76]);
     const meds = await getHealthEvents(deps(env), { category: 'medications', start_date: '2024-06-20', end_date: '2024-06-20' });
     expect((meds.events as { details: { name: string } }[])[0]!.details.name).toBe('Metoprolol');
+    // The medication list is a current snapshot: it is returned whatever the date range.
+    const later = await getHealthEvents(deps(env), { category: 'medications', start_date: '2024-09-01', end_date: '2024-09-02' });
+    expect(later.count).toBe(1);
   });
 
   it('shows what was eaten before a workout and the profile', async () => {
