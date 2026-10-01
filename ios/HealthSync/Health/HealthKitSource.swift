@@ -19,12 +19,11 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     private let scope: SyncScope
     private let quantitiesById: [String: WorkoutQuantity]
     /// Apple documents no limit on parallel queries, so the number in flight is tuned while syncing (`ReadTuner`).
-    private let queryGate = ReadGate(limit: 32)
-    /// GPS route points have their own lane: on a real iPhone they read 8x faster with 8 routes at once
-    /// (11k -> 95k points/s), but behind the shared query gate only one or two ran at a time.
+    private let queryGate = ReadGate(limit: 24)
+    /// Separate lane for GPS route points, off for now: the speed test compares it with the shared
+    /// query gate on real data (row E) before the sync uses it.
     private let routeGate = ReadGate(limit: 8)
-    /// Speed test only: read route points behind the shared query gate, as before the route lane existed.
-    var routesShareQueryGate = false
+    var routesShareQueryGate = true
     func setRouteConcurrency(_ n: Int) { routeGate.setLimit(n) }
     var queryConcurrency: Int { queryGate.currentLimit }
     func setQueryConcurrency(_ n: Int) { queryGate.setLimit(n) }
@@ -865,7 +864,7 @@ extension HealthKitSource {
             let r = await wholeRead(fresh, width: 24)
             e.append("\(shared ? "off" : "on") \(n0(r))")
         }
-        routesShareQueryGate = false
+        routesShareQueryGate = true
         emit("E route lane (\(fresh.count) newest, 24 at once, workouts/min): " + e.joined(separator: ", "))
         var g: [String] = []
         for limit in [32, 8, 16, 64, 32] {

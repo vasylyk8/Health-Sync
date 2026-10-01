@@ -347,9 +347,7 @@ actor SyncEngine {
         let gate = ReadGate(limit: config.detailReadConcurrency)
         let tuner = ReadTuner(
             current: { [source] in source.queryConcurrency }, apply: { [source] in source.setQueryConcurrency($0) },
-            // Not below 24: on a real iPhone 32 queries at once read ~25% more than 8, but the tuner drifted
-            // down to 16 while other startup steps shared HealthKit.
-            minLimit: 24, maxLimit: 96, step: 8, windowSize: 24)
+            minLimit: 4, maxLimit: 96, step: 8, windowSize: 24)
         timing.set("read.limit", source.queryConcurrency)
 
         func read(_ group: [WorkoutRef]) -> Task<[EncodedWorkout?], Error> {
