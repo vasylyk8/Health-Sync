@@ -224,15 +224,17 @@ export async function getWorkout(deps: QueryDeps, args: { workout_id: string; ti
         device: row.dev,
         paused_seconds: round(pauses.reduce((n, p) => n + (p.e - p.s), 0) / 1000, 1),
         sub_activities: Array.isArray(x.acts) ? x.acts : null,
+        // The plan it was run from (scheduled in Apple's Workout app by any app): kind and a short description of its steps.
+        planned_workout: x.plan ?? null,
       },
       apple_summary: {
         statistics: x.stats ?? null,
         metadata: tidyMetadata(x.md),
-        extra: Object.fromEntries(Object.entries(x).filter(([k]) => !['actName', 'dur', 'en', 'dist', 'hrAvg', 'hrMax', 'ev', 'acts', 'md', 'stats', 'act'].includes(k))),
+        extra: Object.fromEntries(Object.entries(x).filter(([k]) => !['actName', 'dur', 'en', 'dist', 'hrAvg', 'hrMax', 'ev', 'acts', 'md', 'stats', 'act', 'plan'].includes(k))),
       },
       events: {
         counts: eventCounts,
-        list: listed.slice(0, 100).map((e) => ({ offset_seconds: round((e.t - row.s) / 1000, 1), type: EVENT_NAMES[e.type] ?? `type_${e.type}`, duration_seconds: round(e.dur ?? 0, 1) })),
+        list: listed.slice(0, 100).map((e) => ({ offset_seconds: round((e.t - row.s) / 1000, 1), type: EVENT_NAMES[e.type] ?? `type_${e.type}`, duration_seconds: round(e.dur ?? 0, 1), ...(e.md && typeof e.md === 'object' ? { details: e.md } : {}) })),
         truncated: listed.length > 100,
         segments_omitted_from_list: events.length - listed.length,
       },

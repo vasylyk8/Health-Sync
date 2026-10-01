@@ -17,6 +17,8 @@ export interface WorkoutEvent {
   t: number;
   type: number;
   dur?: number;
+  /** Details Apple attaches to laps and segments (swim stroke style, lap length). */
+  md?: Record<string, unknown>;
 }
 
 /**

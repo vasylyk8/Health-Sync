@@ -1,6 +1,7 @@
 import CoreLocation
 import Foundation
 import HealthKit
+import WorkoutKit
 
 /// Reads Apple Health through HealthKit and converts workouts (with their raw data) and daily
 /// context to batch records. Read-only.
@@ -77,7 +78,48 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: .strictStartDate)
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
         let samples = try await fetch(HKObjectType.workoutType(), predicate: predicate, sort: sort)
-        return samples.compactMap { ($0 as? HKWorkout).map(workout) }
+        return await withPlans(samples.compactMap { $0 as? HKWorkout })
+    }
+
+    /// Summary records of these workouts, each with the plan it was run from (when it has one).
+    private func withPlans(_ workouts: [HKWorkout]) async -> [Record] {
+        var records = workouts.map(workout)
+        guard #available(iOS 17.0, *), !records.isEmpty else { return records }
+        // Read concurrently (a few at a time); each answer goes to its own slot, so the order stays the same.
+        let plans: [Int: RecordValue] = await SyncTiming.shared.measure("hk.plans") {
+            await withTaskGroup(of: (Int, RecordValue?).self) { group in
+                var next = 0
+                var found: [Int: RecordValue] = [:]
+                func addNext() {
+                    guard next < workouts.count else { return }
+                    let i = next
+                    next += 1
+                    group.addTask { (i, await Self.plan(of: workouts[i])) }
+                }
+                for _ in 0..<8 { addNext() }
+                while let (i, plan) = await group.next() {
+                    if let plan { found[i] = plan }
+                    addNext()
+                }
+                return found
+            }
+        }
+        for (i, plan) in plans {
+            records[i]["plan"] = plan
+            // Which apps' workouts carry a plan (counted for the speed test and diagnostics; no health data).
+            SyncTiming.shared.count("plans.found")
+            SyncTiming.shared.count("plans.\(workouts[i].sourceRevision.source.bundleIdentifier)")
+        }
+        return records
+    }
+
+    /// The plan a workout was run from (scheduled in Apple's Workout app by any app), as a short summary: its id, kind
+    /// (goal, pacer, custom, swimBikeRun) and a compact description of its steps.
+    @available(iOS 17.0, *)
+    private static func plan(of w: HKWorkout) async -> RecordValue? {
+        guard let plan = try? await w.workoutPlan else { return nil }
+        let kind = Mirror(reflecting: plan.workout).children.first?.label ?? "unknown"
+        return .object(["id": .string(plan.id.uuidString), "kind": .string(kind), "desc": .string(String(String(describing: plan.workout).prefix(800)))])
     }
 
     func anchoredPage(_ type: SyncType, anchor: Data?, limit: Int) async throws -> AnchoredPage {
@@ -95,7 +137,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             // Dense series carry no ids, so a deleted reading cannot be matched on the server.
             if !event.dense { records.append(contentsOf: deleted.map { ["k": "d", "id": .string($0.uuid.uuidString)] }) }
         } else {
-            records = samples.compactMap { ($0 as? HKWorkout).map(workout) }
+            records = await withPlans(samples.compactMap { $0 as? HKWorkout })
             records.append(contentsOf: deleted.map { ["k": "d", "id": .string($0.uuid.uuidString)] })
         }
         let anchorData = newAnchor.flatMap { try? NSKeyedArchiver.archivedData(withRootObject: $0, requiringSecureCoding: true) }
@@ -160,8 +202,11 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         if r["dist"] == nil, let d = w.totalDistance { r["dist"] = .double(d.doubleValue(for: .meter())) }
 
         if let events = w.workoutEvents, !events.isEmpty {
-            r["ev"] = .array(events.prefix(2_000).map { e in
-                .object(["t": e.dateInterval.start.ms, "type": .int(Int64(e.type.rawValue)), "dur": .double(e.dateInterval.duration)])
+            r["ev"] = .array(events.prefix(2_000).map { e -> RecordValue in
+                var o: [String: RecordValue] = ["t": e.dateInterval.start.ms, "type": .int(Int64(e.type.rawValue)), "dur": .double(e.dateInterval.duration)]
+                // Laps and segments carry their stroke style, lap length and similar details.
+                if case .object(let md)? = metadata(e.metadata, maxBytes: 400) { o["md"] = .object(md) }
+                return .object(o)
             })
         }
         if w.workoutActivities.count > 1 {

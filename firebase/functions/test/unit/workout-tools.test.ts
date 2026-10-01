@@ -50,8 +50,12 @@ describe('get_workouts / get_workout', () => {
     const r = await getWorkout(q(), { workout_id: RUN });
     const w = r.workout as Record<string, unknown>;
     expect(w.paused_seconds).toBe(60);
-    expect((r.events as { counts: Record<string, number> }).counts).toEqual({ pause: 1, resume: 1, segment: 2 });
-    expect((r.events as { list: unknown[] }).list).toHaveLength(2);
+    expect((r.events as { counts: Record<string, number> }).counts).toEqual({ pause: 1, resume: 1, segment: 2, lap: 1 });
+    const events = (r.events as { list: { type: string; details?: unknown }[] }).list;
+    expect(events).toHaveLength(3);
+    expect(events.find((e) => e.type === 'lap')?.details).toEqual({ HKSwimmingStrokeStyle: 3 });
+    expect(w.planned_workout).toEqual({ id: 'P1', kind: 'custom', desc: 'CustomWorkout(blocks: 3)' });
+    expect((r.apple_summary as { extra: Record<string, unknown> }).extra).not.toHaveProperty('plan');
     expect((r.apple_summary as { statistics: Record<string, unknown> }).statistics).toHaveProperty('HeartRate');
     expect((r.apple_summary as { metadata: Record<string, unknown> }).metadata.HKWeatherHumidity).toBe('81 %');
     expect((r.apple_summary as { metadata: Record<string, unknown> }).metadata.HKSwimmingLocationType).toBe('pool');
