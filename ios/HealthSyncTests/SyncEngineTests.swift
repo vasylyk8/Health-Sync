@@ -177,9 +177,50 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertEqual(streams.map { $0.records }, [48, 48, 24])
         XCTAssertEqual(box.state.detailsDone.count, 60)
         XCTAssertEqual(Set(source.detailReads).count, 60)
+        // Groups upload at the same time, so they may arrive in any order; each has its own sequence number.
+        let seqs = streams.map { $0.header["seq"] as! Int }
+        XCTAssertEqual(Set(seqs).count, seqs.count)
+        XCTAssertTrue(box.pending().isEmpty)
+    }
+
+    func testOneGroupAtATimeStillWorks() async throws {
+        let source = manyWorkouts(60)
+        let up = RecordingUploader()
+        var config = SyncEngine.Config()
+        config.detailGroupSize = 24
+        config.detailGroupsUploading = 1
+        let (engine, box) = makeEngine(source, up, config: config)
+        _ = try await engine.run()
+        let streams = up.uploaded.filter { $0.type == HealthTypes.streamId }
+        XCTAssertEqual(streams.map { $0.records }, [48, 48, 24])
         let seqs = streams.map { $0.header["seq"] as! Int }
         XCTAssertEqual(seqs, seqs.sorted())
+        XCTAssertEqual(box.state.detailsDone.count, 60)
         XCTAssertTrue(box.pending().isEmpty)
+    }
+
+    func testBigGroupsAreSentAsSeveralPartsAndRecordedOnce() async throws {
+        let source = manyWorkouts(60)
+        let up = RecordingUploader()
+        var config = SyncEngine.Config()
+        config.detailGroupSize = 24
+        config.detailPartBytes = 1 // one line per part
+        let (engine, box) = makeEngine(source, up, config: config)
+        _ = try await engine.run()
+        let streams = up.uploaded.filter { $0.type == HealthTypes.streamId }
+        XCTAssertGreaterThan(streams.count, 3, "groups split into parts")
+        XCTAssertEqual(streams.reduce(0) { $0 + $1.records }, 120, "every line sent once")
+        XCTAssertEqual(Set(streams.map(\.id)).count, streams.count)
+        let seqs = streams.map { $0.header["seq"] as! Int }
+        XCTAssertEqual(Set(seqs).count, seqs.count, "no sequence number used twice")
+        XCTAssertEqual(box.state.detailsDone.count, 60)
+        XCTAssertTrue(box.pending().isEmpty)
+
+        // A second run sends nothing again.
+        let before = up.uploaded.count
+        _ = try await engine.run()
+        XCTAssertEqual(up.uploaded.filter { $0.type == HealthTypes.streamId }.count, streams.count)
+        XCTAssertGreaterThanOrEqual(up.uploaded.count, before)
     }
 
     func testInterruptedGroupedUploadResumesWithoutLosingWorkouts() async throws {
