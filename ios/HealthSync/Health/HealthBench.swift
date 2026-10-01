@@ -37,13 +37,16 @@ enum HealthBench {
     /// Logs when the main thread stops answering (a blocked main thread also stops the bench's own checks).
     private static func startMainThreadWatchdog() {
         let logger = Logger(subsystem: "app.healthsync", category: "bench")
-        Thread.detachNewThread {
-            var lastSeen = Date()
+        final class Beat: @unchecked Sendable {
             let lock = NSLock()
+            var lastSeen = Date()
+        }
+        let beat = Beat()
+        Thread.detachNewThread {
             while true {
-                DispatchQueue.main.async { lock.withLock { lastSeen = Date() } }
+                DispatchQueue.main.async { beat.lock.withLock { beat.lastSeen = Date() } }
                 Thread.sleep(forTimeInterval: 5)
-                let stalled = Date().timeIntervalSince(lock.withLock { lastSeen })
+                let stalled = Date().timeIntervalSince(beat.lock.withLock { beat.lastSeen })
                 if stalled > 8 { logger.notice("BENCH main thread blocked for \(Int(stalled), privacy: .public) s") }
                 // Engine progress straight from the timing summary, independent of the main thread.
                 logger.notice("BENCH tick: \(SyncTiming.shared.startupSummary().replacingOccurrences(of: "\n", with: " | "), privacy: .public)")
