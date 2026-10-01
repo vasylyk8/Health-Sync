@@ -126,9 +126,16 @@ async function loadStream(c: DuckDBConnection, dir: string, deps: QueryDeps, doc
     await deps.data.download(f.path, p);
     return p;
   }));
-  const list = local.map(lit).join(',');
+  // Integer columns (FileRef.scale) are divided back to their real values; only the needed columns are selected.
+  const selects = info.files.map((f, i) => {
+    const cols = info.cols.map((col) => {
+      const m = f.scale?.[col];
+      return m === undefined ? col : `CAST(${col} AS DOUBLE) / ${m}.0 AS ${col}`;
+    });
+    return `SELECT t${cols.length ? ', ' : ''}${cols.join(', ')} FROM read_parquet(${lit(local[i]!)})`;
+  });
   // Chunks of a re-sent read can overlap: one point per timestamp.
-  const res = await rows(c, `SELECT * FROM read_parquet([${list}]) QUALIFY row_number() OVER (PARTITION BY t ORDER BY t) = 1 ORDER BY t`);
+  const res = await rows(c, `SELECT * FROM (${selects.join(' UNION ALL ')}) QUALIFY row_number() OVER (PARTITION BY t ORDER BY t) = 1 ORDER BY t`);
   const t = res.map((r) => Number(r.t));
   const cols: Record<string, (number | null)[]> = {};
   for (const col of info.cols) cols[col] = res.map((r) => (r[col] == null ? null : Number(r[col])));

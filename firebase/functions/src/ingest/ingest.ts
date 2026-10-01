@@ -171,7 +171,7 @@ async function ingestStreams(uid: string, batchId: string, objectPath: string, p
       for (const ch of chunks) for (const t of ch.t) if (t < firstT) firstT = t;
       written.push({
         wid: first.wid, st: first.st, gen: first.gen, points: local.points,
-        ref: { path, bytes: bytes.length },
+        ref: { path, bytes: bytes.length, ...(Object.keys(local.scale).length ? { scale: local.scale } : {}) },
         unit: first.unit,
         cols: [...new Set(chunks.flatMap((ch) => Object.keys(ch.cols)))],
         ...(Number.isFinite(firstT) ? { firstT } : {}),
