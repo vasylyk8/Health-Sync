@@ -37,7 +37,7 @@ struct WelcomeView: View {
                 .padding(.horizontal, 32)
             Spacer()
             VStack(spacing: 4) {
-                Text("Your workouts, with their detailed measurements and GPS routes, and a daily summary (sleep, resting heart rate and similar) are copied securely to our servers in the EU so the assistants you connect can read them. Nothing is shared until you connect one.")
+                Text("Your workouts, with their detailed measurements and GPS routes, plus daily and hourly summaries (sleep, heart rate, steps and similar) are copied securely to our servers in the EU so the assistants you connect can read them. You can add more kinds of data later, such as nutrition or glucose, one group at a time. Nothing is shared until you connect an assistant.")
                     .font(.footnote)
                     .foregroundStyle(Theme.mutedText)
                     .multilineTextAlignment(.center)
