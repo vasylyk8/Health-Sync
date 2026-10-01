@@ -66,14 +66,8 @@ enum HealthBench {
         let share: Set<HKSampleType> = [HKObjectType.workoutType(), hr, energy, distance, HKSeriesType.workoutRoute()]
         let read = HealthTypes.readPermissions(for: scope).union(share)
         m.log("authorizing")
-        // The app's own connect request first (read-only), exactly as the Connect button does it.
-        let appSource = HealthKitSource(scope: scope)
-        do {
-            try await appSource.requestAuthorization(scope: scope)
-            m.log("app permission request completed")
-        } catch {
-            m.log("app permission request failed: \(error)")
-        }
+        // One request only: a second permission request right after a first one never answers in the
+        // simulator (no sheet, no callback), which hung earlier runs before the sync started.
         do {
             try await store.requestAuthorization(toShare: share, read: read)
         } catch {
