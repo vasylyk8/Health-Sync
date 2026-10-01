@@ -73,7 +73,10 @@ targets:
   HealthSyncTests:
     type: bundle.unit-test
     platform: iOS
-    sources: [HealthSyncTests]
+    sources:
+      - path: HealthSyncTests
+      - path: ../shared/compact-fixtures.json
+        buildPhase: resources
     dependencies:
       - target: HealthSync
     settings:

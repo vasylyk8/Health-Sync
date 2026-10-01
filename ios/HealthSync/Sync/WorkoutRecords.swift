@@ -35,21 +35,36 @@ enum WorkoutRecords {
         return byTime.values.sorted { $0.t < $1.t }
     }
 
+    /// How chunks are written: `compact` is what the app sends (docs/DATA_CONTRACT.md); `plain` (one array per
+    /// column) is the older form, kept so the speed test can show how much smaller compact is.
+    enum Format: Sendable { case compact, plain }
+
+    /// GPS route precision: about a metre in position (GPS itself is good to 3-5 m), 0.1 m altitude (what the
+    /// elevation tools report), 0.1 m/s speed; course and the two accuracy figures to a whole unit (no tool reads them).
+    /// Every point is kept. Quantity streams are always exact.
+    static let routePlans: [String: CompactColumns.Plan] = [
+        "lat": .step(100_000), "lon": .step(100_000), "alt": .step(10), "spd": .step(10), "crs": .step(1), "ha": .step(1), "va": .step(1),
+    ]
+    /// Finer variant for the speed test's size comparison only.
+    static let fineRoutePlans: [String: CompactColumns.Plan] = [
+        "lat": .step(100_000), "lon": .step(100_000), "alt": .step(10), "spd": .step(100), "crs": .step(10), "ha": .step(10), "va": .step(10),
+    ]
+
     /// Chunks of one stream with a single value column `v`.
-    static func series(wid: String, name: String, gen: Int64, unit: String?, points: [SeriesPoint]) -> (records: [Record], count: Int) {
+    static func series(wid: String, name: String, gen: Int64, unit: String?, points: [SeriesPoint], format: Format = .compact) -> (records: [Record], count: Int) {
         let pts = dedupe(points)
-        let records = chunks(wid: wid, name: name, gen: gen, unit: unit, t: pts.map(\.t), columns: ["v": pts.map { Optional($0.v) }])
+        let records = chunks(wid: wid, name: name, gen: gen, unit: unit, t: pts.map(\.t), columns: ["v": pts.map { Optional($0.v) }], plans: [:], format: format)
         return (records, pts.count)
     }
 
     /// Chunks of the GPS route with columns lat, lon, alt, spd, crs, ha, va (unused ones are omitted).
-    static func route(wid: String, gen: Int64, points: [RoutePoint]) -> (records: [Record], count: Int) {
+    static func route(wid: String, gen: Int64, points: [RoutePoint], format: Format = .compact, plans: [String: CompactColumns.Plan] = routePlans) -> (records: [Record], count: Int) {
         let pts = dedupe(points)
         let columns: [String: [Double?]] = [
             "lat": pts.map { Optional($0.lat) }, "lon": pts.map { Optional($0.lon) },
             "alt": pts.map(\.alt), "spd": pts.map(\.spd), "crs": pts.map(\.crs), "ha": pts.map(\.ha), "va": pts.map(\.va),
         ]
-        return (chunks(wid: wid, name: "route", gen: gen, unit: nil, t: pts.map(\.t), columns: columns), pts.count)
+        return (chunks(wid: wid, name: "route", gen: gen, unit: nil, t: pts.map(\.t), columns: columns, plans: plans, format: format), pts.count)
     }
 
     /// "Raw data of this generation consists of these streams with these point counts."
@@ -57,7 +72,7 @@ enum WorkoutRecords {
         ["k": "wd", "wid": .string(wid), "gen": .int(gen), "expected": .object(expected.mapValues { .int(Int64($0)) })]
     }
 
-    private static func chunks(wid: String, name: String, gen: Int64, unit: String?, t: [Int64], columns: [String: [Double?]]) -> [Record] {
+    private static func chunks(wid: String, name: String, gen: Int64, unit: String?, t: [Int64], columns: [String: [Double?]], plans: [String: CompactColumns.Plan], format: Format) -> [Record] {
         // A column with no value at all is left out; a chunk must carry at least one column.
         let used = columns.filter { $0.value.contains { $0 != nil } }
         guard !used.isEmpty else { return [] }
@@ -65,13 +80,22 @@ enum WorkoutRecords {
         var i = 0
         while i < t.count {
             let j = min(i + chunkPoints, t.count)
-            var r: Record = ["k": "ws", "wid": .string(wid), "st": .string(name), "gen": .int(gen), "t": .array(t[i..<j].map { RecordValue.int($0) })]
+            var r: Record = ["k": "ws", "wid": .string(wid), "st": .string(name), "gen": .int(gen)]
             if let unit { r["u"] = .string(unit) }
-            for (col, values) in used {
-                r[col] = .array(values[i..<j].map { value -> RecordValue in
-                    if let value, value.isFinite { return .double(value) }
-                    return .null
-                })
+            switch format {
+            case .compact:
+                r["enc"] = .int(1)
+                r["n"] = .int(Int64(j - i))
+                r["t"] = CompactColumns.encodeTimes(Array(t[i..<j]))
+                for (col, values) in used { r[col] = CompactColumns.encode(Array(values[i..<j]), plan: plans[col] ?? .exact) }
+            case .plain:
+                r["t"] = .array(t[i..<j].map { RecordValue.int($0) })
+                for (col, values) in used {
+                    r[col] = .array(values[i..<j].map { value -> RecordValue in
+                        if let value, value.isFinite { return .double(value) }
+                        return .null
+                    })
+                }
             }
             out.append(r)
             i = j

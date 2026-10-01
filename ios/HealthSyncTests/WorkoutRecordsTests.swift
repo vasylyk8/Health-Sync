@@ -2,14 +2,20 @@ import XCTest
 @testable import HealthSync
 
 final class WorkoutRecordsTests: XCTestCase {
-    private func ints(_ v: RecordValue?) -> [Int64] {
-        guard case .array(let a)? = v else { return [] }
-        return a.compactMap { if case .int(let i) = $0 { return i } else { return nil } }
+    /// Chunks are compact (`enc: 1`): `n` points and one object per column. These read them back like the server does.
+    private func count(_ r: Record) -> Int {
+        if case .int(let n)? = r["n"] { return Int(n) }
+        return -1
     }
 
-    private func doubles(_ v: RecordValue?) -> [Double?] {
-        guard case .array(let a)? = v else { return [] }
-        return a.map { if case .double(let d) = $0 { return d } else { return nil } }
+    private func ints(_ v: RecordValue?, of r: Record) -> [Int64] {
+        guard let v, let values = CompactColumns.decode(v, count: count(r)) else { return [] }
+        return values.compactMap { $0.map { Int64($0) } }
+    }
+
+    private func doubles(_ v: RecordValue?, of r: Record) -> [Double?] {
+        guard let v else { return [] }
+        return CompactColumns.decode(v, count: count(r)) ?? []
     }
 
     func testSeriesIsSortedDeduplicatedAndCounted() {
@@ -21,9 +27,11 @@ final class WorkoutRecordsTests: XCTestCase {
         XCTAssertEqual(r["k"], .string("ws"))
         XCTAssertEqual(r["st"], .string("HeartRate"))
         XCTAssertEqual(r["gen"], .int(42))
+        XCTAssertEqual(r["enc"], .int(1))
+        XCTAssertEqual(r["n"], .int(3))
         XCTAssertEqual(r["u"], .string("count/min"))
-        XCTAssertEqual(ints(r["t"]), [1000, 2000, 3000])
-        XCTAssertEqual(doubles(r["v"]), [141, 999, 143], "the later duplicate wins")
+        XCTAssertEqual(ints(r["t"], of: r), [1000, 2000, 3000])
+        XCTAssertEqual(doubles(r["v"], of: r), [141, 999, 143], "the later duplicate wins")
     }
 
     func testLongSeriesIsChunked() {
@@ -32,8 +40,8 @@ final class WorkoutRecordsTests: XCTestCase {
         let built = WorkoutRecords.series(wid: "W1", name: "ActiveEnergyBurned", gen: 1, unit: "kcal", points: points)
         XCTAssertEqual(built.count, n)
         XCTAssertEqual(built.records.count, 3)
-        XCTAssertEqual(built.records.map { ints($0["t"]).count }, [WorkoutRecords.chunkPoints, WorkoutRecords.chunkPoints, 7])
-        XCTAssertEqual(built.records.flatMap { ints($0["t"]) }, (0..<n).map { Int64($0) * 1000 })
+        XCTAssertEqual(built.records.map { count($0) }, [WorkoutRecords.chunkPoints, WorkoutRecords.chunkPoints, 7])
+        XCTAssertEqual(built.records.flatMap { ints($0["t"], of: $0) }, (0..<n).map { Int64($0) * 1000 })
     }
 
     func testRouteHasColumnsAndDropsInvalidCoordinates() {
@@ -46,10 +54,49 @@ final class WorkoutRecordsTests: XCTestCase {
         XCTAssertEqual(built.count, 2)
         let r = built.records[0]
         XCTAssertEqual(r["st"], .string("route"))
-        XCTAssertEqual(doubles(r["lat"]), [50.0, 50.001])
-        XCTAssertEqual(doubles(r["alt"]), [100, nil])
+        XCTAssertEqual(doubles(r["lat"], of: r), [50.0, 50.001])
+        XCTAssertEqual(doubles(r["alt"], of: r), [100, nil])
         XCTAssertNil(r["v"])
         XCTAssertNotNil(r["crs"])
+    }
+
+    func testRouteIsRoundedToAboutAMetreAndKeepsEveryPoint() {
+        var pts: [RoutePoint] = []
+        for i in 0..<2000 {
+            let step = Double(i)
+            let lat: Double = 50.123456789 + step * 0.0000271
+            let lon: Double = 30.987654321 + step * 0.0000193
+            let alt: Double = 180.234 + Double(i % 17) * 0.37
+            let spd: Double = 3.14159 + Double(i % 5) * 0.0123
+            let crs: Double = 87.654 + Double(i % 9)
+            pts.append(RoutePoint(t: Int64(i) * 1000, lat: lat, lon: lon, alt: alt, spd: spd, crs: crs, ha: 3.79, va: 2.1))
+        }
+        let built = WorkoutRecords.route(wid: "W", gen: 1, points: pts)
+        XCTAssertEqual(built.count, 2000, "no point is dropped")
+        var back: [Double?] = []
+        for r in built.records { back += doubles(r["lat"], of: r) }
+        XCTAssertEqual(back.count, 2000)
+        for (original, decoded) in zip(pts, back) {
+            XCTAssertEqual(decoded!, original.lat, accuracy: 0.5e-5 + 1e-12, "within half of 0.00001 degrees (about 0.6 m)")
+        }
+        // Much smaller than the older form.
+        func size(_ records: [Record]) -> Int {
+            var total = 0
+            for record in records {
+                let lines: [Data] = (try? BatchWriter.encodeLines([record])) ?? []
+                total += lines.first?.count ?? 0
+            }
+            return total
+        }
+        let plain = WorkoutRecords.route(wid: "W", gen: 1, points: pts, format: .plain).records
+        XCTAssertLessThan(size(built.records), size(plain) / 3)
+    }
+
+    func testQuantityValuesAreExactEvenWhenNotShortDecimals() {
+        let values: [Double] = [0, 0.1, 0.30000000000000004, 1.0 / 3.0, 117, 12.5, 98.6, 0.0234567890123]
+        let points = values.enumerated().map { SeriesPoint(t: Int64($0.offset) * 1000, v: $0.element) }
+        let r = WorkoutRecords.series(wid: "W", name: "X", gen: 1, unit: nil, points: points).records[0]
+        XCTAssertEqual(doubles(r["v"], of: r), values.map { Optional($0) }, "every value comes back bit for bit")
     }
 
     func testEmptyColumnsAreOmittedAndEmptyInputMakesNoRecords() {
@@ -71,8 +118,9 @@ final class WorkoutRecordsTests: XCTestCase {
     func testEveryChunkHasEqualLengthArrays() {
         let pts = (0..<(WorkoutRecords.chunkPoints + 3)).map { RoutePoint(t: Int64($0), lat: 50, lon: 30, alt: Double($0), spd: nil, crs: nil, ha: 5, va: nil) }
         for r in WorkoutRecords.route(wid: "W", gen: 1, points: pts).records {
-            let n = ints(r["t"]).count
-            for key in ["lat", "lon", "alt", "ha"] { XCTAssertEqual(doubles(r[key]).count, n, key) }
+            let n = count(r)
+            XCTAssertEqual(ints(r["t"], of: r).count, n)
+            for key in ["lat", "lon", "alt", "ha"] { XCTAssertEqual(doubles(r[key], of: r).count, n, key) }
         }
     }
 }

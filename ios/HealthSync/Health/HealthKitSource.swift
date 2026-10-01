@@ -189,7 +189,42 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     // MARK: Workout raw data
 
+    /// What one workout's raw data consists of, as read from Apple Health (before it is turned into records).
+    struct WorkoutParts {
+        var series: [(name: String, unit: String?, points: [SeriesPoint])]
+        var route: [RoutePoint]
+    }
+
     func workoutDetail(id: String, gen: Int64) async throws -> [Record]? {
+        guard let parts = try await workoutParts(id: id) else { return nil }
+        let records = Self.records(id: id, gen: gen, parts: parts)
+        SyncTiming.shared.count("hk.workouts")
+        return records
+    }
+
+    /// The `ws` / `wd` records of a workout's raw data.
+    static func records(id: String, gen: Int64, parts: WorkoutParts, format: WorkoutRecords.Format = .compact,
+                        routePlans: [String: CompactColumns.Plan] = WorkoutRecords.routePlans, includeRoute: Bool = true) -> [Record] {
+        var records: [Record] = []
+        var expected: [String: Int] = [:]
+        for s in parts.series where !s.points.isEmpty {
+            let built = WorkoutRecords.series(wid: id, name: s.name, gen: gen, unit: s.unit, points: s.points, format: format)
+            guard built.count > 0 else { continue }
+            records.append(contentsOf: built.records)
+            expected[s.name] = built.count
+        }
+        if includeRoute, !parts.route.isEmpty {
+            let built = WorkoutRecords.route(wid: id, gen: gen, points: parts.route, format: format, plans: routePlans)
+            if built.count > 0 {
+                records.append(contentsOf: built.records)
+                expected["route"] = built.count
+            }
+        }
+        records.append(WorkoutRecords.mark(wid: id, gen: gen, expected: expected))
+        return records
+    }
+
+    func workoutParts(id: String) async throws -> WorkoutParts? {
         guard let uuid = UUID(uuidString: id) else { return nil }
         let w: HKWorkout
         if let cached = cacheLock.withLock({ workoutCache[id] }) {
@@ -201,8 +236,6 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
         defer { cacheLock.withLock { workoutCache[id] = nil } }
 
-        var records: [Record] = []
-        var expected: [String: Int] = [:]
         // Types Apple recorded for this workout. Heart rate is always tried, because workouts imported
         // from other apps carry no Apple statistics but often have heart rate samples.
         var wanted = Set(w.allStatistics.keys.map(\.identifier))
@@ -236,23 +269,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             case .route(let points): route = points
             }
         }
-        for (i, q) in specs.enumerated() {
-            guard let points = seriesByIndex[i], !points.isEmpty else { continue }
-            let built = WorkoutRecords.series(wid: id, name: q.name, gen: gen, unit: q.unitLabel, points: points)
-            guard built.count > 0 else { continue }
-            records.append(contentsOf: built.records)
-            expected[q.name] = built.count
-        }
-        if !route.isEmpty {
-            let built = WorkoutRecords.route(wid: id, gen: gen, points: route)
-            if built.count > 0 {
-                records.append(contentsOf: built.records)
-                expected["route"] = built.count
-            }
-        }
-        records.append(WorkoutRecords.mark(wid: id, gen: gen, expected: expected))
-        SyncTiming.shared.count("hk.workouts")
-        return records
+        return WorkoutParts(series: specs.enumerated().map { (name: $0.element.name, unit: $0.element.unitLabel, points: seriesByIndex[$0.offset] ?? []) }, route: route)
     }
 
     /// Readings of one quantity type belonging to the workout. Cumulative types (distance, energy,
@@ -828,6 +845,72 @@ extension HealthKitSource {
             emit("C2 \(buckets[b].label) ms per workout, one at a time: quantity \(n0(qMs / c)) (\(f(Double(types) / c)) queries), series \(n0(seriesMs / c)), HR fallback \(n0(fallbackMs / c)), route lookup \(n0(lookupMs / c)), route points \(n0(pointsMs / c)) · slowest types " + perType.sorted { $0.value > $1.value }.prefix(4).map { "\($0.key) \(n0($0.value / c))" }.joined(separator: ", "))
             emit("C3 \(buckets[b].label) per workout: \(n0(Double(samples) / c)) samples, \(f(Double(series) / c)) series → \(n0(Double(seriesPoints) / c)) points, \(f(Double(routes) / c)) routes → \(n0(Double(routePoints) / c)) points · HR only by time window in \(fallbackUsed)/\(ws.count)")
         }
+
+        // J. Upload size of the raw data by format, on the same workouts, and a check of the encoding on real data.
+        var projected = [Double](repeating: 0, count: 5)
+        var rawColumns: [String: (raw: Int, all: Int)] = [:]
+        var exactChecked = 0, exactDiffering = 0
+        var routeErr: [String: Double] = [:]
+        func gzBytes(_ records: [Record]) -> Int {
+            var body = Data()
+            for line in (try? BatchWriter.encodeLines(records)) ?? [] {
+                body.append(line)
+                body.append(0x0a)
+            }
+            return Gzip.compress(body).count
+        }
+        for (b, ws) in picks.enumerated() where !ws.isEmpty {
+            var sizes = [Int](repeating: 0, count: 5)
+            var done = 0
+            for w in ws.prefix(24) {
+                let id = w.uuid.uuidString
+                guard let parts = try? await workoutParts(id: id) else { continue }
+                done += 1
+                let variants: [[Record]] = [
+                    Self.records(id: id, gen: 1, parts: parts, format: .plain),
+                    Self.records(id: id, gen: 1, parts: parts),
+                    Self.records(id: id, gen: 1, parts: parts, routePlans: WorkoutRecords.fineRoutePlans),
+                    Self.records(id: id, gen: 1, parts: parts, includeRoute: false),
+                    Self.records(id: id, gen: 1, parts: parts, format: .plain, includeRoute: false),
+                ]
+                for (k, recs) in variants.enumerated() { sizes[k] += gzBytes(recs) }
+                // Does the compact form give back what was read?
+                let original = Dictionary(parts.series.map { ($0.name, WorkoutRecords.dedupe($0.points)) }, uniquingKeysWith: { first, _ in first })
+                var seen: [String: Int] = [:]
+                for r in variants[1] {
+                    guard case .string("ws")? = r["k"], case .string(let name)? = r["st"], case .int(let n)? = r["n"] else { continue }
+                    let offset = seen[name, default: 0]
+                    seen[name] = offset + Int(n)
+                    if name == "route" {
+                        let pts = WorkoutRecords.dedupe(parts.route)
+                        let slice = Array(pts[offset ..< offset + Int(n)])
+                        let fields: [(String, [Double?], Double)] = [
+                            ("lat", slice.map { Optional($0.lat) }, 111_195), ("lon", slice.map { Optional($0.lon) }, 111_195 * cos(slice[0].lat * .pi / 180)),
+                            ("alt", slice.map(\.alt), 1), ("spd", slice.map(\.spd), 1), ("crs", slice.map(\.crs), 1),
+                        ]
+                        for (col, values, perUnit) in fields {
+                            guard let rec = r[col], let back = CompactColumns.decode(rec, count: Int(n)) else { continue }
+                            var worst = 0.0
+                            for (x, y) in zip(values, back) { if let x, let y { worst = max(worst, abs(x - y) * perUnit) } else if (x == nil) != (y == nil) { worst = .infinity } }
+                            routeErr[col] = max(routeErr[col] ?? 0, worst)
+                        }
+                    } else if let points = original[name], case let v? = r["v"] {
+                        rawColumns[name, default: (0, 0)].all += 1
+                        if case .object(let o) = v, o["r"] != nil { rawColumns[name]!.raw += 1 }
+                        let slice = Array(points[offset ..< offset + Int(n)])
+                        exactChecked += 1
+                        if let back = CompactColumns.decode(v, count: Int(n)), back == slice.map({ Optional($0.v) }) {} else { exactDiffering += 1 }
+                    }
+                }
+            }
+            guard done > 0 else { continue }
+            func kb(_ i: Int) -> String { n0(Double(sizes[i]) / Double(done) / 1000) }
+            emit("J \(buckets[b].label) per workout, KB gzip: today \(kb(0)) → new \(kb(1)) (finer course/speed/accuracy \(kb(2))) · without the route: today \(kb(4)) → new \(kb(3))")
+            for i in 0 ..< 5 { projected[i] += Double(sizes[i]) / Double(done) * Double(byBucket[b].count) / 1_000_000 }
+        }
+        let raws = rawColumns.sorted { $0.value.all > $1.value.all }.prefix(6).map { "\($0.key) \(n0(Double($0.value.raw) / Double(max($0.value.all, 1)) * 100))%" }
+        emit("K projected upload for all \(all.count) workouts: today \(n0(projected[0])) MB → new \(n0(projected[1])) MB (finer precision \(n0(projected[2])) MB) · without routes: today \(n0(projected[4])) MB → new \(n0(projected[3])) MB")
+        emit("K2 encoding check on your data: \(exactChecked) quantity chunks, \(exactDiffering) differ from what was read (must be 0) · route worst error: " + ["lat", "lon", "alt", "spd", "crs"].map { "\($0) \(String(format: "%.2f", routeErr[$0] ?? 0))\($0 == "lat" || $0 == "lon" || $0 == "alt" ? " m" : "")" }.joined(separator: ", ") + " · chunks stored as plain numbers (not a short decimal): " + raws.joined(separator: ", "))
 
         // D. Time window + same app vs the workout association: exactly the same samples? Faster?
         for (b, ws) in picks.enumerated() where !ws.isEmpty {
