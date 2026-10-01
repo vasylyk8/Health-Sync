@@ -37,6 +37,17 @@ jobs:
         run: xcodegen generate --spec project.yml
       - name: Benchmark
         run: |
+          # Stream the app's own log lines into this job log as they happen (the test's output only
+          # appears when it ends, and a cancelled run shows nothing else).
+          (
+            for i in $(seq 1 120); do
+              UDID=$(xcrun simctl list devices booted -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next((x['udid'] for v in d.values() for x in v), ''))")
+              [ -n "$UDID" ] && break
+              sleep 5
+            done
+            echo "streaming simulator log from $UDID"
+            xcrun simctl spawn "$UDID" log stream --level info --style compact --predicate 'subsystem == "app.healthsync"' 2>&1 | grep --line-buffered -E "BENCH|details|elapsed" | sed -u 's/^/SIMLOG /'
+          ) &
           xcodebuild test -project HealthSync.xcodeproj -scheme HealthSync \
             -destination "platform=iOS Simulator,name=$SIM_DEVICE" \
             -only-testing:HealthSyncUITests/HealthBenchUITests \

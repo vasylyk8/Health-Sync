@@ -2,6 +2,7 @@
 import CoreLocation
 import HealthKit
 import SwiftUI
+import os
 
 /// Test harness (debug builds only, launched by CI with `-healthBench`): fills the simulator's HealthKit
 /// with synthetic workouts, then times reading them back the same way the app does. Never part of a release.
@@ -10,9 +11,11 @@ final class BenchModel: ObservableObject {
     @Published var text = "BENCH starting"
     var speed = ""
     var engineOutcome: String?
+    private static let logger = Logger(subsystem: "app.healthsync", category: "bench")
     func log(_ s: String) {
         text += "\n" + s
         print("BENCH " + s)
+        Self.logger.notice("BENCH \(s, privacy: .public)")
     }
 }
 
@@ -31,7 +34,25 @@ struct BenchView: View {
 
 @MainActor
 enum HealthBench {
+    /// Logs when the main thread stops answering (a blocked main thread also stops the bench's own checks).
+    private static func startMainThreadWatchdog() {
+        let logger = Logger(subsystem: "app.healthsync", category: "bench")
+        Thread.detachNewThread {
+            var lastSeen = Date()
+            let lock = NSLock()
+            while true {
+                DispatchQueue.main.async { lock.withLock { lastSeen = Date() } }
+                Thread.sleep(forTimeInterval: 5)
+                let stalled = Date().timeIntervalSince(lock.withLock { lastSeen })
+                if stalled > 8 { logger.notice("BENCH main thread blocked for \(Int(stalled), privacy: .public) s") }
+                // Engine progress straight from the timing summary, independent of the main thread.
+                logger.notice("BENCH tick: \(SyncTiming.shared.startupSummary().replacingOccurrences(of: "\n", with: " | "), privacy: .public)")
+            }
+        }
+    }
+
     static func run(_ m: BenchModel) async {
+        startMainThreadWatchdog()
         let args = ProcessInfo.processInfo.arguments
         let count = args.firstIndex(of: "-benchCount").flatMap { Int(args[$0 + 1]) } ?? 300
         let store = HKHealthStore()
