@@ -1,13 +1,15 @@
 import { gunzipSync } from 'node:zlib';
 import { z } from 'zod';
 import { LIMITS, TYPES_BY_ID } from '../config.js';
+import { CompactColumn, CompactError, MAX_COMPACT_POINTS, decodeColumn, decodeTimes } from './compact.js';
 
 /** See docs/DATA_CONTRACT.md §1. Schema 2 adds workout raw data (`ws`, `wd`) and daily context (`day`). */
 export const SCHEMA_VERSION = 2;
 export const OLDEST_SCHEMA = 1;
 
 /** Epoch milliseconds between 1970 and 2100. */
-const epochMs = z.number().int().min(0).max(4_102_444_800_000);
+const MAX_EPOCH_MS = 4_102_444_800_000;
+const epochMs = z.number().int().min(0).max(MAX_EPOCH_MS);
 
 export const HeaderSchema = z.object({
   kind: z.literal('header'),
@@ -49,16 +51,22 @@ const WorkoutRec = z.object({ k: z.literal('w'), id: uuid, s: epochMs, e: epochM
 export const STREAM_COLS = ['v', 'lat', 'lon', 'alt', 'spd', 'crs', 'ha', 'va'] as const;
 export const MAX_POINTS_PER_CHUNK = 20_000;
 const pts = z.array(z.number().finite().nullable()).max(MAX_POINTS_PER_CHUNK);
-/** A chunk of one raw stream: parallel arrays, `t` = absolute epoch ms of each point. */
+/**
+ * A chunk of one raw stream: parallel arrays, `t` = absolute epoch ms of each point. Either plain arrays,
+ * or (`enc: 1`) compact columns (see compact.ts), where `n` is the number of points.
+ */
 const StreamRec = z.object({
   k: z.literal('ws'),
   wid: uuid,
   st: z.string().regex(/^[A-Za-z0-9_]{1,60}$/),
   gen: epochMs,
   u: str(40).nullish(),
-  t: z.array(epochMs).min(1).max(MAX_POINTS_PER_CHUNK),
-  v: pts.optional(), lat: pts.optional(), lon: pts.optional(), alt: pts.optional(),
-  spd: pts.optional(), crs: pts.optional(), ha: pts.optional(), va: pts.optional(),
+  enc: z.literal(1).optional(),
+  n: z.number().int().min(1).max(MAX_COMPACT_POINTS).optional(),
+  t: z.union([z.array(epochMs).min(1).max(MAX_POINTS_PER_CHUNK), CompactColumn]),
+  v: z.union([pts, CompactColumn]).optional(), lat: z.union([pts, CompactColumn]).optional(), lon: z.union([pts, CompactColumn]).optional(),
+  alt: z.union([pts, CompactColumn]).optional(), spd: z.union([pts, CompactColumn]).optional(), crs: z.union([pts, CompactColumn]).optional(),
+  ha: z.union([pts, CompactColumn]).optional(), va: z.union([pts, CompactColumn]).optional(),
 }).strict();
 /** "Workout `wid` raw data of generation `gen` consists of these streams with these point counts." */
 const WorkoutMarkRec = z.object({
@@ -206,14 +214,36 @@ export function parseBatch(gz: Buffer): ParsedBatch {
       switch (rec.k) {
         case 'ws': {
           const cols: StreamChunk['cols'] = {};
-          for (const col of STREAM_COLS) {
-            const arr = rec[col];
-            if (!arr) continue;
-            if (arr.length !== rec.t.length) throw new BatchError(`line ${i}: ${col} has ${arr.length} points but t has ${rec.t.length}`);
-            cols[col] = arr;
+          let t: number[];
+          if (rec.enc === 1) {
+            // Compact columns: every column is decoded to the plain arrays the rest of the server uses.
+            const n = rec.n;
+            if (n === undefined || Array.isArray(rec.t)) throw new BatchError(`line ${i}: a compact chunk needs n and column objects`);
+            try {
+              t = decodeTimes(rec.t as CompactColumn, n, MAX_EPOCH_MS);
+              for (const col of STREAM_COLS) {
+                const c = rec[col];
+                if (!c) continue;
+                if (Array.isArray(c)) throw new BatchError(`line ${i}: ${col} must be a compact column`);
+                cols[col] = decodeColumn(c as CompactColumn, n);
+              }
+            } catch (err) {
+              if (err instanceof CompactError) throw new BatchError(`line ${i}: ${err.message}`);
+              throw err;
+            }
+          } else {
+            if (!Array.isArray(rec.t) || rec.n !== undefined) throw new BatchError(`line ${i}: plain chunks need a time array and no n`);
+            t = rec.t;
+            for (const col of STREAM_COLS) {
+              const arr = rec[col];
+              if (!arr) continue;
+              if (!Array.isArray(arr)) throw new BatchError(`line ${i}: ${col} must be an array without enc`);
+              if (arr.length !== t.length) throw new BatchError(`line ${i}: ${col} has ${arr.length} points but t has ${t.length}`);
+              cols[col] = arr;
+            }
           }
           if (Object.keys(cols).length === 0) throw new BatchError(`line ${i}: stream chunk has no values`);
-          streams.push({ wid: rec.wid, st: rec.st, gen: rec.gen, unit: rec.u ?? null, t: rec.t, cols });
+          streams.push({ wid: rec.wid, st: rec.st, gen: rec.gen, unit: rec.u ?? null, t, cols });
           continue;
         }
         case 'wd':
