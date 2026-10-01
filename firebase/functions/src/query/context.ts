@@ -5,7 +5,7 @@ import { covers, type BlobStore, type MetaStore, type TypeManifest } from '../st
 import { lit } from './duck.js';
 
 export class ToolError extends Error {
-  constructor(readonly code: 'not_found' | 'too_large' | 'bad_request' | 'no_data' | 'unavailable', message: string) {
+  constructor(readonly code: 'not_found' | 'too_large' | 'bad_request' | 'no_data' | 'unavailable' | 'category_disabled', message: string) {
     super(message);
   }
 }

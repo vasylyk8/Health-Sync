@@ -2,22 +2,23 @@ import type { DuckDBConnection } from '@duckdb/node-api';
 import { join } from 'node:path';
 import { LIMITS } from '../config.js';
 import { DAILY_TYPE, WORKOUT_TYPE } from '../ingest/batch.js';
-import type { StreamInfo, TypeManifest, WorkoutDataDoc } from '../store/types.js';
+import type { StreamInfo, WorkoutDataDoc } from '../store/types.js';
 import {
   bestEfforts, distanceFromIncrements, elevationProfile, EVENT_NAMES, heartRateDrift, heartRateZones, movingMs, pausesFromEvents,
   round, routeDistance, splits, thin, trimRouteIndexes, weightReadings, zoneBounds, type DistSeries, type Pause, type RoutePoints, type WorkoutEvent,
 } from './calc.js';
 import { envelope, range, rows, type ToolResult } from './common.js';
-import { isComplete, loadType, localRangeToUtc, localTs, roughUtcRange, ToolError, validTz, type QueryDeps } from './context.js';
+import { isComplete, loadType, localRangeToUtc, roughUtcRange, ToolError, validTz, type QueryDeps } from './context.js';
 import { lit, withDuck } from './duck.js';
+import { dailyMaps, enabledCategories } from './health.js';
+import { findWorkout, SELECT_W, toWorkoutRow, type WorkoutRow } from './lookup.js';
 
 const MAX_LIST = 300;
+const DAY_MS = 86_400_000;
 const DEFAULT_POINTS = 300;
 const MAX_POINTS = 1000;
 /** Metres hidden at each end of a route unless the user explicitly asks for it. */
 export const ROUTE_TRIM_M = 300;
-
-const ID_RE = /^[0-9A-Za-z-]{8,64}$/;
 
 /** Apple's cumulative distance types, in the order we prefer them as the distance source. */
 const DISTANCE_STREAMS = [
@@ -29,74 +30,6 @@ const STREAM_ALIASES: Record<string, string> = { hr: 'HeartRate', heartrate: 'He
 
 // ---------------------------------------------------------------------------------------------
 // Loading
-
-interface WorkoutRow {
-  id: string;
-  s: number;
-  e: number;
-  startLocal: string;
-  endLocal: string;
-  src: string | null;
-  bid: string | null;
-  dev: string | null;
-  extra: Record<string, unknown>;
-}
-
-const parseExtra = (raw: unknown): Record<string, unknown> => {
-  if (typeof raw !== 'string') return {};
-  try {
-    const v = JSON.parse(raw) as unknown;
-    return v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-};
-
-const toWorkoutRow = (r: Record<string, unknown>): WorkoutRow => ({
-  id: String(r.id), s: Number(r.s), e: Number(r.e), startLocal: String(r.start_local), endLocal: String(r.end_local),
-  src: (r.src as string) ?? null, bid: (r.bid as string) ?? null, dev: (r.dev as string) ?? null, extra: parseExtra(r.extra),
-});
-
-const SELECT_W = (tz: string) => `SELECT id, s, e, src, bid, dev, extra,
-  strftime(${localTs('s', tz)}, '%Y-%m-%d %H:%M') AS start_local, strftime(${localTs('e', tz)}, '%Y-%m-%d %H:%M') AS end_local FROM w`;
-
-/** Earliest raw-data time of a workout: stored on its index, or read from its smallest stream file (older uploads). */
-async function firstRawTime(c: DuckDBConnection, dir: string, deps: QueryDeps, doc: WorkoutDataDoc | null): Promise<number | null> {
-  if (!doc) return null;
-  if (typeof doc.firstT === 'number') return doc.firstT;
-  const files = Object.values(doc.streams).flatMap((s) => s.files).sort((a, b) => a.bytes - b.bytes);
-  const f = files[0];
-  if (!f) return null;
-  const p = join(dir, 'first_t.parquet');
-  await deps.data.download(f.path, p);
-  const r = await rows(c, `SELECT min(t) AS t FROM read_parquet(${lit(p)})`);
-  return r[0]?.t == null ? null : Number(r[0].t);
-}
-
-/**
- * Loads the workout's summary row (table `w`) and its raw-data index. Summaries are stored by month: with
- * the raw data's first timestamp only the 1-2 months around it are read; otherwise (no raw data, or not
- * found there) every month, as before.
- */
-async function findWorkout(c: DuckDBConnection, dir: string, deps: QueryDeps, id: string, tz: string) {
-  if (!ID_RE.test(id)) throw new ToolError('bad_request', 'workout_id must be an id returned by get_workouts.');
-  const doc = await deps.meta.getWorkoutData(deps.uid, id);
-  const first = await firstRawTime(c, dir, deps, doc).catch(() => null);
-  const query = `${SELECT_W(tz)} WHERE id = ${lit(id)} AND k = 'w' LIMIT 1`;
-  let man: TypeManifest | null = null;
-  let found: Record<string, unknown>[] = [];
-  if (first !== null) {
-    // A workout starts before its first sample; two days covers a start just before a month boundary.
-    man = await loadType(c, dir, deps, WORKOUT_TYPE, [first - 2 * 86_400_000, first + 86_400_000], 'w', { what: 'raw', budget: { bytes: 0 } });
-    found = await rows(c, query);
-  }
-  if (!found.length) {
-    man = await loadType(c, dir, deps, WORKOUT_TYPE, 'all', 'w', { what: 'raw', budget: { bytes: 0 } });
-    found = await rows(c, query);
-  }
-  if (!found.length) throw new ToolError('not_found', 'No workout with that id. Call get_workouts to list workout ids.');
-  return { man, row: toWorkoutRow(found[0]!), doc };
-}
 
 export interface LoadedStream {
   name: string;
@@ -174,6 +107,26 @@ function tidyMetadata(md: unknown): unknown {
   if (loc === true || loc === 1) out.HKSwimmingLocationType = 'pool';
   else if (loc === 2) out.HKSwimmingLocationType = 'open water';
   else if (loc === false || loc === 0) out.HKSwimmingLocationType = 'unknown';
+  Object.assign(out, derivedWeather(out));
+  return out;
+}
+
+/** Dew point and heat index from Apple's workout weather ("24 degC", "81 %"): how humid it felt, which drives heart rate drift in the heat. */
+export function derivedWeather(md: Record<string, unknown>): Record<string, number> {
+  const tm = typeof md.HKWeatherTemperature === 'string' ? /^\s*(-?[\d.]+)\s*(degC|degF)/.exec(md.HKWeatherTemperature) : null;
+  const hm = typeof md.HKWeatherHumidity === 'string' ? /^\s*([\d.]+)\s*%/.exec(md.HKWeatherHumidity) : null;
+  if (!tm || !hm) return {};
+  const tc = tm[2] === 'degF' ? (Number(tm[1]) - 32) / 1.8 : Number(tm[1]);
+  const rh = Number(hm[1]);
+  if (!Number.isFinite(tc) || !Number.isFinite(rh) || rh <= 0 || rh > 100) return {};
+  const alpha = Math.log(rh / 100) + (17.62 * tc) / (243.12 + tc);
+  const out: Record<string, number> = { derived_dew_point_c: round((243.12 * alpha) / (17.62 - alpha), 1) };
+  const tf = tc * 1.8 + 32;
+  if (tf >= 80 && rh >= 40) {
+    // Rothfusz regression (National Weather Service), valid for hot, humid conditions.
+    const hi = -42.379 + 2.04901523 * tf + 10.14333127 * rh - 0.22475541 * tf * rh - 0.00683783 * tf * tf - 0.05481717 * rh * rh + 0.00122874 * tf * tf * rh + 0.00085282 * tf * rh * rh - 0.00000199 * tf * tf * rh * rh;
+    out.derived_heat_index_c = round((hi - 32) / 1.8, 1);
+  }
   return out;
 }
 
@@ -218,7 +171,8 @@ export async function getWorkouts(deps: QueryDeps, args: { start_date: string; e
     const out = await rows(c, `${SELECT_W(r.tz)} WHERE ${filters.join(' AND ')} ORDER BY s LIMIT ${cap + 1}`);
     const truncated = out.length > cap;
     if (truncated) out.length = cap;
-    const docs = new Map((await deps.meta.listWorkoutData(deps.uid)).map((d) => [d.wid, d]));
+    // One read per listed workout (not one per workout the user has ever synced).
+    const docs = new Map((await Promise.all(out.map((row) => deps.meta.getWorkoutData(deps.uid, String(row.id))))).flatMap((d) => (d ? [[d.wid, d] as const] : [])));
     const list = out.map((row) => {
       const w = toWorkoutRow(row);
       return { ...summaryOf(w), raw_data: rawStatus(docs.get(w.id) ?? null) };
@@ -244,9 +198,9 @@ export async function getWorkout(deps: QueryDeps, args: { workout_id: string; ti
     // Auto-detected segments (one per ~km, often overlapping) add noise; their count stays in events.counts.
     const listed = events.filter((e) => EVENT_NAMES[e.type] !== 'segment');
     const day = row.startLocal.slice(0, 10);
-    const dailyMan = await loadType(c, dir, deps, DAILY_TYPE, [row.s - 3 * 86_400_000, row.s + 86_400_000], 'd', { what: 'raw', budget: { bytes: 0 } });
-    const dailyRows = await rows(c, `SELECT id, extra FROM d WHERE k = 'day' AND id IN (${lit(day)}, ${lit(dayBefore(day))})`);
-    const daily = Object.fromEntries(dailyRows.map((d) => [String(d.id), tidyMetrics((parseExtra(d.extra).m as Record<string, unknown>) ?? {})]));
+    const { byDay, mans: dailyMans } = await dailyMaps(c, dir, deps, await enabledCategories(deps), row.s - 3 * DAY_MS, row.s + DAY_MS, dayBefore(day), day);
+    const dailyMan = dailyMans.find(([t]) => t === DAILY_TYPE)?.[1] ?? null;
+    const daily = Object.fromEntries([...byDay.entries()].map(([d, m]) => [d, tidyMetrics(m)]));
     const streams = doc
       ? Object.entries(doc.streams).map(([name, s]) => ({
           name, points: s.points, unit: s.unit, columns: s.cols,
@@ -572,21 +526,4 @@ export function formatDuration(totalSeconds: number): string {
 // ---------------------------------------------------------------------------------------------
 // Daily context
 
-export async function getDailyContext(deps: QueryDeps, args: { start_date: string; end_date: string }): Promise<ToolResult> {
-  const r = range(deps, { ...args, timezone: 'UTC' });
-  const days = (Date.parse(r.end + 'T00:00:00Z') - Date.parse(r.start + 'T00:00:00Z')) / 86_400_000 + 1;
-  if (days > 400) throw new ToolError('too_large', 'At most 400 days per call. Use a shorter range.');
-  return withDuck(async (c, dir) => {
-    const s = Date.parse(r.start + 'T00:00:00Z');
-    const e = Date.parse(r.end + 'T00:00:00Z') + 86_400_000;
-    const man = await loadType(c, dir, deps, DAILY_TYPE, [s, e], 'd', { what: 'raw', budget: { bytes: 0 } });
-    const out = await rows(c, `SELECT id, extra FROM d WHERE k = 'day' AND id >= ${lit(r.start)} AND id <= ${lit(r.end)} ORDER BY id`);
-    return {
-      ...envelope(deps, [[DAILY_TYPE, man]], isComplete(man, s, e, deps.now(), true), [
-        'Each day is a local calendar day on the user\'s phone. Sleep is dated by the morning it ends. A missing metric means it was not recorded that day, not zero.',
-      ]),
-      count: out.length,
-      days: out.map((d) => ({ date: String(d.id), ...tidyMetrics((parseExtra(d.extra).m as Record<string, unknown>) ?? {}) })),
-    };
-  });
-}
+export { getDailyContext } from './health.js';
