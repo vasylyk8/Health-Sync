@@ -143,15 +143,16 @@ enum HealthLab {
         // E0: A/B of read settings on the same data, the way the sync reads (24 workouts in progress):
         // A = before (routes behind the shared query gate at 16), B = route lane of 8 + query gate 32.
         let everyId = all.map(\.uuid.uuidString)
-        for (label, shared, queries, routes) in [("A shared gate 16", true, 16, 8), ("B route lane 8, gate 32", false, 32, 8),
-                                                  ("A shared gate 16 (again)", true, 16, 8), ("B route lane 8, gate 32 (again)", false, 32, 8),
-                                                  ("C route lane 16, gate 32", false, 32, 16)] {
+        for (label, shared, queries, routes, inProgress) in [("A shared gate 16", true, 16, 8, 24), ("B route lane 8, gate 32", false, 32, 8, 24),
+                                                  ("A shared gate 16 (again)", true, 16, 8, 24), ("B route lane 8, gate 32 (again)", false, 32, 8, 24),
+                                                  ("D lane 8, gate 64, 48 workouts at once", false, 64, 8, 48),
+                                                  ("E lane 8, gate 16, 24 workouts at once", false, 16, 8, 24)] {
             let src = HealthKitSource(scope: scope)
             src.routesShareQueryGate = shared
             src.setQueryConcurrency(queries)
             src.setRouteConcurrency(routes)
             let jobs: [@Sendable () async -> Void] = everyId.map { id in { _ = try? await src.workoutDetail(id: id, gen: 1) } }
-            let secs = await parallel(jobs, width: 24)
+            let secs = await parallel(jobs, width: inProgress)
             m.log("E0 \(label): all \(everyId.count) workouts in \(f(secs)) s = \(f(Double(everyId.count) / secs * 60)) workouts/min")
         }
 
