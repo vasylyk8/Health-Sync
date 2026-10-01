@@ -358,7 +358,6 @@ enum HealthBench {
         m.log(String(format: "seed done: %d workouts, %d samples in %.0f s", count - failures, samplesTotal, Date().timeIntervalSince(t0)))
     }
 }
-#endif
 
 /// How many speed-test rows were already logged.
 private final class BenchCounter: @unchecked Sendable {
@@ -372,3 +371,4 @@ private final class BenchCounter: @unchecked Sendable {
         }
     }
 }
+#endif
