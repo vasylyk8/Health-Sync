@@ -98,7 +98,10 @@ export interface LoadOptions {
 }
 
 const EMPTY_ROWS =
-  'SELECT NULL::VARCHAR k, NULL::VARCHAR id, NULL::BIGINT s, NULL::BIGINT e, NULL::DOUBLE v, NULL::INTEGER c, NULL::VARCHAR u, NULL::VARCHAR agg, NULL::VARCHAR src, NULL::VARCHAR bid, NULL::VARCHAR dev, NULL::VARCHAR tz, NULL::VARCHAR extra, NULL::BIGINT seq, NULL::VARCHAR batch, NULL::VARCHAR rid WHERE false';
+  'SELECT NULL::VARCHAR k, NULL::VARCHAR id, NULL::BIGINT s, NULL::BIGINT e, NULL::DOUBLE v, NULL::DOUBLE v2, NULL::DOUBLE v3, NULL::INTEGER c, NULL::VARCHAR u, NULL::VARCHAR agg, NULL::VARCHAR src, NULL::VARCHAR bid, NULL::VARCHAR dev, NULL::VARCHAR tz, NULL::VARCHAR extra, NULL::BIGINT seq, NULL::VARCHAR batch, NULL::VARCHAR rid WHERE false';
+
+/** Identity of a row: its id, or (series, start, source) for rows without one (hourly buckets, dense readings). */
+export const ROW_KEY = `COALESCE(id, concat_ws('|', agg, s::VARCHAR, src))`;
 
 /**
  * Downloads only the monthly partitions of one type that overlap the range and creates table
@@ -137,8 +140,8 @@ export async function loadType(
   const src = dataFiles.length ? `SELECT * FROM read_parquet(${list(dataFiles)}, union_by_name=true)` : EMPTY_ROWS;
   const tombSql = tombFiles.length ? `SELECT id FROM read_parquet(${list(tombFiles)})` : 'SELECT NULL::VARCHAR id WHERE false';
   await c.run(`CREATE OR REPLACE TEMP TABLE ${alias} AS
-    SELECT * FROM (${src}) r WHERE id NOT IN (${tombSql})
-    QUALIFY row_number() OVER (PARTITION BY id ORDER BY seq DESC, batch DESC) = 1`);
+    SELECT * FROM (${src}) r WHERE (id IS NULL OR id NOT IN (${tombSql}))
+    QUALIFY row_number() OVER (PARTITION BY ${ROW_KEY} ORDER BY seq DESC, batch DESC) = 1`);
   return man;
 }
 

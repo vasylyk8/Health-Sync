@@ -54,6 +54,8 @@ export interface TypeManifest {
 }
 
 export interface UserDoc {
+  /** Consent categories the user switched on (see CATEGORIES in config.ts); missing = the defaults. */
+  categories?: string[];
   generation: number;
   deleting: boolean;
   createdAt: number;

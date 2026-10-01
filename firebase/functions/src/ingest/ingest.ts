@@ -4,6 +4,7 @@ import { BatchError, WORKOUT_TYPE, parseBatch, type ParsedBatch, type StreamChun
 import { idsToParquet, rowsToParquet, streamToParquet, withDuck } from '../query/duck.js';
 import { addInterval, type BlobStore, type FileRef, type MetaStore, type StreamInfo, type TypeManifest, type WorkoutDataDoc } from '../store/types.js';
 import { log } from '../log.js';
+import { DEFAULT_CATEGORIES, categoryOfType } from '../config.js';
 
 export interface IngestDeps {
   incoming: BlobStore;
@@ -69,6 +70,13 @@ export async function ingestObject(objectPath: string, deps: IngestDeps, opts: {
   }
 
   const { header } = parsed;
+  // Data of a category the user has not switched on is never stored (the app only sends enabled categories).
+  if (header.mode !== 'status' && !(user.categories ?? DEFAULT_CATEGORIES).includes(categoryOfType(header.type))) {
+    log.info('batch for a switched-off category dropped', { uid, batchId, type: header.type });
+    await meta.markBatch(uid, batchId, 'discarded', 'category not enabled');
+    await incoming.delete(objectPath).catch(() => undefined);
+    return 'discarded';
+  }
   if (header.mode === 'workoutdata') return ingestStreams(uid, batchId, objectPath, parsed, user.generation, deps);
   if (header.mode === 'status') return ingestStatus(uid, batchId, objectPath, parsed, user.generation, deps);
   const type = header.type;

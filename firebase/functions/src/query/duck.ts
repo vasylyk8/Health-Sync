@@ -28,7 +28,7 @@ export async function withDuck<T>(fn: (c: DuckDBConnection, dir: string) => Prom
 }
 
 export const ROW_COLUMNS =
-  "{k:'VARCHAR',id:'VARCHAR',s:'BIGINT',e:'BIGINT',v:'DOUBLE',c:'INTEGER',u:'VARCHAR',agg:'VARCHAR',src:'VARCHAR',bid:'VARCHAR',dev:'VARCHAR',tz:'VARCHAR',extra:'VARCHAR',seq:'BIGINT',batch:'VARCHAR',rid:'VARCHAR'}";
+  "{k:'VARCHAR',id:'VARCHAR',s:'BIGINT',e:'BIGINT',v:'DOUBLE',v2:'DOUBLE',v3:'DOUBLE',c:'INTEGER',u:'VARCHAR',agg:'VARCHAR',src:'VARCHAR',bid:'VARCHAR',dev:'VARCHAR',tz:'VARCHAR',extra:'VARCHAR',seq:'BIGINT',batch:'VARCHAR',rid:'VARCHAR'}";
 
 /** Quote a string literal for SQL (only used for local file paths we generate). */
 export const lit = (s: string) => `'${s.replace(/'/g, "''")}'`;
