@@ -5,6 +5,8 @@ on:
     branches: ['claude/krok-app-qa-testing-*', 'claude/krok-improvements-overnight-*', 'claude/sharp-brown-*']
     paths: ['ios/**', '.github/workflows/qa-ios.yml']
   workflow_dispatch:
+  pull_request:
+    paths: ['ios/**', '.github/workflows/qa-ios.yml']
 permissions:
   contents: read
 concurrency:

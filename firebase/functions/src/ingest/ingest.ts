@@ -39,6 +39,15 @@ export async function ingestObject(objectPath: string, deps: IngestDeps, opts: {
 
   const prior = await meta.batchState(uid, batchId);
   if (prior) {
+    // Publishing is atomic, external cleanup isn't. Keep the input until those
+    // idempotent effects complete, then retry them without publishing twice.
+    if (prior === 'published' && await incoming.exists(objectPath)) {
+      const user = await meta.getUser(uid);
+      if (user && !user.deleting) {
+        const parsed = parseBatch(await incoming.read(objectPath));
+        await finishPublishedEffects(deps, uid, parsed);
+      }
+    }
     await incoming.delete(objectPath).catch(() => undefined);
     return prior === 'published' ? 'duplicate' : prior;
   }
@@ -116,18 +125,16 @@ export async function ingestObject(objectPath: string, deps: IngestDeps, opts: {
     // A deletion started while we were writing: remove what we wrote.
     await Promise.all(Object.values(written).map((f) => data.delete(f.path).catch(() => undefined)));
   }
+  if (result === 'published' || result === 'duplicate') await finishPublishedEffects(deps, uid, parsed);
   await incoming.delete(objectPath).catch(() => undefined);
-
-  // A deleted workout takes its raw data with it.
-  if (result === 'published' && type === WORKOUT_TYPE && parsed.tombstones.length) {
-    await dropWorkoutData(deps, uid, parsed.tombstones);
-  }
-
-  if (result === 'published' && header.reconcileId && header.reconcileDone && deps.onReconcileDone) {
-    await deps.onReconcileDone(uid, type, header.reconcileId);
-  }
   log.info('batch processed', { uid, batchId, type, result, records: parsed.recordCount, mode: header.mode, readMs: header.perf?.readMs, uploadMs: header.perf?.uploadMs });
   return result;
+}
+
+async function finishPublishedEffects(deps: IngestDeps, uid: string, parsed: ParsedBatch): Promise<void> {
+  const { header } = parsed;
+  if (header.type === WORKOUT_TYPE && parsed.tombstones.length) await dropWorkoutData(deps, uid, parsed.tombstones);
+  if (header.reconcileId && header.reconcileDone && deps.onReconcileDone) await deps.onReconcileDone(uid, header.type, header.reconcileId);
 }
 
 /** Deletes the raw-data index and Parquet files of workouts that no longer exist. */

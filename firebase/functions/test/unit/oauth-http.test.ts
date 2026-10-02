@@ -49,6 +49,9 @@ async function begin(scopes = DEFAULT_SCOPES) {
     code_challenge: pkceChallenge(verifier), code_challenge_method: 'S256', scope: scopes.join(' '), state: 'state-preserved' });
   const response = await fetch(`${base}/authorize?${params}`, { redirect: 'manual' });
   expect(response.status).toBe(302);
+  expect(response.headers.get('set-cookie')).toMatch(/HttpOnly/);
+  expect(response.headers.get('set-cookie')).toMatch(/Secure/);
+  expect(response.headers.get('set-cookie')).toMatch(/SameSite=Lax/i);
   const cookie = response.headers.get('set-cookie')!.split(';')[0]!;
   const request = new URL(response.headers.get('location')!).searchParams.get('request')!;
   return { client_id, verifier, cookie, request };
@@ -147,6 +150,8 @@ describe('Public OAuth HTTP boundary', () => {
     } finally { await client.close(); }
   });
   it('separates sensitive event and profile permission from workout-only grants', () => {
+    expect(TOOL_NAMES.every((name) => toolScopes(name).length > 0)).toBe(true);
+    expect(() => toolScopes('undeclared_future_tool')).toThrow(/Declare OAuth permissions/);
     expect(toolScopes('get_profile')).toEqual(['health:profile:read']);
     expect(toolScopes('get_health_events')).toEqual(['health:events:read']);
     expect(toolScopes('get_glucose')).toContain('health:events:read');

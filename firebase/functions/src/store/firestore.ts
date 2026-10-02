@@ -154,7 +154,7 @@ interface BucketLike {
     exists(): Promise<[boolean]>;
   };
   deleteFiles(opts: { prefix: string; force: boolean }): Promise<unknown>;
-  getFiles(opts: { prefix: string }): Promise<[{ name: string }[], ...unknown[]]>;
+  getFiles(opts: { prefix: string; maxResults?: number; autoPaginate?: boolean }): Promise<[{ name: string }[], ...unknown[]]>;
 }
 
 export class GcsBlobs implements BlobStore {
@@ -179,6 +179,10 @@ export class GcsBlobs implements BlobStore {
   async list(prefix: string) {
     const [files] = await this.bucket.getFiles({ prefix });
     return files.map((f) => f.name);
+  }
+  async hasAny(prefix: string) {
+    const [files] = await this.bucket.getFiles({ prefix, maxResults: 1, autoPaginate: false });
+    return files.length > 0;
   }
   async deletePrefix(prefix: string) {
     await this.bucket.deleteFiles({ prefix, force: true });

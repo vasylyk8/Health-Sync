@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { LIMITS, type Provider } from '../config.js';
 import { TOKEN_RE, hashToken, type AccessLog, type Connections, type RateLimiter, type TokenStore } from '../auth/tokens.js';
 import type { BlobStore, MetaStore } from '../store/types.js';
-import { ToolError, type QueryDeps } from '../query/context.js';
+import { checkPendingUploads, ToolError, type QueryDeps } from '../query/context.js';
 import type { ToolResult } from '../query/common.js';
 import { EVENT_TYPES } from '../config.js';
 import { DAILY_GROUPS, getGlucose, getHealthEvents, getHourlySeries, getNutritionLog, getProfile, getRecovery, getTrainingLoad } from '../query/health.js';
@@ -23,6 +23,7 @@ export interface McpDeps {
   connections: Connections;
   meta: MetaStore;
   data: BlobStore;
+  incoming?: BlobStore;
   now?: () => number;
   oauth?: Pick<KrokOAuth, 'verifyAccessToken' | 'resource' | 'issuer'>;
 }
@@ -194,7 +195,8 @@ export function toolScopes(name: string): string[] {
   if (name === 'get_health_events') return ['health:events:read'];
   if (name === 'get_profile') return ['health:profile:read'];
   if (name === 'get_workout_route') return ['health:workouts:read', 'health:routes:read'];
-  return ['health:workouts:read'];
+  if (['get_workouts', 'get_workout_series', 'workout_hr_zones', 'workout_splits', 'workout_hr_drift', 'workout_best_efforts', 'workout_elevation'].includes(name)) return ['health:workouts:read'];
+  throw new Error(`Declare OAuth permissions before registering tool: ${name}`);
 }
 
 function buildServer(q: QueryDeps, deps: McpDeps, provider: Provider, identity?: AuthInfo): McpServer {
@@ -217,7 +219,12 @@ function buildServer(q: QueryDeps, deps: McpDeps, provider: Provider, identity?:
                 _meta: { 'mcp/www_authenticate': [`Bearer resource_metadata="${deps.oauth?.issuer}.well-known/oauth-protected-resource/mcp", error="insufficient_scope", scope="${required.join(' ')}"`] } };
             }
           }
-          const result = await withDeadline(tool.run(q, args ?? {}), LIMITS.requestDeadlineMs);
+          // Fresh for every tool: the stateless HTTP server's context is request-local.
+          q.pendingUploadCheck = undefined;
+          const result = await withDeadline((async () => {
+            await checkPendingUploads(q);
+            return tool.run(q, args ?? {});
+          })(), LIMITS.requestDeadlineMs);
           const text = JSON.stringify(result);
           if (Buffer.byteLength(text) > LIMITS.maxResponseBytes) {
             throw new ToolError('too_large', 'The result is too large to return in full. Use a shorter range or a coarser period.');
@@ -301,7 +308,7 @@ export async function handleMcp(req: IncomingMessage & { body?: unknown }, res: 
       res.setHeader('Retry-After', '60'); return send(res, 429, { error: 'too_many_requests' });
     }
     await deps.connections.touch(uid, provider, now(), user.connections[provider]).catch(() => undefined);
-    const q: QueryDeps = { uid, meta: deps.meta, data: deps.data, now, tz: user.tz ?? 'UTC' };
+    const q: QueryDeps = { uid, meta: deps.meta, data: deps.data, incoming: deps.incoming, now, tz: user.tz ?? 'UTC' };
     const server = buildServer(q, deps, provider, identity);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { void transport.close(); void server.close(); });
@@ -340,7 +347,7 @@ export async function handleMcp(req: IncomingMessage & { body?: unknown }, res: 
 
   await deps.connections.touch(rec.uid, rec.provider, now(), user.connections[rec.provider]).catch(() => undefined);
 
-  const q: QueryDeps = { uid: rec.uid, meta: deps.meta, data: deps.data, now, tz: user.tz ?? 'UTC' };
+  const q: QueryDeps = { uid: rec.uid, meta: deps.meta, data: deps.data, incoming: deps.incoming, now, tz: user.tz ?? 'UTC' };
   const server = buildServer(q, deps, rec.provider);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   res.on('close', () => {

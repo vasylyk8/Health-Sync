@@ -8,6 +8,8 @@ export interface BlobStore {
   deletePrefix(prefix: string): Promise<void>;
   /** Object names starting with `prefix`. */
   list(prefix: string): Promise<string[]>;
+  /** Bounded existence check, avoiding an unbounded listing on the query path. */
+  hasAny?(prefix: string): Promise<boolean>;
   delete(path: string): Promise<void>;
   exists(path: string): Promise<boolean>;
 }

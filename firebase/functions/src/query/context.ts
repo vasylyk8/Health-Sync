@@ -14,9 +14,22 @@ export interface QueryDeps {
   uid: string;
   meta: MetaStore;
   data: BlobStore;
+  incoming?: BlobStore;
+  pendingUploadCheck?: Promise<boolean>;
+  pendingUploadsDetected?: boolean;
   now: () => number;
   /** Default timezone (the phone's current zone). */
   tz: string;
+}
+
+/** Conservative completeness: an earlier accepted page may still be in flight.
+ * One bounded storage lookup per tool, shared by all of its type loads. */
+export async function checkPendingUploads(deps: QueryDeps): Promise<void> {
+  if (!deps.incoming) return;
+  const prefix = `incoming/${deps.uid}/`;
+  deps.pendingUploadCheck ??= deps.incoming.hasAny
+    ? deps.incoming.hasAny(prefix) : deps.incoming.list(prefix).then((paths) => paths.length > 0);
+  deps.pendingUploadsDetected = await deps.pendingUploadCheck;
 }
 
 export function validTz(tz: string): string {
@@ -117,6 +130,7 @@ export async function loadType(
   alias: string,
   opts: LoadOptions,
 ): Promise<TypeManifest | null> {
+  await checkPendingUploads(deps);
   const man = await deps.meta.getManifest(deps.uid, type);
   const all = man?.files ?? {};
   const months = range === 'all' ? null : new Set(monthsBetween(range[0], range[1]));

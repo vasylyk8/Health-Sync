@@ -82,7 +82,7 @@ export const mcp = onRequest(
   async (req, res) => {
     const d = deps();
     try {
-      await handleMcp(req, res, { tokens: d.tokens, limiter: d.tokens, accessLog: d.tokens, connections: d.tokens, meta: d.meta, data: d.data, oauth: oauth() });
+      await handleMcp(req, res, { tokens: d.tokens, limiter: d.tokens, accessLog: d.tokens, connections: d.tokens, meta: d.meta, data: d.data, incoming: d.incoming, oauth: oauth() });
     } catch (err) {
       log.error('mcp request failed', { code: (err as { code?: string }).code ?? 'internal' });
       if (!res.headersSent) res.status(500).json({ error: 'internal' });
