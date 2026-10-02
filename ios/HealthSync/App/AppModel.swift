@@ -451,7 +451,7 @@ final class AppModel: ObservableObject {
         do {
             if await backend.hasAppleAccount() {
                 let identity = try await appleSignIn.authorize()
-                try await backend.linkAppleAccount(identity, allowExistingAccount: false)
+                try await backend.linkAppleAccount(identity, allowExistingAccount: false, replacingFreshAccount: nil)
                 try await backend.revokeAppleAuthorization(identity.authorizationCode)
             }
             try await backend.deleteAllData()
