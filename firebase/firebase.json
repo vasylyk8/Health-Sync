@@ -28,8 +28,16 @@
   ],
   "hosting": {
     "public": "hosting",
+    "ignore": ["firebase.json", "**/node_modules/**", "**/.git/**", "**/.env*", "**/.DS_Store"],
     "cleanUrls": true,
     "headers": [
+      {
+        "source": "/.well-known/openai-apps-challenge",
+        "headers": [
+          { "key": "Content-Type", "value": "text/plain; charset=utf-8" },
+          { "key": "Cache-Control", "value": "no-store" }
+        ]
+      },
       {
         "source": "/mcp/**",
         "headers": [

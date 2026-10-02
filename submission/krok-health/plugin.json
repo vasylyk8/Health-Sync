@@ -10,9 +10,9 @@
     "com.openai": {
       "interface": {
         "displayName": "KROK",
-        "shortDescription": "Your Apple Health, explained",
+        "shortDescription": "Apple Health workouts and data",
         "developerName": "2ndOp Inc",
-        "longDescription": "KROK connects the Apple Health data you choose to your assistant. Explore synced workouts, kilometre splits, heart-rate series, sleep and daily activity. Sign in with Apple and authorize each assistant separately. Access is read-only. Workout routes hide the first and last 300 metres by default; exact endpoints require separate consent and an explicit request. Sensitive events and profile details require additional permissions. Data may be incomplete or delayed. KROK describes data and trends; it does not diagnose, prescribe or provide medical advice.",
+        "longDescription": "Connect your Apple Health data and workouts to your ChatGPT. Explore detailed workout, heart-rate, sleep, recovery and a broad range of metrics with extra fine detail. Built for runners, athletes and anyone who cares about health and wellness.\n\nYou choose what to share. Access is read-only. KROK helps you understand your data, it does not provide medical advice.",
         "defaultPrompt": [
           "Show my recent workouts.",
           "What were the kilometre splits in my latest run?",
@@ -23,7 +23,8 @@
         "privacyPolicyURL": "https://krok-1d60a.firebaseapp.com/privacy",
         "logo": "./assets/icon.png",
         "composerIcon": "./assets/icon.png",
-        "termsOfServiceURL": "https://krok-1d60a.firebaseapp.com/terms"
+        "termsOfServiceURL": "https://krok-1d60a.firebaseapp.com/terms",
+        "category": "Healthcare"
       },
       "review": {
         "commerce": false,
