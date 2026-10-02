@@ -72,7 +72,7 @@ struct WelcomeView: View {
                 Task { await model.connectHealth() }
             } label: {
                 HStack(spacing: 10) {
-                    if model.busy { ProgressView().tint(Theme.onInk) }
+                    if model.busy { ProgressView().tint(Theme.buttonText) }
                     Text(Copy.Welcome.connectButton)
                 }
             }

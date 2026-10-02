@@ -12,6 +12,10 @@ enum Theme {
     static let ink = dynamic(0x3A3A3C, 0xEDEDED)
     /// Text on an ink-filled button.
     static let onInk = background
+    /// Fill of the main buttons: the same black (light) and white (dark) as Apple's own sign-in button, which may not be recoloured.
+    static let buttonFill = dynamic(0x000000, 0xFFFFFF)
+    /// Text on a main button (white on black, black on white), like Apple's button.
+    static let buttonText = dynamic(0xFFFFFF, 0x000000)
     /// Secondary text (5:1 or better on the background).
     static let muted = dynamic(0x6E6E73, 0x98989D)
     /// Cards, secondary buttons and chips.
