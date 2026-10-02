@@ -51,6 +51,11 @@ describe('OAuth on real Firestore transactions', () => {
     expect((await db.doc(`users/${uid}`).get()).get('synthetic')).toBe(true);
     await run(process.execPath, ['scripts/prepare-reviewer.mjs', '--apply'], { env });
     expect((await db.doc(`users/${uid}`).get()).get('oauthEpochs.claude')).toBe(1);
+    const beforeReuse = (await getAuth().getUser(uid)).tokensValidAfterTime;
+    await run(process.execPath, ['scripts/prepare-reviewer.mjs', '--apply', '--reuse', '--reseed'], { env });
+    expect((await db.doc(`users/${uid}`).get()).get('oauthEpochs.claude')).toBe(1);
+    expect((await getAuth().getUser(uid)).tokensValidAfterTime).toBe(beforeReuse);
+    expect((await db.doc(`users/${uid}`).get()).get('categories')).toEqual(['core', 'devices', 'mind', 'nutrition', 'profile']);
     // Never convert an ordinary/customer account into a reviewer by accident.
     await db.doc(`users/${uid}`).update({ synthetic: false });
     await expect(run(process.execPath, ['scripts/prepare-reviewer.mjs', '--apply'], { env })).rejects.toThrow();

@@ -1,9 +1,9 @@
 name: listing-package
 on:
   push:
-    paths: ['submission/**', 'scripts/tasks/build-listing-package.py', '.github/workflows/listing-package.yml']
+    paths: ['submission/**', 'scripts/tasks/build-listing-package.py', 'scripts/tasks/validate-listing-schema.py', '.github/workflows/listing-package.yml']
   pull_request:
-    paths: ['submission/**', 'scripts/tasks/build-listing-package.py', '.github/workflows/listing-package.yml']
+    paths: ['submission/**', 'scripts/tasks/build-listing-package.py', 'scripts/tasks/validate-listing-schema.py', '.github/workflows/listing-package.yml']
 permissions:
   contents: read
 jobs:
@@ -12,7 +12,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r submission/validation-requirements.txt
       - run: python3 scripts/tasks/build-listing-package.py --output /tmp/krok-health-preparation.zip
+      - run: python3 scripts/tasks/validate-listing-schema.py /tmp/krok-health-preparation.zip
       - uses: actions/upload-artifact@v4
         with:
           name: krok-health-preparation-not-submission-ready

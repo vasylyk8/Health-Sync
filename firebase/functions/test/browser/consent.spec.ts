@@ -20,6 +20,8 @@ test.beforeAll(async () => {
   if (!getApps().length) initializeApp({ projectId: 'demo-health-sync' });
   await getAuth().createUser({ uid: 'browser-reviewer', email: reviewer, password });
   await getAuth().setCustomUserClaims('browser-reviewer', { krokReviewer: true });
+  await getAuth().createUser({ uid: 'browser-ordinary', email: 'ordinary@example.test', password });
+  await store.set('users/browser-ordinary', { generation: 1, connections: {}, createdAt: 1 });
   await store.set('users/browser-reviewer', { generation: 1, connections: {}, createdAt: 1 });
   const bundle = await build({ entryPoints: ['../../web/connect.ts'], bundle: true, write: false, format: 'esm', platform: 'browser',
     plugins: [{ name: 'auth-emulator-only', setup(builder) {
@@ -46,7 +48,7 @@ test.beforeAll(async () => {
     return { uid: identity.uid, apple: identity.firebase.sign_in_provider === 'apple.com', reviewer: identity.krokReviewer === true && identity.firebase.sign_in_provider === 'password' };
   }, { hit: async () => true });
 });
-test.afterAll(async () => { server.close(); await getAuth().deleteUser('browser-reviewer'); });
+test.afterAll(async () => { server.close(); await getAuth().deleteUser('browser-reviewer'); await getAuth().deleteUser('browser-ordinary'); });
 
 async function begin(page: Page, scopes = DEFAULT_SCOPES, name = 'Claude') {
   const register = await page.request.post(`${base}/register`, { data: { redirect_uris: [callback], token_endpoint_auth_method: 'none', client_name: name } });
@@ -104,6 +106,18 @@ test('wrong reviewer password stays signed out with a recoverable error', async 
   await page.getByRole('button', { name: 'Sign in to review account' }).click();
   await expect(page.locator('#status')).toContainText('Reviewer sign-in failed');
   await expect(page.getByRole('button', { name: 'Allow access' })).toBeDisabled();
+});
+
+test('ordinary Firebase password accounts cannot authorize health access without the reviewer claim', async ({ page }) => {
+  await begin(page);
+  await page.getByText('Directory reviewer access').click();
+  await page.getByLabel('Email', { exact: true }).fill('ordinary@example.test');
+  await page.getByLabel('Password', { exact: true }).fill(password);
+  await page.getByRole('button', { name: 'Sign in to review account' }).click();
+  await expect(page.getByRole('button', { name: 'Allow access' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Allow access' }).click();
+  await expect(page.locator('#status')).toContainText('Use Sign in with Apple');
+  await expect(page).toHaveURL(/\/connect\?request=/);
 });
 
 test('switching accounts signs out and disables authorization', async ({ page }) => {

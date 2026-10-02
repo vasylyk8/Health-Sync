@@ -32,7 +32,7 @@ jobs:
         working-directory: firebase/functions
       - run: npx playwright install --with-deps chromium
         working-directory: firebase/functions
-      - name: Prepare dedicated account and verify production access without exposing credentials
+      - name: Complete synthetic fixtures and verify production access without exposing credentials
         run: python3 scripts/tasks/provision-directory-reviewer.py --apply
       - uses: actions/upload-artifact@v4
         if: always()

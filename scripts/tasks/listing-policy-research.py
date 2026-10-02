@@ -61,5 +61,9 @@ for name, url in sources.items():
         index.append({'name': name, 'url': url, 'error': str(error)})
 (out / 'index.json').write_text(json.dumps(index, indent=2))
 print(json.dumps(index, indent=2))
-if any('error' in entry for entry in index):
+optional_sources = {'openai-supported-countries'}  # Help Center bot protection; portal availability still needs confirmation.
+for entry in index:
+    if 'error' in entry and entry['name'] in optional_sources:
+        print('::warning::Optional source unavailable: ' + entry['name'] + '. No supported-country claim can be based on it.')
+if any('error' in entry and entry['name'] not in optional_sources for entry in index):
     raise SystemExit('One or more sources could not be fetched; inspect index.json before relying on this research.')

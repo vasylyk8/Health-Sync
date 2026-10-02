@@ -19,10 +19,10 @@ Batch A: requirements, listing copy, shared branding, cases and recording guide.
 
 - OpenAI health-data eligibility needs careful review; consumer-health consent does not override the PHI prohibition.
 - `docs/legal/TERMS_OF_SERVICE.md` is proposed text, not a published agreement. No terms URL is declared complete.
-- The dedicated reviewer is not yet provisioned or tested in production. Never commit or include credentials in listing packages.
+- The dedicated reviewer was provisioned in production and its credentials stored in Secret Manager. Browser login is blocked because the password provider is disabled. No global sign-in setting has been changed; explicit owner approval was requested. Never commit or include credentials in listing packages.
 - All eight real-host cases in `docs/PUBLIC_MCP_REVIEW_CASES.md` remain **Not run** in both hosts. Automated tests do not change this status.
 - Both real recordings are pending. The owner has agreed to record them. No demo URL is invented.
-- Country targeting must be an explicit target-platform supported-country list excluding RU/BY. Do not use an empty list (unrestricted targeting) or infer enforcement from this document.
+- The OpenAI package now has an explicit ISO allowlist excluding RU/BY, subject to the host's own supported regions. Validate portal acceptance and Claude targeting controls before publication; see `COUNTRY_TARGETING.md`.
 - No organization verified, portal draft uploaded, legal attestation made, directory review submitted or listing published by this preparation batch.
 
 Use [platform requirements](PLATFORM_REQUIREMENTS.md), [recording guide](RECORDING_GUIDE.md) and [reviewer runbook](REVIEWER_RUNBOOK.md) to close these gaps in order.
