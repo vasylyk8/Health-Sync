@@ -54,7 +54,10 @@ final class QAUITests: XCTestCase {
         let app = launch(extra + ["-onboarded"])
         XCTAssertTrue(app.buttons["moreMenu"].waitForExistence(timeout: 5))
         app.buttons["moreMenu"].tap()
-        app.buttons["Delete All My Data"].firstMatch.tap()
+        let delete = app.buttons["Delete All My Data"].firstMatch
+        // At the largest text sizes the menu is taller than the screen: scroll it.
+        if !delete.waitForExistence(timeout: 3) { app.swipeUp() }
+        delete.tap()
         let confirm = app.sheets.buttons["Delete All My Data"].exists ? app.sheets.buttons["Delete All My Data"] : app.buttons["Delete All My Data"].firstMatch
         confirm.tap()
         XCTAssertTrue(app.buttons["connectHealth"].waitForExistence(timeout: 5))
