@@ -32,6 +32,11 @@
     "typescript-eslint": "^8.70.1",
     "vitest": "^5.0.2"
   },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.5",
+    "basic-ftp": "6.2.1",
+    "gaxios@6": { "uuid": "11.1.1" }
+  },
   "dependencies": {
     "@duckdb/node-api": "^1.5.5-r.5",
     "@modelcontextprotocol/sdk": "^1.30.1",

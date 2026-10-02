@@ -25,4 +25,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: python3 scripts/tasks/apple-auth-preflight.py

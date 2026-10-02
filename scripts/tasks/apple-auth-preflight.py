@@ -1,6 +1,7 @@
 """Read-only Apple/Firebase configuration check. Never prints private keys or tokens."""
 import json
 import os
+from pathlib import Path
 import subprocess
 import urllib.request
 
@@ -28,3 +29,21 @@ if config.get("clientId") != os.environ["APPLE_SIGN_IN_SERVICE_ID"]:
 print("Apple provider is enabled; Services ID matches the CI configuration.")
 print("Confirmed KROK bundle ID: com.vasylyk.krok; Team ID: AAZHPDPD2B.")
 print("Private-key format and integrity validated without revealing its contents.")
+
+# Reuse the existing App Store Connect signer, capturing its token instead of logging it.
+if all(os.environ.get(name) for name in ["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_P8"]):
+    asc_token = subprocess.check_output(["python3", str(Path(__file__).with_name("asc_jwt.py"))], text=True).strip()
+    def apple_get(path):
+        request = urllib.request.Request("https://api.appstoreconnect.apple.com/v1/" + path,
+                                         headers={"Authorization": "Bearer " + asc_token})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)
+    bundles = apple_get("bundleIds?filter%5Bidentifier%5D=com.vasylyk.krok")["data"]
+    if len(bundles) != 1:
+        raise SystemExit("The confirmed KROK bundle ID was not found in the publishing Apple account.")
+    capabilities = apple_get("bundleIds/" + bundles[0]["id"] + "/bundleIdCapabilities")["data"]
+    if not any(item["attributes"].get("capabilityType") == "APPLE_ID_AUTH" for item in capabilities):
+        raise SystemExit("Sign in with Apple capability is missing on the confirmed KROK App ID.")
+    print("Apple Developer App ID exists and its Sign in with Apple capability is enabled (read-only check).")
+else:
+    print("::warning::App Store Connect secrets unavailable; native App ID capability was not independently verified.")

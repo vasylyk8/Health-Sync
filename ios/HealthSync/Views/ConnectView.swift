@@ -9,7 +9,6 @@ struct ConnectView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section { AppleAccountView() }
                 Section {
                     ForEach(model.providers) { provider in
                         Button { selected = provider } label: { ProviderRow(provider: provider, setUp: model.isSetUp(provider)) }
@@ -23,6 +22,9 @@ struct ConnectView: View {
                 } footer: {
                     Text("Then ask it things like \"How did I sleep this week?\"").foregroundStyle(Theme.mutedText)
                 }
+                // Keep both primary assistant actions discoverable at accessibility text sizes.
+                // The Apple-account explanation can grow to several screens and belongs below them.
+                Section { AppleAccountView() }
                 Section {
                     SyncStatusView(progress: model.progress, status: model.status, issue: model.syncIssue)
                 }
