@@ -40,19 +40,19 @@ final class OnboardingUITests: XCTestCase {
 
     func testAppleAccountCanUsePublicOAuthWithoutCreatingAPrivateLink() {
         let app = launch(["-onboarded", "-appleLinked"])
-        // Home has no "linked" row any more: the account state shows in the ••• menu (no Sign in with Apple item once linked).
-        XCTAssertTrue(app.buttons["moreMenu"].waitForExistence(timeout: 10))
-        var linked = false
-        for _ in 0..<20 where !linked {
-            app.buttons["moreMenu"].tap()
-            let signIn = app.buttons["Sign in with Apple"]
-            _ = signIn.waitForExistence(timeout: 0.5)
-            linked = !signIn.exists
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
+        // Home has no "linked" row to wait for: the account state loads a moment after launch, so open the sheet
+        // until it shows the OAuth view (an unlinked account would show the consent view instead).
+        XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 10))
+        var oauth = false
+        for _ in 0..<10 where !oauth {
+            app.buttons["provider.claude"].tap()
+            oauth = app.buttons["copyOAuthURL"].waitForExistence(timeout: 3)
+            if !oauth {
+                if app.buttons["Close"].waitForExistence(timeout: 2) { app.buttons["Close"].tap() }
+                _ = app.buttons["provider.claude"].waitForExistence(timeout: 2)
+            }
         }
-        XCTAssertTrue(linked, "linked accounts have no Sign in with Apple item in the menu")
-        app.buttons["provider.claude"].tap()
-        XCTAssertTrue(app.buttons["copyOAuthURL"].waitForExistence(timeout: 10))
+        XCTAssertTrue(oauth, "a linked account sets up through OAuth")
         XCTAssertFalse(app.buttons["consentContinue"].exists)
         app.buttons["copyOAuthURL"].tap()
         XCTAssertTrue(app.staticTexts["oauthCopied"].waitForExistence(timeout: 5))
