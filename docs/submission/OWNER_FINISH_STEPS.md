@@ -1,0 +1,27 @@
+# Owner steps remaining after technical preparation
+
+This file records real dependencies, not a submitted/approved listing. No messages have been sent to either platform.
+
+## Reviewer sign-in
+
+The production account is created and its credentials are stored in [KROK Secret Manager](https://console.cloud.google.com/security/secret-manager?project=krok-1d60a), secret `krok-directory-reviewer-credentials`. Do not paste them into chat, the repository, videos or listing text. Production login is currently blocked because Firebase password sign-in is disabled.
+
+The proposed change is limited to `signIn.email.enabled=true` and `signIn.email.passwordRequired=true` in project `krok-1d60a`. This is a project-wide sign-in provider change. Apple login remains supported; health OAuth still requires Apple or an administrator-marked password reviewer. Unit and real Auth-emulator browser tests confirm ordinary password users are refused. Explicit approval was requested after automatic approval review rejected the global provider change. Until approved, no script/workflow changes that setting.
+
+After approval, apply the prepared provider helper, rerun reviewer verification and resolve every failure. Only then record the two walkthroughs using `RECORDING_GUIDE.md`. The real host cases and recording URLs remain required; synthetic protocol checks cannot replace them.
+
+## Terms and eligibility
+
+Review `docs/legal/TERMS_OF_SERVICE.md`. A local preview can be generated with `python3 scripts/tasks/prepare-terms-page.py`; it stays outside Hosting. Approve the actual terms and age/country/consumer-law decisions before `--publish-approved`, deploy `/terms`, verify public content, then add its real URL to the upload. Do not treat approving code as accepting directory legal attestations.
+
+OpenAI's PHI prohibition and sensitive-data requirements need a publisher compliance determination for the actual Apple Health inventory. Use the documented eligibility question if clarification is needed. Consent and “not medical advice” do not establish acceptance by themselves.
+
+## Organization, portal and domain
+
+1. Sign in at [OpenAI Platform](https://platform.openai.com/login). Select/create the organization for **2ndOp Inc**, then complete business verification in [organization settings](https://platform.openai.com/settings/organization/general). Keep selected organization/project and verified public identity consistent with the package.
+2. Once approved legal URLs and real recordings are incorporated, build and validate the final ZIP. Confirm a supported category, the country allowlist excluding RU/BY, and real case evidence. Open [OpenAI plugin submissions](https://platform.openai.com/plugins) and upload the final draft using the organization owner or Apps Management Write role. Inspect the saved fields; an upload is not a submission.
+3. Supply the exact domain challenge token and the portal-selected host. `prepare-domain-challenge.py` stages the token at `/.well-known/openai-apps-challenge` and refuses replacing a different token. Deploy, check exact plain-text response on that origin, and confirm domain verification. Static files take precedence over Firebase rewrites; do not change the OAuth discovery handler to carry a placeholder token.
+4. Complete actual saved-version OAuth and all eight host cases, secure reviewer fields and scans. The authorized owner completes current legal/policy attestations. Submit for review only with complete evidence. Publication follows approval as a separate step.
+5. For Claude, use [directory management](https://claude.ai/directory/manage) on an eligible paid plan. Follow `CLAUDE_SUBMISSION_DRAFT.md`, connect the canonical public endpoint, disclose personal health data, confirm every tool through MCP Inspector or actual Claude, and supply secure reviewer fields. Verify permanent slug/category/region controls, complete owner compliance acknowledgments, then submit. Do not upload the OpenAI ZIP as a substitute for Claude's connector flow.
+
+The current tools cannot control the owner's logged-in OpenAI/Claude dashboards or make business verification and owner attestations. They can prepare, validate and repair the technical artifacts and incorporate supplied challenge/recording evidence.
