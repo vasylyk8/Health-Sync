@@ -84,4 +84,7 @@ jobs:
         working-directory: firebase/functions
         env:
           PHONE_BATCH_DIR: ${{ github.workspace }}/phone-batches
-        run: npx vitest run test/unit/phone-batches.test.ts
+        run: |
+          node scripts/copy-shared.mjs
+          ls "$PHONE_BATCH_DIR"
+          npx vitest run test/unit/phone-batches.test.ts
