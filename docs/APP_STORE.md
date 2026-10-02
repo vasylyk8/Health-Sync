@@ -46,9 +46,9 @@ KROK is not a medical device and doesn't provide medical advice.
 ## App Review notes (paste into "Notes")
 KROK lets users analyze their own Apple Health data with the AI assistant of their choice (Anthropic's Claude or OpenAI's ChatGPT), which they explicitly connect. The purpose is health and fitness management: users ask questions about their workouts (pace, heart rate zones, routes) and recovery, and get answers grounded in their own data.
 
-- Data is read-only and used only to provide this service to the user. It is not used for advertising, sold, or used for data mining. No data is shared until the user taps an assistant, reads a consent screen naming the recipient company, and copies a private link into that assistant's settings.
+- Data is read-only and used only to provide this service to the user. It is not used for advertising, sold, or used for data mining. No data is shared until the user connects an assistant and consents to the named recipient. Apple-linked accounts use public OAuth with explicit read-only permissions; existing anonymous accounts can use a revocable private link.
 - The user can disconnect an assistant (access stops immediately) or delete all data (••• menu → Delete All My Data).
-- By default only workouts (including their GPS routes) and daily/hourly summaries of fitness and recovery metrics are read. Further groups of Apple Health data (nutrition and alcohol, heart alerts, glucose/insulin/blood pressure, mood and symptoms, menstrual cycle, medications, profile) are separate switches in ••• → Your data (on by default); Apple Health's permission sheet lists each type and the user can deny any, and each is used by specific features (for example glucose around a workout, nutrition and recovery). The AI is instructed to describe data and trends only, with no diagnosis or medical advice. Clinical records, reproductive and sexual-health data and questionnaires are not read. Data is stored encrypted in the EU (Google Cloud, Belgium) and deleted automatically after a year of inactivity.
+- Workouts (including their GPS routes), daily/hourly summaries of fitness and recovery metrics, and the enabled additional types are requested from Apple Health. Further groups of Apple Health data (nutrition and alcohol, heart alerts, glucose/insulin/blood pressure, mood and symptoms, menstrual cycle, medications, profile) are separate switches in ••• → Your data (on by default); Apple Health's permission sheet lists each type and the user can deny any, and each is used by specific features (for example glucose around a workout, nutrition and recovery). The AI is instructed to describe data and trends only, with no diagnosis or medical advice. Clinical records, reproductive and sexual-health data and questionnaires are not read. Data is stored encrypted in the EU (Google Cloud, Belgium) and deleted automatically after a year of inactivity.
 - To test without an AI account, the app works fully up to the connection step. Adding the connector on claude.ai (free account) takes about a minute: Settings → Connectors → Add custom connector → paste the link.
 - HealthKit data is not stored in iCloud.
 
@@ -59,10 +59,10 @@ KROK lets users analyze their own Apple Health data with the AI assistant of the
 | Health & Fitness → Fitness | Yes | Yes | No | App Functionality |
 | Sensitive Info (health conditions, symptoms, medications, glucose, cycle data) | Yes, only if the user enables the group | Yes | No | App Functionality |
 | Location → Precise Location (GPS routes of workouts) | Yes | Yes | No | App Functionality |
-| Identifiers → User ID | Yes (anonymous Firebase ID) | Yes | No | App Functionality |
+| Identifiers → User ID | Yes (Firebase ID and linked Apple account identifier) | Yes | No | App Functionality |
 | Usage Data → Product Interaction | Yes (e.g. "connected Claude") | No | No | Analytics |
 | Diagnostics → Crash Data | Yes | No | No | App Functionality |
-| Contact info, contacts, browsing, purchases | No | | | |
+| Contact info, contacts, browsing, purchases | Not requested from Apple by KROK; review Firebase identity-token handling before attesting | | | |
 
 ## Export compliance
 The app uses only standard HTTPS encryption (exempt). `ITSAppUsesNonExemptEncryption` = NO is already set.

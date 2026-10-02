@@ -23,6 +23,11 @@ export async function rows(c: DuckDBConnection, sql: string): Promise<Record<str
 export function envelope(deps: QueryDeps, mans: [string, TypeManifest | null][], complete: boolean, notes: string[] = []): ToolResult {
   const now = deps.now();
   const coverage = mans.map(([t, m]) => coverageInfo(m, t, now));
+  if (deps.pendingUploadsDetected) {
+    complete = false;
+    coverage.forEach((item) => { item.fullHistorySynced = false; item.syncedRanges = []; });
+    notes.push('Accepted uploads are still being processed. Results may omit earlier pages; open KROK and wait for sync to finish.');
+  }
   const checked = mans.map(([, m]) => m?.coverage.checkedAt ?? null).filter((x): x is number => x !== null);
   const asOf = checked.length ? Math.min(...checked) : null;
   if (coverage.some((cv) => cv.stale)) {

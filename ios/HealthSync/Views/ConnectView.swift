@@ -22,6 +22,9 @@ struct ConnectView: View {
                 } footer: {
                     Text("Then ask it things like \"How did I sleep this week?\"").foregroundStyle(Theme.mutedText)
                 }
+                // Keep both primary assistant actions discoverable at accessibility text sizes.
+                // The Apple-account explanation can grow to several screens and belongs below them.
+                Section { AppleAccountView() }
                 Section {
                     SyncStatusView(progress: model.progress, status: model.status, issue: model.syncIssue)
                 }

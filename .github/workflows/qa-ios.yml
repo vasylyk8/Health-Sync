@@ -5,6 +5,8 @@ on:
     branches: ['claude/krok-app-qa-testing-*', 'claude/krok-improvements-overnight-*', 'claude/sharp-brown-*']
     paths: ['ios/**', '.github/workflows/qa-ios.yml']
   workflow_dispatch:
+  pull_request:
+    paths: ['ios/**', '.github/workflows/qa-ios.yml']
 permissions:
   contents: read
 concurrency:
@@ -49,7 +51,7 @@ jobs:
             CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= | tee qa.log | grep -E "QA-|Test Case|error:|passed|failed"
           exit ${PIPESTATUS[0]}
       - name: QA UI tests (dark appearance)
-        if: always()
+        if: always() && !cancelled()
         run: |
           xcrun simctl boot "$SIM_DEVICE" || true
           xcrun simctl ui booted appearance dark

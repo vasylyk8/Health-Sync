@@ -18,6 +18,8 @@ struct SetupSheet: View {
             Group {
                 if model.isSetUp(provider) && link == nil {
                     connectedView
+                } else if model.appleAccountLinked {
+                    oauthSetupView
                 } else if link == nil && !consented {
                     consentView
                 } else {
@@ -34,6 +36,31 @@ struct SetupSheet: View {
             link = model.existingLink(for: provider)
             if model.isSetUp(provider) { link = nil }
         }
+    }
+
+    private var oauthSetupView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("Authorize KROK in \(provider.name)").font(.title2.bold())
+                Text("Add KROK in your assistant, then sign in using the Apple Account you linked here. You'll choose what data it can read on the authorization page.")
+                Text("While directory approval is pending, use a custom connector with OAuth authentication.")
+                    .font(.footnote).foregroundStyle(Theme.mutedText)
+                Text(Theme.mcpURL.absoluteString).font(.footnote.monospaced()).textSelection(.enabled)
+                Button("Copy KROK server URL") {
+                    UIPasteboard.general.string = Theme.mcpURL.absoluteString
+                    copied = true
+                }.buttonStyle(.borderedProminent).accessibilityIdentifier("copyOAuthURL")
+                if copied { Text("Copied").font(.footnote).accessibilityIdentifier("oauthCopied") }
+                Button("Open \(provider.websiteLabel)") { openURL(provider.setupURL) }.buttonStyle(.bordered)
+                Text(provider.id == "chatgpt"
+                     ? "In ChatGPT, enable Developer mode, create KROK with this URL, and choose OAuth."
+                     : "In Claude, open Customize → Connectors → Add custom connector and paste this URL.")
+                Text("Don't choose No authentication. KROK will open a sign-in and consent page.")
+                    .font(.footnote).foregroundStyle(Theme.mutedText)
+                waitingRow
+            }.padding(24)
+        }
+        .task { await model.waitUntilSetUp(provider) }
     }
 
     private var consentView: some View {

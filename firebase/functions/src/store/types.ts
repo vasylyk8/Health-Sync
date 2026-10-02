@@ -8,6 +8,8 @@ export interface BlobStore {
   deletePrefix(prefix: string): Promise<void>;
   /** Object names starting with `prefix`. */
   list(prefix: string): Promise<string[]>;
+  /** Bounded existence check, avoiding an unbounded listing on the query path. */
+  hasAny?(prefix: string): Promise<boolean>;
   delete(path: string): Promise<void>;
   exists(path: string): Promise<boolean>;
 }
@@ -63,6 +65,8 @@ export interface UserDoc {
   tz: string | null;
   connections: Partial<Record<string, { setUpAt: number; lastUsedAt: number }>>;
   links: Partial<Record<string, { tokenHash: string; createdAt: number }>>;
+  oauthEpochs?: Partial<Record<string, number>>;
+  oauthProfileId?: string;
 }
 
 export type BatchState = 'published' | 'rejected' | 'discarded';

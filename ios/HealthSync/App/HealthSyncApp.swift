@@ -16,7 +16,7 @@ struct HealthSyncApp: App {
         let source: HealthSource
         let telemetry: Telemetry
         if uiTesting || args.contains("-healthBench") || !FirebaseBackend.configure() {
-            backend = FakeBackend()
+            backend = FakeBackend(appleLinked: uiTesting && args.contains("-appleLinked"))
             source = FakeHealthSource()
             telemetry = NoTelemetry()
         } else {
@@ -100,6 +100,8 @@ struct RootView: View {
 }
 
 enum Theme {
+    static let mcpURL = (Bundle.main.object(forInfoDictionaryKey: "MCPServerURL") as? String).flatMap(URL.init(string:))
+        ?? URL(string: "https://krok-1d60a.firebaseapp.com/mcp")!
     /// Small secondary text: darker than SwiftUI's .secondary so it clears the 4.5:1 contrast audit
     /// on every background (the audit flagged .secondary as "nearly passed").
     static let mutedText = Color(UIColor { traits in

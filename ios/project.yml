@@ -45,6 +45,7 @@ targets:
       path: HealthSync/HealthSync.entitlements
       properties:
         com.apple.developer.healthkit: true
+        com.apple.developer.applesignin: [Default]
         com.apple.developer.healthkit.access: []
         com.apple.developer.healthkit.background-delivery: true
         com.apple.developer.devicecheck.appattest-environment: production
@@ -63,6 +64,7 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         FirebaseAppDelegateProxyEnabled: false
         PrivacyPolicyURL: ${PUBLIC_BASE_URL}/privacy
+        MCPServerURL: https://krok-1d60a.firebaseapp.com/mcp
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ${BUNDLE_ID}

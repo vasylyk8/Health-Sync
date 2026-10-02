@@ -118,6 +118,7 @@ platform :ios do
       ents = sh("codesign -d --entitlements :- #{app.shellescape} 2>/dev/null", log: false)
       UI.user_error!("Signed app is missing the HealthKit entitlement") unless ents.include?("com.apple.developer.healthkit")
       UI.user_error!("Signed app is missing App Attest") unless ents.include?("com.apple.developer.devicecheck.appattest-environment")
+      UI.user_error!("Signed app is missing Sign in with Apple") unless ents.include?("com.apple.developer.applesignin")
       UI.success("Entitlements verified (HealthKit, App Attest)")
     end
   end

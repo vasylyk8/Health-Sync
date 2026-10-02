@@ -4,3 +4,6 @@ src/generated/
 *.log
 .seed/
 *-debug.log
+/.seed/
+test-results/
+playwright-report/

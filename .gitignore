@@ -7,3 +7,4 @@ ios/Gemfile.lock
 .DS_Store
 *-debug.log
 __pycache__/
+firebase/hosting/connect.js
