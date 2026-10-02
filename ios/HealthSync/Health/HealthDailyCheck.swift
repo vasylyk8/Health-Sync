@@ -22,6 +22,33 @@ enum DailyCheck {
         (.bodyMass, .gramUnit(with: .kilo), 75, false),
     ]
 
+    /// Writes the upload batches the sync engine would send for these days (same code: record builder, header, gzip) to the
+    /// log as `DAILYBATCH <id> <n> <base64 piece>` lines. The workflow's server job ingests them and asks questions through
+    /// the MCP endpoint, which links what the phone sends to what an AI gets back.
+    private static func dumpBatches(_ m: BenchModel, source: HealthKitSource, from start: Date) async {
+        let end = Date()
+        do {
+            let batches = try await source.dailyContextBatches(from: start, to: end, categories: ["nutrition", "mind", "cycle"])
+            for batch in batches where !batch.records.isEmpty {
+                let header = BatchHeader(type: batch.typeId, mode: .stats, seq: Outbox.seqFloor(), window: (start, end), checkedAt: end)
+                let made = try BatchWriter.make(header: header, records: batch.records, nextSeq: { Outbox.seqFloor() + 1 }, tz: TimeZone.current.identifier, device: "daily-check", appVersion: "ci")
+                for b in made {
+                    let text = b.gz.base64EncodedString()
+                    var index = text.startIndex
+                    var piece = 0
+                    while index < text.endIndex {
+                        let next = text.index(index, offsetBy: 180, limitedBy: text.endIndex) ?? text.endIndex
+                        m.log("DAILYBATCH \(b.id) \(piece) \(text[index ..< next])")
+                        index = next
+                        piece += 1
+                    }
+                }
+            }
+        } catch {
+            m.log("DAILYCHECK FAIL could not build the upload batches: \(error)")
+        }
+    }
+
     static func run(_ m: BenchModel) async {
         let store = HKHealthStore()
         let scope = HealthTypes.scope(HealthTypes.loadCoverage())
@@ -88,6 +115,7 @@ enum DailyCheck {
         } catch {
             m.log("DAILYCHECK FAIL daily pass threw: \(error) · report: \(source.dailyReport)")
         }
+        await dumpBatches(m, source: source, from: cal.date(byAdding: .day, value: -11, to: today)!)
         m.log("BENCH DONE")
     }
 }
