@@ -13,3 +13,5 @@ The dedicated production account and fixtures were created by Actions run 370050
 Owner secret access: [Google Secret Manager for KROK](https://console.cloud.google.com/security/secret-manager?project=krok-1d60a). A secret existing does not prove the login/provider or dataset works. Do not mark reviewer access complete until the clean-browser and real-host checks pass.
 
 The verifier captures its synthetic callback locally instead of sending it to an assistant. It tests production browser login, PKCE, default-scope refusals, every tool, refresh rotation and revocation, and saves only check names/status. This is a production protocol rehearsal; actual saved-version ChatGPT/Claude host cases remain separate.
+
+While login is blocked, `verify-reviewer-dataset.mjs` uses the already-authorized admin identity for read-only queries against only the dedicated synthetic account. All 17 health queries passed against production data in Actions run 37006622162. It does not create an OAuth grant or claim host execution; no authentication setting is changed. The account identity tool and complete OAuth/MCP rehearsal remain pending provider approval.
