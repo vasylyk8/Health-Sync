@@ -43,6 +43,8 @@ struct WelcomeView: View {
                 .smallText()
                 .foregroundStyle(Theme.muted)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 16)
+            AppleAccountView(style: .welcome)
                 .padding(.bottom, 24)
         }
         .padding(.horizontal, Theme.margin)
@@ -67,7 +69,7 @@ struct WelcomeView: View {
     }
 
     private var connectButton: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             Button {
                 Task { await model.connectHealth() }
             } label: {
@@ -86,7 +88,6 @@ struct WelcomeView: View {
                     .multilineTextAlignment(.center)
                     .accessibilityIdentifier("connectStage")
             }
-            AppleAccountView(style: .welcome)
         }
     }
 }
