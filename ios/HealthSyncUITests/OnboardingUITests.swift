@@ -9,7 +9,7 @@ final class OnboardingUITests: XCTestCase {
 
     private func launch(_ extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-uiTesting", "-noChicago"] + extra
+        app.launchArguments = ["-uiTesting"] + (extra.contains("-chicago") ? [] : ["-noChicago"]) + extra
         app.launch()
         return app
     }
