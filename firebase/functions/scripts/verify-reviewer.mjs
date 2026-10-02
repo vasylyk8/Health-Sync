@@ -113,16 +113,24 @@ try {
   assert.equal(daily.days[0].steps, 6000);
   passed('populated reviewer: 5km workout, five 6-minute splits, trimmed route and daily fixture');
   current = 'scope boundaries';
-  for (const [name, args] of [['get_workout_route', { workout_id, include_full_route: true }], ['get_profile', {}], ['get_glucose', { start_date: '2024-03-01', end_date: '2024-03-02' }]]) {
+  for (const [name, args] of [['get_workout_route', { workout_id, include_full_route: true }], ['get_profile', {}], ['get_nutrition_log', { start_date: '2024-03-01', end_date: '2024-03-02' }]]) {
     assert.equal((await client.callTool({ name, arguments: args })).isError, true);
   }
-  passed('default scopes refuse exact endpoints, profile and detailed sensitive events');
+  passed('default scopes refuse exact endpoints, profile and timed nutrition');
   await client.close();
   const extended = await connect('ChatGPT', 'health:workouts:read health:daily:read health:routes:read health:events:read health:profile:read offline_access');
   client = await mcp(extended);
   current = 'tool inventory';
   const tools = (await client.listTools()).tools;
-  assert.equal(tools.length, 18);
+  assert.equal(tools.length, 16);
+  assert(!/get_glucose|get_health_events/.test(client.getInstructions() ?? ''));
+  for (const name of ['get_glucose', 'get_health_events']) {
+    assert(!tools.some((tool) => tool.name === name));
+    const result = await client.callTool({ name, arguments: { start_date: '2024-03-01', end_date: '2024-03-07' } });
+    assert.equal(result.isError, true);
+    assert(result.content.some((item) => item.type === 'text' && item.text.includes('not found')));
+  }
+  passed('removed glucose and detailed event tools are absent and cannot be called with extended scopes');
   for (const tool of tools) {
     assert(tool.title);
     assert.equal(tool.annotations?.readOnlyHint, true);
@@ -139,12 +147,11 @@ try {
     get_daily_context: dates, get_hourly_series: { ...dates, series: 'HeartRate', timezone: 'Europe/Berlin' },
     get_recovery: { date: '2024-03-07', timezone: 'Europe/Berlin' },
     get_training_load: { end_date: '2024-03-07', days: 14, max_hr: 200 },
-    get_glucose: { ...dates, timezone: 'Europe/Berlin' }, get_health_events: { ...dates, category: 'mind', timezone: 'Europe/Berlin' },
     get_nutrition_log: { ...dates, timezone: 'Europe/Berlin' }, get_profile: {}, get_account: {},
   };
   assert.deepEqual(new Set(tools.map((t) => t.name)), new Set(Object.keys(inputs)));
   for (const tool of tools) { await call(tool.name, inputs[tool.name]); passed('live MCP tool: ' + tool.name); }
-  passed('all 18 production tools respond with supported schemas and read-only annotations');
+  passed('all 16 production tools respond with supported schemas and read-only annotations');
   current = 'refresh token rotation';
   const refreshed = await formRequest('/token', { grant_type: 'refresh_token', client_id: extended.client_id, refresh_token: extended.refresh_token, resource });
   grants.push({ ...refreshed, client_id: extended.client_id });

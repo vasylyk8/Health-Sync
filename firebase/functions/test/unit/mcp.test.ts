@@ -58,6 +58,13 @@ describe('MCP endpoint', () => {
     expect(tools.tools.map((t) => t.name).sort()).toEqual([...TOOL_NAMES].sort());
     expect(tools.tools.every((t) => t.annotations?.readOnlyHint)).toBe(true);
     expect(client.getInstructions()).toMatch(/read-only access/);
+    expect(client.getInstructions()).not.toMatch(/get_glucose|get_health_events/);
+    for (const name of ['get_glucose', 'get_health_events']) {
+      expect(tools.tools.some((tool) => tool.name === name)).toBe(false);
+      const result = await client.callTool({ name, arguments: { start_date: '2024-01-01', end_date: '2024-01-07' } });
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'text', text: expect.stringContaining('not found') })]));
+    }
     expect(TOOL_NAMES).toEqual(expect.arrayContaining(['get_workouts', 'get_workout', 'get_workout_series', 'get_workout_route', 'workout_hr_zones', 'workout_splits', 'workout_hr_drift', 'workout_best_efforts', 'workout_elevation', 'get_daily_context']));
     await client.close();
   });
