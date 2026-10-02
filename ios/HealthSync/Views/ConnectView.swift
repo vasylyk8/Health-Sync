@@ -14,8 +14,8 @@ struct ConnectView: View {
                 ScrollView {
                     content.frame(minHeight: geo.size.height)
                 }
-                .scrollBounceBehavior(.basedOnSize)
-                .refreshable { await model.syncNow() }
+                .scrollBounceBehavior(.always, axes: .vertical)
+                .refreshable { await model.pullToRefresh() }
             }
         }
         .background(Theme.background.ignoresSafeArea())

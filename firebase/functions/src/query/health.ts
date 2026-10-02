@@ -231,14 +231,16 @@ export async function getHealthEvents(deps: QueryDeps, args: EventsArgs): Promis
     const mans = await loadEvents(c, dir, deps, cats, categories, snapshot ? 'all' : [a, b]);
     const list = names.map(lit).join(',');
     const when = snapshot ? 'TRUE' : `s >= ${a} AND s < ${b}`;
-    const out = await rows(c, `SELECT ${fmtLocal(localTs('s', r.tz))} AS t, agg AS type, v, v2, c, u, src, extra, s FROM ev WHERE agg IN (${list}) AND ${when} ORDER BY s, agg DESC LIMIT ${limit + 1}`);
+    const out = await rows(c, `SELECT ${fmtLocal(localTs('s', r.tz))} AS t, agg AS type, v, v2, c, u, src, extra, s FROM ev WHERE agg IN (${list}) AND ${when} ORDER BY s DESC, agg ASC LIMIT ${limit + 1}`);
     const truncated = out.length > limit;
     if (truncated) out.length = limit;
+    // The newest `limit` events win when there are more (what a person asks about is usually recent), shown oldest first.
+    out.reverse();
     const notes = [
       'Events are readings or entries the user (or a connected device/app) recorded; times are local. Describe them, do not diagnose, and never advise on medication or insulin doses.',
       'Blood pressure comes as two events at the same time (BloodPressureSystolic and BloodPressureDiastolic).',
     ];
-    if (truncated) notes.push(`More events match than the ${limit} shown (oldest first); narrow the range or types.`);
+    if (truncated) notes.push(`More events match than the ${limit} shown: these are the most recent ${limit} in the range, oldest first. Narrow the range or types to see earlier ones.`);
     return {
       ...envelope(deps, mans, mans.every(([, m]) => !!m?.coverage.checkedAt), notes),
       timezone: r.tz, count: out.length, truncated,

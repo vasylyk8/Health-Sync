@@ -349,8 +349,20 @@ actor SyncEngine {
     /// Daily context: the whole history the first time (and once a week, so older data added
     /// later is included), otherwise just the last few days. Rows go out per consent category, and a chunk whose
     /// content did not change since it was last sent is not sent again.
+    /// Bump when daily rows sent by an older app may be incomplete: the next run re-reads the whole history once.
+    /// 2: a failed HealthKit query used to drop its metric silently and the pass was recorded as complete.
+    static let dailyVersion = 2
+
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }
+        if outbox.state.dailyVersion < Self.dailyVersion {
+            try outbox.update { s in
+                s.dailyFullAt = nil
+                s.dailyHashes = [:]
+                s.dailyVersion = Self.dailyVersion
+            }
+            lastDailyAt = nil
+        }
         let end = now()
         // An update of an app that already synced reads the whole history once more, only to fill the totals on Home
         // (rows whose content did not change are not sent again).
@@ -401,8 +413,19 @@ actor SyncEngine {
 
     /// Hourly heart rate, steps and HRV: the whole history the first time (a year per batch), then the last few days
     /// about once an hour.
+    /// Bump when hourly rows sent by an older app may be incomplete: the next run re-reads the whole history once.
+    /// 2: a failed HealthKit query used to drop its series silently and the chunk was recorded as complete.
+    static let hourlyVersion = 2
+
     private func hourlyHistory() async throws {
         guard !scope.hourly.isEmpty else { return }
+        if outbox.state.hourlyVersion < Self.hourlyVersion {
+            try outbox.update { s in
+                s.hourlyThrough = nil
+                s.hourlyAt = nil
+                s.hourlyVersion = Self.hourlyVersion
+            }
+        }
         let end = now()
         var start: Date
         if let through = outbox.state.hourlyThrough {

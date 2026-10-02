@@ -64,12 +64,16 @@ final class Outbox: @unchecked Sendable {
         var hourlyAt: Date?
         var profileAt: Date?
         var medicationsAt: Date?
+        /// Version of the daily-rows logic that produced what was sent; a newer app re-reads the whole history once.
+        var dailyVersion = 0
+        /// Same for the hourly series.
+        var hourlyVersion = 0
 
         init() {}
 
         private enum CodingKeys: String, CodingKey {
             case schemaVersion, anchors, seq, recentDone, caughtUp, reconcile, dailyFullAt, detailsDone, workoutTotal, lastSyncAt
-            case dailyHashes, hourlyThrough, hourlyAt, profileAt, medicationsAt
+            case dailyHashes, hourlyThrough, hourlyAt, profileAt, medicationsAt, dailyVersion, hourlyVersion
         }
 
         /// Tolerant decoding: a state file written by an older app version (missing or extra keys)
@@ -90,7 +94,9 @@ final class Outbox: @unchecked Sendable {
             hourlyThrough = try c.decodeIfPresent(Date.self, forKey: .hourlyThrough)
             hourlyAt = try c.decodeIfPresent(Date.self, forKey: .hourlyAt)
             profileAt = try c.decodeIfPresent(Date.self, forKey: .profileAt)
-        medicationsAt = try c.decodeIfPresent(Date.self, forKey: .medicationsAt)
+            medicationsAt = try c.decodeIfPresent(Date.self, forKey: .medicationsAt)
+            dailyVersion = try c.decodeIfPresent(Int.self, forKey: .dailyVersion) ?? 0
+            hourlyVersion = try c.decodeIfPresent(Int.self, forKey: .hourlyVersion) ?? 0
         }
     }
 

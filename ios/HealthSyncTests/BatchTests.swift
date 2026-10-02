@@ -106,4 +106,21 @@ final class BatchTests: XCTestCase {
         let scope = HealthTypes.scope(HealthTypes.loadCoverage(bundle: Bundle(for: AppModel.self)))
         _ = try await HKHealthStore().statusForAuthorizationRequest(toShare: [], read: HealthTypes.readPermissions(for: scope, categories: Set((HealthTypes.loadCoverage(bundle: Bundle(for: AppModel.self))?.categories ?? []).map(\.id))))
     }
+
+    func testOnlyPassingHealthKitErrorsAreRetried() {
+        func err(_ code: HKError.Code) -> NSError { NSError(domain: HKErrorDomain, code: code.rawValue) }
+        XCTAssertTrue(HealthKitSource.isPermanentFailure(err(.errorAuthorizationDenied)))
+        XCTAssertTrue(HealthKitSource.isPermanentFailure(err(.errorNoData)))
+        XCTAssertFalse(HealthKitSource.isPermanentFailure(err(.errorDatabaseInaccessible)), "a locked phone is retried later")
+        XCTAssertFalse(HealthKitSource.isPermanentFailure(NSError(domain: NSURLErrorDomain, code: -1009)))
+    }
+
+    func testOutboxFromAnOlderAppAsksForTheDailyHistoryAgain() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let box = Outbox(root: root)
+        try box.update { $0.dailyFullAt = Date(); $0.dailyVersion = 0 }
+        XCTAssertEqual(Outbox(root: root).state.dailyVersion, 0)
+        XCTAssertEqual(SyncEngine.dailyVersion, 2)
+        XCTAssertEqual(SyncEngine.hourlyVersion, 2)
+    }
 }
