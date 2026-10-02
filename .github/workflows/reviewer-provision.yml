@@ -1,0 +1,65 @@
+name: reviewer-provision
+on:
+  push:
+    branches: [codex/public-listing-prep]
+    paths: ['.github/workflows/reviewer-provision.yml', 'firebase/functions/scripts/*reviewer*.mjs', 'scripts/tasks/provision-directory-reviewer.py']
+  workflow_dispatch:
+    inputs:
+      enable_password_provider:
+        description: 'Apply the project-wide provider change only after explicit owner approval'
+        type: boolean
+        default: false
+  workflow_run:
+    workflows: [deploy]
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: krok-directory-reviewer
+  cancel-in-progress: false
+jobs:
+  prepare-and-verify:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: firebase/functions/package-lock.json
+      - run: npm ci
+        working-directory: firebase/functions
+      - run: npm run build
+        working-directory: firebase/functions
+      - run: npx playwright install --with-deps chromium
+        working-directory: firebase/functions
+      - name: Apply explicitly owner-approved password provider change
+        if: github.event_name == 'workflow_dispatch' && inputs.enable_password_provider
+        run: python3 scripts/tasks/enable-reviewer-password-provider.py --apply
+      - name: Validate synthetic production dataset and reviewer access without exposing credentials
+        env:
+          REVIEWER_VERIFY_MODE: ${{ github.event_name == 'workflow_run' && '--verify-only' || '--apply' }}
+        run: python3 scripts/tasks/provision-directory-reviewer.py "$REVIEWER_VERIFY_MODE"
+      - name: Check deployed public pages and OAuth discovery
+        if: github.event_name == 'workflow_run'
+        run: python3 scripts/tasks/verify-public-listing-pages.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: directory-reviewer-verification-no-credentials
+          path: |
+            /tmp/krok-reviewer-verification.json
+            /tmp/krok-reviewer-dataset-verification.json

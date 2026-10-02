@@ -6,13 +6,16 @@ import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
-import { UID as monitorUid, TZ, CATEGORIES, batches } from '../../../scripts/synthetic/data.mjs';
+import { UID as monitorUid, TZ } from '../../../scripts/synthetic/data.mjs';
+import { REVIEWER_CATEGORIES as CATEGORIES, reviewerBatches as batches } from '../../../scripts/synthetic/reviewer.mjs';
 
 const project = process.env.GCP_PROJECT_ID;
 const uid = process.env.KROK_REVIEWER_UID ?? 'krok-reviewer-directory';
 const email = process.env.KROK_REVIEWER_EMAIL;
 const password = process.env.KROK_REVIEWER_PASSWORD;
 const apply = process.argv.includes('--apply');
+const reuse = process.argv.includes('--reuse');
+const reseed = process.argv.includes('--reseed');
 if (!['krok-1d60a', 'demo-health-sync'].includes(project)) throw new Error('Use the confirmed KROK project or the local demo-health-sync emulator.');
 if (!/^krok-reviewer-[A-Za-z0-9_-]{1,80}$/.test(uid) || uid === monitorUid) throw new Error('A dedicated reviewer UID is required.');
 if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !password || password.length < 20) throw new Error('Provide reviewer email and a password of at least 20 characters through environment variables.');
@@ -33,9 +36,15 @@ if ((existingDoc.exists && existingDoc.get('synthetic') !== true)
   throw new Error('Refusing to replace an account that is not the dedicated synthetic reviewer.');
 }
 if (existingDoc.get('deleting') === true) throw new Error('Reviewer account is being deleted; wait for cleanup before reprovisioning.');
+if (reuse && !reseed && existingAuth && existingDoc.exists) {
+  console.log('Dedicated synthetic reviewer already exists; preserving password, grants and fixtures. Verification follows.');
+  process.exit(0);
+}
 if (existingAuth) {
-  await auth.updateUser(uid, { password, disabled: false });
-  await auth.revokeRefreshTokens(uid);
+  if (!reuse) {
+    await auth.updateUser(uid, { password, disabled: false });
+    await auth.revokeRefreshTokens(uid);
+  }
 } else {
   await auth.createUser({ uid, email, password });
 }
@@ -43,10 +52,11 @@ await auth.setCustomUserClaims(uid, { ...(existingAuth?.customClaims ?? {}), kro
 if (!existingDoc.exists) {
   await ref.set({ generation: 1, deleting: false, createdAt: Date.now(), lastVisibleAt: null, tz: TZ,
     connections: {}, links: {}, categories: CATEGORIES, synthetic: true });
-} else {
+} else if (!reuse) {
   // Password rotation must invalidate opaque MCP grants too, not only Firebase sessions.
   await ref.update({ 'oauthEpochs.claude': FieldValue.increment(1), 'oauthEpochs.chatgpt': FieldValue.increment(1), connections: {} });
 }
+if (reseed) await ref.update({ categories: CATEGORIES });
 const bucket = getStorage().bucket(`${project}-incoming`);
 for (const lines of fixtures) {
   const gz = gzipSync(lines.map((line) => JSON.stringify(line)).join('\n'));
