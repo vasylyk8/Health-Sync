@@ -46,14 +46,17 @@ export async function createConnectorLink(db: Firestore, uid: string, provider: 
   const userRef = db.collection('users').doc(uid);
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(userRef);
-    if (!snap.exists) throw new AccountError('failed-precondition', 'Register the device first.');
-    const user = snap.data() as UserDoc;
-    if (user.deleting) throw new AccountError('failed-precondition', 'This account is being deleted.');
-    const old = user.links?.[provider];
+    // A signed-in account without a user document (the app fell back to a new account after the old one was removed)
+    // is registered here instead of failing: the document is what registerDevice would have created.
+    const user = snap.exists ? (snap.data() as UserDoc) : null;
+    if (user?.deleting) throw new AccountError('failed-precondition', 'This account is being deleted.');
+    const old = user?.links?.[provider];
     if (old) tx.delete(db.collection('tokens').doc(old.tokenHash));
     tx.set(db.collection('tokens').doc(hash), { uid, provider, createdAt: Date.now() });
     // Recorded when the user gave per-provider consent in the app and requested the link.
-    tx.update(userRef, { [`links.${provider}`]: { tokenHash: hash, createdAt: Date.now(), consentAt: Date.now() } });
+    const link = { tokenHash: hash, createdAt: Date.now(), consentAt: Date.now() };
+    if (user) tx.update(userRef, { [`links.${provider}`]: link });
+    else tx.set(userRef, { generation: 1, deleting: false, createdAt: Date.now(), lastVisibleAt: null, tz: null, connections: {}, links: { [provider]: link } } satisfies UserDoc);
   });
   log.info('link created', { uid, provider });
   return { url: `${baseUrl.replace(/\/$/, '')}/mcp/${token}` };

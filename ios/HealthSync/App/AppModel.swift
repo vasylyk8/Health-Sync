@@ -53,6 +53,8 @@ final class AppModel: ObservableObject {
     static let pendingAccountKey = "pendingAccount"
     /// The anonymous account created during onboarding; the only one Sign in with Apple may replace on a restore.
     static let onboardingUidKey = "onboardingUid"
+    /// The account this phone's outbox (what was already uploaded) belongs to.
+    static let syncedUidKey = "syncedUid"
 
     init(backend: Backend, source: HealthSource, outbox: Outbox, scope: SyncScope, telemetry: Telemetry, defaults: UserDefaults = .standard) {
         self.backend = backend
@@ -140,6 +142,7 @@ final class AppModel: ObservableObject {
             defaults.set(true, forKey: Self.healthConnectedKey)
             defaults.set(true, forKey: Self.pendingAccountKey)
             defaults.set(uid, forKey: Self.onboardingUidKey)
+            defaults.set(uid, forKey: Self.syncedUidKey)
             telemetry.event("health_connected")
             busy = false
             withAnimation { phase = .account }
@@ -302,9 +305,21 @@ final class AppModel: ObservableObject {
         try? await Task.sleep(for: .seconds(2))
     }
 
+    /// Signs in and checks the account is the one this phone's outbox belongs to. If the account changed (for example the
+    /// old one was deleted on the server and the app fell back to a new anonymous one), what was "already uploaded" went to
+    /// the old account: register the new one and start the first sync over. Returns true when that happened.
+    @discardableResult
+    func ensureCurrentAccount() async throws -> Bool {
+        let uid = try await backend.signIn()
+        defer { defaults.set(uid, forKey: Self.syncedUidKey) }
+        guard let known = defaults.string(forKey: Self.syncedUidKey), known != uid else { return false }
+        try await startOverOnRestoredAccount()
+        return true
+    }
+
     func syncNow() async {
         do {
-            _ = try await backend.signIn()
+            try await ensureCurrentAccount()
             appleAccountLinked = await backend.hasAppleAccount()
             if !started {
                 started = true
@@ -424,6 +439,7 @@ final class AppModel: ObservableObject {
         busy = true
         defer { busy = false }
         do {
+            if try await ensureCurrentAccount() { start() }
             let url = try await backend.createLink(provider: p.id)
             Keychain.set(url, for: "link.\(p.id)")
             telemetry.event("link_created", ["provider": p.id])
@@ -477,6 +493,7 @@ final class AppModel: ObservableObject {
             defaults.removeObject(forKey: Self.healthConnectedKey)
             defaults.removeObject(forKey: Self.pendingAccountKey)
             defaults.removeObject(forKey: Self.onboardingUidKey)
+            defaults.removeObject(forKey: Self.syncedUidKey)
             status = .empty
             appleAccountLinked = false
             started = false

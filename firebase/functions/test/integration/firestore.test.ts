@@ -150,6 +150,12 @@ describe('accounts', () => {
     expect((await db.doc('users/u4').get()).get('links.claude')).toBeUndefined();
   });
 
+  it('registers an account that has no user document when a link is created', async () => {
+    const { url } = await createConnectorLink(db, 'u-unregistered', 'claude', 'https://x.web.app');
+    expect((await db.doc('users/u-unregistered').get()).data()).toMatchObject({ generation: 1, deleting: false });
+    expect((await db.doc(`tokens/${hashToken(url.split('/mcp/')[1]!)}`).get()).data()).toMatchObject({ uid: 'u-unregistered', provider: 'claude' });
+  });
+
   it('deletes everything and refuses new links while deleting', async () => {
     await registerDevice(db, 'u5', 'UTC');
     const { url } = await createConnectorLink(db, 'u5', 'chatgpt', 'https://x.web.app');
