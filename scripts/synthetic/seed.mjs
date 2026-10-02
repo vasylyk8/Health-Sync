@@ -6,7 +6,7 @@ import { gzipSync } from 'node:zlib';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
-import { UID, TZ, CATEGORIES, DATA_VERSION, batches } from './data.mjs';
+import { UID, TZ, FULL_CATEGORIES as CATEGORIES, DATA_VERSION, batches } from './data.mjs';
 
 const project = process.env.GCP_PROJECT_ID;
 const token = process.env.SYNTHETIC_TOKEN;
@@ -34,7 +34,7 @@ const missing = !(have.has('HKWorkoutTypeIdentifier') && have.has('_daily') && h
 if (missing) console.log('workouts or daily context missing: seeding');
 if (missing || stale || process.env.FORCE_RESEED === '1') {
   const bucket = getStorage().bucket(`${project}-incoming`);
-  for (const lines of batches()) {
+  for (const lines of batches(true)) {
     const gz = gzipSync(lines.map((l) => JSON.stringify(l)).join('\n'));
     const sha256 = createHash('sha256').update(gz).digest('hex');
     await bucket.file(`incoming/${UID}/${lines[0].batchId}.ndjson.gz`).save(gz, { resumable: false, contentType: 'application/gzip', metadata: { metadata: { schema: '1', sha256 } } });

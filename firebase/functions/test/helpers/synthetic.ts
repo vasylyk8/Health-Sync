@@ -10,14 +10,14 @@ import { handleMcp, type McpDeps } from '../../src/mcp/server.js';
 import { ingestObject } from '../../src/ingest/ingest.js';
 import { makeEnv } from './memory.js';
 // @ts-expect-error plain JS module shared with the monitoring scripts
-import { batches, CATEGORIES, TZ } from '../../../../scripts/synthetic/data.mjs';
+import { batches, FULL_CATEGORIES, TZ } from '../../../../scripts/synthetic/data.mjs';
 
 export async function startSynthetic() {
   const env = makeEnv(Date.now());
   const user = env.meta.users.get(env.uid)!;
-  user.categories = CATEGORIES;
+  user.categories = FULL_CATEGORIES;
   user.tz = TZ;
-  for (const lines of batches() as { batchId?: string; type?: string }[][]) {
+  for (const lines of batches(true) as { batchId?: string; type?: string }[][]) {
     const path = `incoming/${env.uid}/${lines[0]!.batchId}.ndjson.gz`;
     await env.incoming.write(path, gzipSync(lines.map((l) => JSON.stringify(l)).join('\n')));
     const r = await ingestObject(path, { incoming: env.incoming, data: env.data, meta: env.meta, now: () => env.now });
