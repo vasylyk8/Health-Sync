@@ -15,7 +15,7 @@ Anything an AI can ask KROK about real Apple Health data can be asked of the syn
 `scripts/synthetic/data.mjs` generates a year (2024) from simple formulas, so every answer is known exactly:
 Monday runs with heart rate, distance and GPS, all 98 daily metrics the phone can send (`dailyValue(key, day)`),
 hourly heart rate, steps and HRV, glucose in March, symptoms, nutrition entries, high-heart-rate alerts and a profile.
-Medications are off for this user (to test that switched-off categories stay hidden).
+Glucose, symptoms and heart events are stored but the public v1 MCP does not offer tools for them (see PUBLIC_MCP_RELEASE.md); their direct query functions stay covered by `synthetic.test.ts`. Medications are off for this user, and the MCP test switches nutrition off to check that disabled categories stay hidden.
 Bump `DATA_VERSION` when it changes: the deploy re-seeds the live synthetic user.
 
 ## Adding a tool or a metric

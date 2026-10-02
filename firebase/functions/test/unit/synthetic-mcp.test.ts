@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 // @ts-expect-error plain JS module shared with the monitoring scripts
-import { alertOn, dailyValue, DAILY_KEYS, hourHrv, MEAL_KCAL, MEAL_PROTEIN, mealOn, PROFILE } from '../../../../scripts/synthetic/data.mjs';
+import { dailyValue, DAILY_KEYS, hourHrv, MEAL_KCAL, MEAL_PROTEIN, mealOn, PROFILE } from '../../../../scripts/synthetic/data.mjs';
 import { TOOL_NAMES } from '../../src/mcp/server.js';
 import { startSynthetic } from '../helpers/synthetic.js';
 
@@ -82,27 +82,32 @@ describe('opt-in data', () => {
     expect(r.entries[0]['Protein (g)']).toBe(MEAL_PROTEIN(meals[0]));
   });
 
-  it('heart events', async () => {
-    const r = await ask('get_health_events', { category: 'heart', start_date: '2024-01-01', end_date: '2024-03-31' });
-    expect(r.count).toBe(Array.from({ length: 91 }, (_, d) => d).filter(alertOn).length);
-    expect(r.events[0].type).toBe('HighHeartRateEvent');
-  });
-
   it('profile', async () => {
     const r = await ask('get_profile');
     expect(r.profile).toMatchObject({ dob: PROFILE.dob, sex: PROFILE.sex });
     expect(r.profile.age_years).toBeGreaterThan(30);
   });
 
-  it('glucose around a run', async () => {
-    const r = await ask('get_glucose', { workout_id: 'run-2024-03-04' });
-    expect(r.during_workout.mean_mg_dl).toBe(90);
+  it('glucose and detailed health events are not offered in public v1 (the data is stored, the tools are off)', async () => {
+    const names = (await s.client.listTools()).tools.map((t) => t.name);
+    expect(names).not.toContain('get_glucose');
+    expect(names).not.toContain('get_health_events');
   });
 
-  it('medications are off for this user and the tool says so', async () => {
-    const r = await s.call('get_health_events', { category: 'medications', start_date: '2024-01-01', end_date: '2024-03-31' });
-    expect(r.isError).toBe(true);
-    expect(r.text).toMatch(/switched on|not available|off/i);
+  it('a switched-off category is hidden and the tool says so', async () => {
+    const user = s.env.meta.users.get(s.env.uid)!;
+    const before = user.categories;
+    user.categories = (before ?? []).filter((c) => c !== 'nutrition');
+    try {
+      const r = await s.call('get_nutrition_log', { start_date: '2024-03-01', end_date: '2024-03-07' });
+      expect(r.isError).toBe(true);
+      expect(r.text).toMatch(/switched on|not available|off/i);
+      const daily = await ask('get_daily_context', { start_date: '2024-03-04', end_date: '2024-03-04' });
+      expect(daily.days[0]).not.toHaveProperty('proteinG');
+      expect(daily.days[0]).toHaveProperty('steps');
+    } finally {
+      user.categories = before;
+    }
   });
 });
 
@@ -128,6 +133,7 @@ describe('workout tools', () => {
 describe('coverage of the tool list', () => {
   it('every tool the server offers was asked at least once above', () => {
     const offered = TOOL_NAMES.filter((t: string) => t !== 'get_account');
+    expect(offered).toEqual(expect.arrayContaining(['get_daily_context', 'get_hourly_series', 'get_recovery', 'get_training_load', 'get_nutrition_log', 'get_profile']));
     expect([...asked].sort()).toEqual(expect.arrayContaining(offered));
   });
 });
