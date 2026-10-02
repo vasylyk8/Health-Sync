@@ -2,7 +2,10 @@
 // streams (heart rate, distance, GPS) and daily context. Every value comes from simple formulas,
 // so the evals know the exact right answers.
 import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 
+/** Bump when the synthetic data changes: the seed script then replaces what is stored. */
+export const DATA_VERSION = 2;
 export const UID = 'synthetic-monitor';
 export const TZ = 'Europe/Berlin';
 const DAY = 86_400_000;
@@ -74,8 +77,38 @@ export const glucoseAt = (t) => {
 /** A headache entry at 08:00 UTC on every fifth day. */
 export const headacheOn = (d) => d % 5 === 0;
 export const SYMPTOM_ID = (d) => `sym-${String(d).padStart(4, '0')}`;
-/** Categories the synthetic user has switched on. */
-export const CATEGORIES = ['core', 'devices', 'mind'];
+/** Categories the synthetic user has switched on (everything except medications, which is off by default). */
+export const CATEGORIES = ['core', 'nutrition', 'heart', 'devices', 'mind', 'cycle', 'profile'];
+
+// Every daily metric the phone can send (shared/coverage.json), with a simple deterministic value, so tests can
+// check that each one survives the whole path and comes back out of get_daily_context unchanged.
+const coveragePath = ['../../shared/coverage.json', '../../../shared/coverage.json'].map((p) => new URL(p, import.meta.url)).find((u) => existsSync(u));
+const COVERAGE = JSON.parse(readFileSync(coveragePath, 'utf8'));
+const NOT_NUMERIC = new Set(['sleepBedtime', 'sleepWakeTime']);
+/** Daily keys by category in coverage order: keys that a metric emits (sleep, rings, state of mind) are expanded. */
+export const DAILY_KEYS = (() => {
+  const out = new Map(); // key -> category
+  for (const m of COVERAGE.dailyMetrics) for (const k of m.outputs ?? [m.key]) if (!NOT_NUMERIC.has(k)) out.set(k, m.category ?? 'core');
+  return out;
+})();
+const KEY_INDEX = new Map([...DAILY_KEYS.keys()].map((k, i) => [k, i]));
+/** Steps, resting heart rate and sleep keep their original formulas (the real-AI evals use them). */
+export function dailyValue(key, d) {
+  if (key === 'steps') return stepsOn(d);
+  if (key === 'restingHr') return restingHrOn(d);
+  if (key === 'sleepAsleepMin') return sleepMinutes(d);
+  return (KEY_INDEX.get(key) + 1) * 10 + (d % 5);
+}
+const DAILY_TYPE_OF = { core: '_daily', nutrition: '_daily_nutrition', cycle: '_daily_cycle', mind: '_daily_mind' };
+/** Hourly HRV (SDNN) of UTC hour h: 40 + h ms. */
+export const hourHrv = (h) => 40 + h;
+/** Nutrition entries at 12:00 UTC every third day (a meal 5 hours before the 17:00 runs on those days that are Mondays): energy and protein. */
+export const mealOn = (d) => d % 3 === 0;
+export const MEAL_KCAL = (d) => 600 + (d % 7) * 50;
+export const MEAL_PROTEIN = (d) => 30 + (d % 5);
+/** One high heart rate alert every 20th day at 14:00 UTC. */
+export const alertOn = (d) => d % 20 === 0;
+export const PROFILE = { dob: '1985-06-15', sex: 'male', wheelchair: false, moveMode: 'activeEnergy' };
 
 /** Returns the batches (arrays of JSON lines) to upload. */
 export function batches() {
@@ -84,18 +117,21 @@ export function batches() {
   for (let d = 0; d < days; d++) if (isRunDay(d)) runs.push(run(d));
   out.push([header('HKWorkoutTypeIdentifier', 'anchored', { caughtUp: true }), ...runs.map((r) => r.summary)]);
   for (const r of runs) out.push(r.streams);
-  const rows = [];
-  for (let d = 0; d < days; d++) {
-    rows.push({ k: 'day', day: dateOf(d), m: { steps: stepsOn(d), restingHr: restingHrOn(d), sleepAsleepMin: sleepMinutes(d) } });
+  // Daily rows: one daily type per category, each with the metrics of that category.
+  const window = { start: start - DAY, end: Date.now() };
+  for (const [type, cat] of Object.entries({ _daily: 'core', _daily_nutrition: 'nutrition', _daily_cycle: 'cycle', _daily_mind: 'mind' })) {
+    const keys = [...DAILY_KEYS].filter(([, c]) => c === cat).map(([k]) => k);
+    const rows = [];
+    for (let d = 0; d < days; d++) rows.push({ k: 'day', day: dateOf(d), m: Object.fromEntries(keys.map((k) => [k, dailyValue(k, d)])) });
+    out.push([header(type, 'stats', { window }), ...rows]);
   }
-  out.push([header('_daily', 'stats', { window: { start: start - DAY, end: Date.now() } }), ...rows]);
 
   // Hourly heart rate and steps for the whole year.
-  const hT = [], hAvg = [], hLo = [], hHi = [], sT = [], sV = [];
+  const hT = [], hAvg = [], hLo = [], hHi = [], sT = [], sV = [], vV = [];
   for (let d = 0; d < days; d++) {
     for (let h = 0; h < 24; h++) {
       const t = start + d * DAY + h * H;
-      hT.push(t); hAvg.push(hourHr(h)); hLo.push(hourHr(h) - 5); hHi.push(hourHr(h) + 10);
+      hT.push(t); hAvg.push(hourHr(h)); hLo.push(hourHr(h) - 5); hHi.push(hourHr(h) + 10); vV.push(hourHrv(h));
       if (hourSteps(h) > 0) { sT.push(t); sV.push(hourSteps(h)); }
     }
   }
@@ -103,6 +139,7 @@ export function batches() {
     header('_hourly', 'stats', { window: { start, end: start + days * DAY } }),
     { k: 'hs', st: 'HeartRate', u: 'count/min', t: hT, v: hAvg, lo: hLo, hi: hHi },
     { k: 'hs', st: 'StepCount', u: 'count', t: sT, v: sV },
+    { k: 'hs', st: 'HeartRateVariabilitySDNN', u: 'ms', t: hT, v: vV },
   ]);
 
   // Glucose (dense, no ids) and headache entries (with ids).
@@ -112,6 +149,18 @@ export function batches() {
   const aT = [], aId = [], aC = [];
   for (let d = 0; d < days; d++) if (headacheOn(d)) { aT.push(start + d * DAY + 8 * H); aId.push(SYMPTOM_ID(d)); aC.push(2); }
   out.push([header('_events_mind', 'anchored', { caughtUp: true }), { k: 'ev', ty: 'Headache', src: 'Health', bid: 'com.apple.Health', s: aT, c: aC, ids: aId }]);
+  // Nutrition entries (energy and protein, logged together by one app) and high heart rate alerts.
+  const nT = [], nE = [], nP = [];
+  for (let d = 0; d < days; d++) if (mealOn(d)) { nT.push(start + d * DAY + 12 * H); nE.push(MEAL_KCAL(d)); nP.push(MEAL_PROTEIN(d)); }
+  out.push([
+    header('_events_nutrition', 'anchored', { caughtUp: true }),
+    { k: 'ev', ty: 'DietaryEnergyConsumed', u: 'kcal', src: 'Synthetic Food Log', bid: 'synthetic.food', s: nT, v: nE },
+    { k: 'ev', ty: 'DietaryProtein', u: 'g', src: 'Synthetic Food Log', bid: 'synthetic.food', s: nT, v: nP },
+  ]);
+  const hiT = [], hiId = [];
+  for (let d = 0; d < days; d++) if (alertOn(d)) { hiT.push(start + d * DAY + 14 * H); hiId.push(`hhr-${String(d).padStart(4, '0')}`); }
+  out.push([header('_events_heart', 'anchored', { caughtUp: true }), { k: 'ev', ty: 'HighHeartRateEvent', src: 'Apple Watch', bid: 'com.apple.health', s: hiT, ids: hiId }]);
+  out.push([header('_events_profile', 'anchored', { caughtUp: true }), { k: 'ev', ty: 'Profile', src: 'Health', bid: 'com.apple.Health', s: [start], meta: [PROFILE] }]);
   return out;
 }
 
