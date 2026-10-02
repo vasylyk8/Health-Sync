@@ -1,6 +1,8 @@
 import CoreLocation
+import CryptoKit
 import Foundation
 import HealthKit
+import WorkoutKit
 
 /// Reads Apple Health through HealthKit and converts workouts (with their raw data) and daily
 /// context to batch records. Read-only.
@@ -40,9 +42,14 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
 
     func requestAuthorization(scope: SyncScope) async throws {
-        let types = HealthTypes.readPermissions(for: scope)
+        try await requestAuthorization(scope: scope, categories: ["core"])
+    }
+
+    func requestAuthorization(scope: SyncScope, categories: Set<String>) async throws {
+        let types = HealthTypes.readPermissions(for: scope, categories: categories.union(["core"]))
         do {
             try await store.requestAuthorization(toShare: [], read: types)
+        if categories.contains("medications") { await requestMedicationAuthorization() }
         } catch let error as NSError where error.domain == HKErrorDomain && error.code == HKError.Code.errorInvalidArgument.rawValue
                     && !error.localizedDescription.localizedCaseInsensitiveContains("source") {
             // (A "failed to look up source" error is about the app itself, not a type: nothing to skip.)
@@ -73,7 +80,48 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: .strictStartDate)
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
         let samples = try await fetch(HKObjectType.workoutType(), predicate: predicate, sort: sort)
-        return samples.compactMap { ($0 as? HKWorkout).map(workout) }
+        return await withPlans(samples.compactMap { $0 as? HKWorkout })
+    }
+
+    /// Summary records of these workouts, each with the plan it was run from (when it has one).
+    private func withPlans(_ workouts: [HKWorkout]) async -> [Record] {
+        var records = workouts.map(workout)
+        guard #available(iOS 17.0, *), !records.isEmpty else { return records }
+        // Read concurrently (a few at a time); each answer goes to its own slot, so the order stays the same.
+        let plans: [Int: RecordValue] = await SyncTiming.shared.measure("hk.plans") {
+            await withTaskGroup(of: (Int, RecordValue?).self) { group in
+                var next = 0
+                var found: [Int: RecordValue] = [:]
+                func addNext() {
+                    guard next < workouts.count else { return }
+                    let i = next
+                    next += 1
+                    group.addTask { (i, await Self.plan(of: workouts[i])) }
+                }
+                for _ in 0..<8 { addNext() }
+                while let (i, plan) = await group.next() {
+                    if let plan { found[i] = plan }
+                    addNext()
+                }
+                return found
+            }
+        }
+        for (i, plan) in plans {
+            records[i]["plan"] = plan
+            // Which apps' workouts carry a plan (counted for the speed test and diagnostics; no health data).
+            SyncTiming.shared.count("plans.found")
+            SyncTiming.shared.count("plans.\(workouts[i].sourceRevision.source.bundleIdentifier)")
+        }
+        return records
+    }
+
+    /// The plan a workout was run from (scheduled in Apple's Workout app by any app), as a short summary: its id, kind
+    /// (goal, pacer, custom, swimBikeRun) and a compact description of its steps.
+    @available(iOS 17.0, *)
+    private static func plan(of w: HKWorkout) async -> RecordValue? {
+        guard let plan = try? await w.workoutPlan else { return nil }
+        let kind = Mirror(reflecting: plan.workout).children.first?.label ?? "unknown"
+        return .object(["id": .string(plan.id.uuidString), "kind": .string(kind), "desc": .string(String(String(describing: plan.workout).prefix(800)))])
     }
 
     func anchoredPage(_ type: SyncType, anchor: Data?, limit: Int) async throws -> AnchoredPage {
@@ -85,8 +133,15 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             }
             store.execute(q)
         }
-        var records = samples.compactMap { ($0 as? HKWorkout).map(workout) }
-        records.append(contentsOf: deleted.map { ["k": "d", "id": .string($0.uuid.uuidString)] })
+        var records: [Record]
+        if let event = type.event {
+            records = eventRecords(samples, event: event)
+            // Dense series carry no ids, so a deleted reading cannot be matched on the server.
+            if !event.dense { records.append(contentsOf: deleted.map { ["k": "d", "id": .string($0.uuid.uuidString)] }) }
+        } else {
+            records = await withPlans(samples.compactMap { $0 as? HKWorkout })
+            records.append(contentsOf: deleted.map { ["k": "d", "id": .string($0.uuid.uuidString)] })
+        }
         let anchorData = newAnchor.flatMap { try? NSKeyedArchiver.archivedData(withRootObject: $0, requiringSecureCoding: true) }
         return AnchoredPage(records: records, newAnchor: anchorData, objectCount: samples.count + deleted.count)
     }
@@ -98,6 +153,37 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let workouts = samples.compactMap { $0 as? HKWorkout }
         cacheLock.withLock { workoutCache = Dictionary(workouts.map { ($0.uuid.uuidString, $0) }, uniquingKeysWith: { first, _ in first }) }
         return samples.map { WorkoutRef(id: $0.uuid.uuidString, start: $0.startDate) }
+    }
+
+    /// Apple's own zones for this workout (the boundaries Apple used and the time spent in each zone), per quantity such as
+    /// heart rate. Needs the iOS 27 SDK to compile and iOS 27 to run, so it is behind the `IOS27_SDK` compilation flag:
+    /// once the build machine has Xcode 27, add `SWIFT_ACTIVE_COMPILATION_CONDITIONS: IOS27_SDK` to the app target in project.yml.
+    /// (The CI Xcode today has a new enough Swift but an older SDK, so a compiler-version check is not enough.)
+    private func appleZones(_ w: HKWorkout) -> RecordValue? {
+        #if IOS27_SDK
+        guard #available(iOS 27.0, *), let groups = w.zoneGroupsByType, !groups.isEmpty else { return nil }
+        var out: [String: RecordValue] = [:]
+        for (type, group) in groups {
+            guard let spec = quantitiesById[type.identifier] else { continue }
+            let source: String
+            switch group.configuration.source {
+            case .system: source = "system"
+            case .user: source = "user"
+            case .app: source = "app"
+            @unknown default: source = "unknown"
+            }
+            let zones: [RecordValue] = group.zoneDurations.map { d in
+                var o: [String: RecordValue] = ["i": .int(Int64(d.zone.index)), "sec": .double(d.duration)]
+                if let lo = d.zone.minimum { o["min"] = .double(lo.doubleValue(for: spec.unit)) }
+                if let hi = d.zone.maximum { o["max"] = .double(hi.doubleValue(for: spec.unit)) }
+                return .object(o)
+            }
+            out[spec.name] = .object(["src": .string(source), "u": .string(spec.unitLabel), "z": .array(zones)])
+        }
+        return out.isEmpty ? nil : .object(out)
+        #else
+        return nil
+        #endif
     }
 
     /// Everything Apple attaches to a workout, as batch records.
@@ -128,6 +214,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             if o.count > 1 { stats[spec.name] = .object(o) }
         }
         if !stats.isEmpty { r["stats"] = .object(stats) }
+        if let zones = appleZones(w) { r["zones"] = zones }
         if case .object(let hr)? = stats["HeartRate"] {
             if let v = hr["avg"] { r["hrAvg"] = v }
             if let v = hr["max"] { r["hrMax"] = v }
@@ -149,8 +236,11 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         if r["dist"] == nil, let d = w.totalDistance { r["dist"] = .double(d.doubleValue(for: .meter())) }
 
         if let events = w.workoutEvents, !events.isEmpty {
-            r["ev"] = .array(events.prefix(2_000).map { e in
-                .object(["t": e.dateInterval.start.ms, "type": .int(Int64(e.type.rawValue)), "dur": .double(e.dateInterval.duration)])
+            r["ev"] = .array(events.prefix(2_000).map { e -> RecordValue in
+                var o: [String: RecordValue] = ["t": e.dateInterval.start.ms, "type": .int(Int64(e.type.rawValue)), "dur": .double(e.dateInterval.duration)]
+                // Laps and segments carry their stroke style, lap length and similar details.
+                if case .object(let md)? = metadata(e.metadata, maxBytes: 400) { o["md"] = .object(md) }
+                return .object(o)
             })
         }
         if w.workoutActivities.count > 1 {
@@ -189,7 +279,42 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     // MARK: Workout raw data
 
+    /// What one workout's raw data consists of, as read from Apple Health (before it is turned into records).
+    struct WorkoutParts {
+        var series: [(name: String, unit: String?, points: [SeriesPoint])]
+        var route: [RoutePoint]
+    }
+
     func workoutDetail(id: String, gen: Int64) async throws -> [Record]? {
+        guard let parts = try await workoutParts(id: id) else { return nil }
+        let records = Self.records(id: id, gen: gen, parts: parts)
+        SyncTiming.shared.count("hk.workouts")
+        return records
+    }
+
+    /// The `ws` / `wd` records of a workout's raw data.
+    static func records(id: String, gen: Int64, parts: WorkoutParts, format: WorkoutRecords.Format = .compact,
+                        routePlans: [String: CompactColumns.Plan] = WorkoutRecords.routePlans, includeRoute: Bool = true) -> [Record] {
+        var records: [Record] = []
+        var expected: [String: Int] = [:]
+        for s in parts.series where !s.points.isEmpty {
+            let built = WorkoutRecords.series(wid: id, name: s.name, gen: gen, unit: s.unit, points: s.points, format: format)
+            guard built.count > 0 else { continue }
+            records.append(contentsOf: built.records)
+            expected[s.name] = built.count
+        }
+        if includeRoute, !parts.route.isEmpty {
+            let built = WorkoutRecords.route(wid: id, gen: gen, points: parts.route, format: format, plans: routePlans)
+            if built.count > 0 {
+                records.append(contentsOf: built.records)
+                expected["route"] = built.count
+            }
+        }
+        records.append(WorkoutRecords.mark(wid: id, gen: gen, expected: expected))
+        return records
+    }
+
+    func workoutParts(id: String) async throws -> WorkoutParts? {
         guard let uuid = UUID(uuidString: id) else { return nil }
         let w: HKWorkout
         if let cached = cacheLock.withLock({ workoutCache[id] }) {
@@ -201,13 +326,11 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
         defer { cacheLock.withLock { workoutCache[id] = nil } }
 
-        var records: [Record] = []
-        var expected: [String: Int] = [:]
         // Types Apple recorded for this workout. Heart rate is always tried, because workouts imported
         // from other apps carry no Apple statistics but often have heart rate samples.
         var wanted = Set(w.allStatistics.keys.map(\.identifier))
         wanted.insert(HealthTypes.quantityPrefix + "HeartRate")
-        let specs = scope.workoutQuantities.filter { wanted.contains($0.id) }
+        let specs = scope.workoutQuantities.filter { wanted.contains($0.id) && $0.stream }
 
         // Every quantity type and the route are read at the same time (each is an independent query);
         // results are put back in a fixed order so the output does not depend on which finished first.
@@ -236,23 +359,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             case .route(let points): route = points
             }
         }
-        for (i, q) in specs.enumerated() {
-            guard let points = seriesByIndex[i], !points.isEmpty else { continue }
-            let built = WorkoutRecords.series(wid: id, name: q.name, gen: gen, unit: q.unitLabel, points: points)
-            guard built.count > 0 else { continue }
-            records.append(contentsOf: built.records)
-            expected[q.name] = built.count
-        }
-        if !route.isEmpty {
-            let built = WorkoutRecords.route(wid: id, gen: gen, points: route)
-            if built.count > 0 {
-                records.append(contentsOf: built.records)
-                expected["route"] = built.count
-            }
-        }
-        records.append(WorkoutRecords.mark(wid: id, gen: gen, expected: expected))
-        SyncTiming.shared.count("hk.workouts")
-        return records
+        return WorkoutParts(series: specs.enumerated().map { (name: $0.element.name, unit: $0.element.unitLabel, points: seriesByIndex[$0.offset] ?? []) }, route: route)
     }
 
     /// Readings of one quantity type belonging to the workout. Cumulative types (distance, energy,
@@ -359,9 +466,22 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     func dailyContext(from: Date, to: Date) async throws -> [Record] {
+        try await dailyRecords(scope.dailyMetrics.filter { $0.category == "core" }, from: from, to: to)
+    }
+
+    func dailyContextBatches(from: Date, to: Date, categories: Set<String>) async throws -> [DailyBatch] {
+        var out: [DailyBatch] = []
+        for category in categories.union(["core"]).sorted() {
+            let metrics = scope.dailyMetrics.filter { $0.category == category }
+            guard !metrics.isEmpty else { continue }
+            out.append(DailyBatch(typeId: HealthTypes.dailyBatchType(category), category: category, records: try await dailyRecords(metrics, from: from, to: to)))
+        }
+        return out
+    }
+
+    private func dailyRecords(_ metrics: [DailyMetric], from: Date, to: Date) async throws -> [Record] {
         let cal = Calendar.current
         let start = cal.startOfDay(for: from)
-        let metrics = scope.dailyMetrics
         // The metrics are independent queries (dozens per year of history), so several run at the same time;
         // results are merged in the metrics' order so the output does not depend on which finished first.
         var perMetric = [[DailyCell]?](repeating: nil, count: metrics.count)
@@ -409,7 +529,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         var out: [DailyCell] = []
         switch metric.kind {
         case .quantity(let type, let unit, let agg, let scale):
-            for (day, value) in try await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal) {
+            for (day, value) in try await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal, appleOnly: metric.appleOnly) {
                 out.append(DailyCell(day: day, key: metric.key, value: .double(value)))
             }
         case .category(let type, let mode):
@@ -464,7 +584,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
     }
 
-    private func dailyStatistics(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date, calendar: Calendar) async throws -> [(String, Double)] {
+    private func dailyStatistics(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date, calendar: Calendar, appleOnly: Bool = false) async throws -> [(String, Double)] {
         let options: HKStatisticsOptions
         switch agg {
         case .sum: options = .cumulativeSum
@@ -473,7 +593,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         case .max: options = .discreteMax
         case .last: options = .mostRecent
         }
-        let predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
+        var predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
+        if appleOnly, let sources = await appleSourcesPredicate(type) { predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [predicate, sources]) }
         let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
             let q = HKStatisticsCollectionQuery(quantityType: type, quantitySamplePredicate: predicate, options: options, anchorDate: from, intervalComponents: DateComponents(day: 1))
             q.initialResultsHandler = { _, collection, error in
@@ -507,6 +628,10 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             var minutes: [String: Double] = [:]
             for s in found { minutes[SleepNights.dayKey(s.startDate, calendar: calendar), default: 0] += s.endDate.timeIntervalSince(s.startDate) / 60 }
             for (day, total) in minutes { out.append((day, RecordValue.double((total * 10).rounded() / 10))) }
+        case .count:
+            var counts: [String: Int] = [:]
+            for s in found { counts[SleepNights.dayKey(s.startDate, calendar: calendar), default: 0] += 1 }
+            for (day, n) in counts { out.append((day, RecordValue.int(Int64(n)))) }
         case .values:
             var values: [String: Set<Int>] = [:]
             for s in found { values[SleepNights.dayKey(s.startDate, calendar: calendar), default: []].insert(s.value) }
@@ -569,6 +694,164 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         return out
     }
 
+    // MARK: Hourly series, events, profile
+
+    private let sourceLock = NSLock()
+    private var appleSourceCache: [String: NSPredicate?] = [:]
+
+    /// Predicate matching only samples written by Apple's own sources (Apple Watch, iPhone) for `type`, or nil when
+    /// there is no such source (then nothing is filtered). Some apps write their own resting heart rate or HRV.
+    private func appleSourcesPredicate(_ type: HKQuantityType) async -> NSPredicate? {
+        if let cached = sourceLock.withLock({ appleSourceCache[type.identifier] }) { return cached }
+        let sources: Set<HKSource> = await withCheckedContinuation { cont in
+            let q = HKSourceQuery(sampleType: type, samplePredicate: nil) { _, sources, _ in cont.resume(returning: sources ?? []) }
+            store.execute(q)
+        }
+        let apple = sources.filter { $0.bundleIdentifier.hasPrefix("com.apple.health") }
+        let predicate: NSPredicate? = apple.isEmpty ? nil : HKQuery.predicateForObjects(from: apple)
+        sourceLock.withLock { appleSourceCache[type.identifier] = .some(predicate) }
+        return predicate
+    }
+
+    func hourlySeries(from: Date, to: Date) async throws -> [Record] {
+        var records: [Record] = []
+        var firstError: Error?
+        for metric in scope.hourly {
+            do {
+                let buckets = try await SyncTiming.shared.measure("hk.hourly") { try await self.hourlyBuckets(metric, from: from, to: to) }
+                records.append(contentsOf: SeriesRecords.hourlyChunks(name: metric.name, unit: metric.unitLabel, hours: buckets))
+            } catch {
+                // One series failing (no permission, a type this iOS lacks) must not lose the others.
+                firstError = firstError ?? error
+            }
+        }
+        if records.isEmpty, let firstError { throw firstError }
+        return records
+    }
+
+    private func hourlyBuckets(_ metric: HourlyMetric, from: Date, to: Date) async throws -> [HourBucket] {
+        var options: HKStatisticsOptions = []
+        if metric.cumulative {
+            options = .cumulativeSum
+        } else {
+            if metric.cols.contains("avg") { options.insert(.discreteAverage) }
+            if metric.cols.contains("min") { options.insert(.discreteMin) }
+            if metric.cols.contains("max") { options.insert(.discreteMax) }
+        }
+        var predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
+        if metric.appleOnly, let sources = await appleSourcesPredicate(metric.type) { predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [predicate, sources]) }
+        let anchor = Calendar.current.dateInterval(of: .hour, for: from)?.start ?? from
+        await queryGate.acquire()
+        defer { queryGate.release() }
+        let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
+            let q = HKStatisticsCollectionQuery(quantityType: metric.type, quantitySamplePredicate: predicate, options: options, anchorDate: anchor, intervalComponents: DateComponents(hour: 1))
+            q.initialResultsHandler = { _, collection, error in
+                if let collection { cont.resume(returning: collection) } else { cont.resume(throwing: error ?? HealthSourceError.noResults) }
+            }
+            store.execute(q)
+        }
+        var out: [HourBucket] = []
+        let unit = metric.unit
+        collection.enumerateStatistics(from: anchor, to: to) { stats, _ in
+            func value(_ q: HKQuantity?) -> Double? { q.map { $0.doubleValue(for: unit) }.flatMap { $0.isFinite ? $0 : nil } }
+            let bucket: HourBucket
+            if metric.cumulative {
+                bucket = HourBucket(t: stats.startDate.msValue, v: value(stats.sumQuantity()), lo: nil, hi: nil)
+            } else {
+                bucket = HourBucket(t: stats.startDate.msValue, v: value(stats.averageQuantity()), lo: value(stats.minimumQuantity()), hi: value(stats.maximumQuantity()))
+            }
+            if bucket.v != nil || bucket.lo != nil || bucket.hi != nil { out.append(bucket) }
+        }
+        return out
+    }
+
+    /// Turns the samples of one event type into `ev` chunks, one group per writing app.
+    private func eventRecords(_ samples: [HKSample], event: EventType) -> [Record] {
+        let scale: Double = event.unitLabel == "%" ? 100 : 1
+        var groups: [String: (source: HKSource, points: [EventPoint])] = [:]
+        for sample in samples {
+            var point = EventPoint(start: sample.startDate.msValue, end: sample.endDate.msValue)
+            switch event.kind {
+            case .quantity:
+                guard let q = sample as? HKQuantitySample, let unit = event.unit else { continue }
+                let v = q.quantity.doubleValue(for: unit) * scale
+                guard v.isFinite else { continue }
+                point.v = v
+            case .category:
+                guard let c = sample as? HKCategorySample else { continue }
+                point.c = c.value
+            default:
+                continue
+            }
+            if !event.dense {
+                point.id = sample.uuid.uuidString
+                var md = sample.metadata ?? [:]
+                for key in SeriesRecords.ignoredMetadataKeys { md[key] = nil }
+                if case .object(let o)? = metadata(md, maxBytes: 1_000), !o.isEmpty { point.meta = o }
+            }
+            let key = sample.sourceRevision.source.bundleIdentifier + "|" + sample.sourceRevision.source.name
+            var group = groups[key] ?? (sample.sourceRevision.source, [])
+            group.points.append(point)
+            groups[key] = group
+        }
+        var out: [Record] = []
+        for key in groups.keys.sorted() {
+            let group = groups[key]!
+            out.append(contentsOf: SeriesRecords.eventChunks(type: event.name, unit: event.unitLabel, source: group.source.name, bundle: group.source.bundleIdentifier, points: group.points))
+        }
+        return out
+    }
+
+    /// Medications use per-object authorization: the user picks which ones to share on Apple's own sheet.
+    private func requestMedicationAuthorization() async {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            try? await store.requestPerObjectReadAuthorization(for: HKObjectType.userAnnotatedMedicationType(), predicate: nil)
+        }
+        #endif
+    }
+
+    func medicationRecords() async throws -> [Record] {
+        #if compiler(>=6.2)
+        guard #available(iOS 26.0, *) else { return [] }
+        let meds = try await HKUserAnnotatedMedicationQueryDescriptor(predicate: nil, limit: nil).result(for: store)
+        guard !meds.isEmpty else { return [] }
+        var ids: [RecordValue] = []
+        var metas: [RecordValue] = []
+        for m in meds {
+            // A stable short id from Apple's concept identifier (which may contain characters the batch format does not allow).
+            let digest = SHA256.hash(data: Data(String(describing: m.medication.identifier).utf8))
+            ids.append(.string("med-" + digest.prefix(12).map { String(format: "%02x", $0) }.joined()))
+            var meta: [String: RecordValue] = ["name": .string(String(m.medication.displayText.prefix(200))), "archived": .bool(m.isArchived), "scheduled": .bool(m.hasSchedule)]
+            if let nick = m.nickname, !nick.isEmpty { meta["nickname"] = .string(String(nick.prefix(100))) }
+            metas.append(.object(meta))
+        }
+        let now = Date().ms
+        return [["k": "ev", "ty": "Medication", "s": .array(Array(repeating: now, count: meds.count)), "ids": .array(ids), "meta": .array(metas)]]
+        #else
+        return []
+        #endif
+    }
+
+    func profileRecords() async throws -> [Record] {
+        var meta: [String: RecordValue] = [:]
+        if let dob = try? store.dateOfBirthComponents(), let y = dob.year, let m = dob.month, let d = dob.day {
+            meta["dob"] = .string(String(format: "%04d-%02d-%02d", y, m, d))
+        }
+        if let sex = try? store.biologicalSex().biologicalSex {
+            switch sex {
+            case .female: meta["sex"] = "female"
+            case .male: meta["sex"] = "male"
+            case .other: meta["sex"] = "other"
+            default: break
+            }
+        }
+        if let wheelchair = try? store.wheelchairUse().wheelchairUse, wheelchair != .notSet { meta["wheelchair"] = .bool(wheelchair == .yes) }
+        if let mode = try? store.activityMoveMode().activityMoveMode { meta["moveMode"] = mode == .appleMoveTime ? "appleMoveTime" : "activeEnergy" }
+        guard !meta.isEmpty else { return [] }
+        return [["k": "ev", "ty": "Profile", "s": .array([Date().ms]), "ids": .array(["profile"]), "meta": .array([.object(meta)])]]
+    }
+
     // MARK: Background delivery
 
     func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {
@@ -582,6 +865,29 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
         store.execute(q)
         store.enableBackgroundDelivery(for: type, frequency: .immediate) { _, _ in }
+    }
+
+    private var observedTypes = Set<String>()
+
+    /// Heart rate and steps (hourly series) and every event type of the switched-on categories wake the app in the
+    /// background too, so new readings (a CGM, a logged meal) reach the server without opening the app. iOS decides
+    /// when and how often (at most about hourly for most types), and only while the phone is unlocked.
+    func observeOtherData(categories: Set<String>, onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {
+        var types: [HKSampleType] = scope.hourly.map { $0.type }
+        for e in scope.events where categories.contains(e.category) { if let t = e.sampleType { types.append(t) } }
+        for type in types {
+            let fresh = sourceLock.withLock { observedTypes.insert(type.identifier).inserted }
+            guard fresh else { continue }
+            let q = HKObserverQuery(sampleType: type, predicate: nil) { _, completion, error in
+                if error != nil {
+                    completion()
+                    return
+                }
+                onChange { completion() }
+            }
+            store.execute(q)
+            store.enableBackgroundDelivery(for: type, frequency: .hourly) { _, _ in }
+        }
     }
 
     // MARK: Helpers
@@ -670,7 +976,7 @@ extension HealthKitSource {
     private func specs(for w: HKWorkout) -> [WorkoutQuantity] {
         var wanted = Set(w.allStatistics.keys.map(\.identifier))
         wanted.insert(HealthTypes.quantityPrefix + "HeartRate")
-        return scope.workoutQuantities.filter { wanted.contains($0.id) }
+        return scope.workoutQuantities.filter { wanted.contains($0.id) && $0.stream }
     }
 
     private func windowPredicate(_ w: HKWorkout, strict: Bool) -> NSPredicate {
@@ -828,6 +1134,81 @@ extension HealthKitSource {
             emit("C2 \(buckets[b].label) ms per workout, one at a time: quantity \(n0(qMs / c)) (\(f(Double(types) / c)) queries), series \(n0(seriesMs / c)), HR fallback \(n0(fallbackMs / c)), route lookup \(n0(lookupMs / c)), route points \(n0(pointsMs / c)) · slowest types " + perType.sorted { $0.value > $1.value }.prefix(4).map { "\($0.key) \(n0($0.value / c))" }.joined(separator: ", "))
             emit("C3 \(buckets[b].label) per workout: \(n0(Double(samples) / c)) samples, \(f(Double(series) / c)) series → \(n0(Double(seriesPoints) / c)) points, \(f(Double(routes) / c)) routes → \(n0(Double(routePoints) / c)) points · HR only by time window in \(fallbackUsed)/\(ws.count)")
         }
+
+        // J. Upload size of the raw data by format, on the same workouts, and a check of the encoding on real data.
+        var projected = [Double](repeating: 0, count: 5)
+        var rawColumns: [String: (raw: Int, all: Int)] = [:]
+        var exactChecked = 0, exactDiffering = 0
+        var routeErr: [String: Double] = [:]
+        func gzBytes(_ records: [Record]) -> Int {
+            var body = Data()
+            for line in (try? BatchWriter.encodeLines(records)) ?? [] {
+                body.append(line)
+                body.append(0x0a)
+            }
+            return Gzip.compress(body).count
+        }
+        for (b, ws) in picks.enumerated() where !ws.isEmpty {
+            var sizes = [Int](repeating: 0, count: 5)
+            var done = 0
+            for w in ws.prefix(24) {
+                let id = w.uuid.uuidString
+                guard let parts = try? await workoutParts(id: id) else { continue }
+                done += 1
+                let variants: [[Record]] = [
+                    Self.records(id: id, gen: 1, parts: parts, format: .plain),
+                    Self.records(id: id, gen: 1, parts: parts),
+                    Self.records(id: id, gen: 1, parts: parts, routePlans: WorkoutRecords.fineRoutePlans),
+                    Self.records(id: id, gen: 1, parts: parts, includeRoute: false),
+                    Self.records(id: id, gen: 1, parts: parts, format: .plain, includeRoute: false),
+                ]
+                for (k, recs) in variants.enumerated() { sizes[k] += gzBytes(recs) }
+                // Does the compact form give back what was read?
+                let original = Dictionary(parts.series.map { ($0.name, WorkoutRecords.dedupe($0.points)) }, uniquingKeysWith: { first, _ in first })
+                var seen: [String: Int] = [:]
+                for r in variants[1] {
+                    guard case .string("ws")? = r["k"], case .string(let name)? = r["st"], case .int(let n)? = r["n"] else { continue }
+                    let offset = seen[name, default: 0]
+                    seen[name] = offset + Int(n)
+                    if name == "route" {
+                        let pts = WorkoutRecords.thinned(WorkoutRecords.dedupe(parts.route))
+                        let slice = Array(pts[offset ..< offset + Int(n)])
+                        let fields: [(String, [Double?], Double)] = [
+                            ("lat", slice.map { Optional($0.lat) }, 111_195), ("lon", slice.map { Optional($0.lon) }, 111_195 * cos(slice[0].lat * .pi / 180)),
+                            ("alt", slice.map(\.alt), 1), ("spd", slice.map(\.spd), 1), ("crs", slice.map(\.crs), 1),
+                        ]
+                        for (col, values, perUnit) in fields {
+                            guard let rec = r[col], let back = CompactColumns.decode(rec, count: Int(n)) else { continue }
+                            var worst = 0.0
+                            for (x, y) in zip(values, back) { if let x, let y { worst = max(worst, abs(x - y) * perUnit) } else if (x == nil) != (y == nil) { worst = .infinity } }
+                            routeErr[col] = max(routeErr[col] ?? 0, worst)
+                        }
+                    } else if let points = original[name], case let v? = r["v"] {
+                        rawColumns[name, default: (0, 0)].all += 1
+                        if case .object(let o) = v, o["r"] != nil { rawColumns[name]!.raw += 1 }
+                        let slice = Array(points[offset ..< offset + Int(n)])
+                        exactChecked += 1
+                        // Quantity values are rounded to 3 decimals before encoding: the check allows exactly that.
+                        let expectedValues: [Double?] = slice.map { Optional($0.v) }
+                        let matches: Bool = {
+                            guard let back = CompactColumns.decode(v, count: Int(n)), back.count == expectedValues.count else { return false }
+                            return zip(back, expectedValues).allSatisfy { a, b in
+                                if let a, let b { return abs(a - b) <= 0.0005 + 1e-9 }
+                                return a == nil && b == nil
+                            }
+                        }()
+                        if !matches { exactDiffering += 1 }
+                    }
+                }
+            }
+            guard done > 0 else { continue }
+            func kb(_ i: Int) -> String { n0(Double(sizes[i]) / Double(done) / 1000) }
+            emit("J \(buckets[b].label) per workout, KB gzip: today \(kb(0)) → new \(kb(1)) (finer course/speed/accuracy \(kb(2))) · without the route: today \(kb(4)) → new \(kb(3))")
+            for i in 0 ..< 5 { projected[i] += Double(sizes[i]) / Double(done) * Double(byBucket[b].count) / 1_000_000 }
+        }
+        let raws = rawColumns.sorted { $0.value.all > $1.value.all }.prefix(6).map { "\($0.key) \(n0(Double($0.value.raw) / Double(max($0.value.all, 1)) * 100))%" }
+        emit("K projected upload for all \(all.count) workouts: today \(n0(projected[0])) MB → new \(n0(projected[1])) MB (finer precision \(n0(projected[2])) MB) · without routes: today \(n0(projected[4])) MB → new \(n0(projected[3])) MB")
+        emit("K2 encoding check on your data: \(exactChecked) quantity chunks, \(exactDiffering) differ from what was read by more than the 0.0005 rounding (must be 0) · route worst error: " + ["lat", "lon", "alt", "spd", "crs"].map { "\($0) \(String(format: "%.2f", routeErr[$0] ?? 0))\($0 == "lat" || $0 == "lon" || $0 == "alt" ? " m" : "")" }.joined(separator: ", ") + " · chunks stored as plain numbers (not a short decimal): " + raws.joined(separator: ", "))
 
         // D. Time window + same app vs the workout association: exactly the same samples? Faster?
         for (b, ws) in picks.enumerated() where !ws.isEmpty {

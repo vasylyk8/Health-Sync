@@ -40,10 +40,41 @@ export interface CoverageEntry {
   unit?: string;
   group: string;
   record: string;
+  /** Consent category the type belongs to (default "core"). */
+  category?: string;
 }
 
-export const COVERAGE: { version: number; types: CoverageEntry[] } = coverageJson as never;
+export interface CategoryDef { id: string; label: string; default?: boolean }
+export interface EventTypeDef { name: string; id: string; kind: string; category: string; unit?: string; dense?: boolean }
+export interface DailyMetricDef { key: string; category?: string; outputs?: string[] }
+export interface HourlyMetricDef { name: string; id: string; unit: string; cols: string[] }
+
+interface Coverage {
+  version: number;
+  types: CoverageEntry[];
+  categories: CategoryDef[];
+  eventTypes: EventTypeDef[];
+  hourlyMetrics: HourlyMetricDef[];
+  dailyMetrics: DailyMetricDef[];
+}
+
+export const COVERAGE: Coverage = coverageJson as never;
 export const TYPES_BY_ID = new Map(COVERAGE.types.map((t) => [t.id, t]));
+
+/** Consent categories: what a user can switch on. Data of a switched-off category is neither accepted nor served. */
+export const CATEGORIES = COVERAGE.categories;
+export const CATEGORY_IDS = new Set(CATEGORIES.map((c) => c.id));
+export const DEFAULT_CATEGORIES: string[] = CATEGORIES.filter((c) => c.default).map((c) => c.id);
+export const EVENT_TYPES = new Map(COVERAGE.eventTypes.map((e) => [e.name, e]));
+export const HOURLY_METRICS = new Map(COVERAGE.hourlyMetrics.map((h) => [h.name, h]));
+
+/** Consent category of a batch type ("core" unless the coverage file says otherwise). */
+export const categoryOfType = (type: string): string => TYPES_BY_ID.get(type)?.category ?? 'core';
+
+/** Category of every daily metric output key ("core" unless listed). */
+export const DAILY_KEY_CATEGORY = new Map<string, string>(
+  COVERAGE.dailyMetrics.flatMap((m) => [m.key, ...(m.outputs ?? [])].map((k) => [k, m.category ?? 'core'] as [string, string])),
+);
 
 /** Friendly name for the AI: HKQuantityTypeIdentifierHeartRate -> HeartRate. */
 export function shortName(id: string): string {

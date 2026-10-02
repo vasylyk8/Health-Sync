@@ -7,6 +7,19 @@ enum Copy {
         static let connectButton = "Connect to Apple Health"
         static let chicagoCaption = "CHICAGO MARATHON"
         static let chicagoDate = "OCT 11, 2026"
+        static let dataNote = "Your Apple Health data is copied securely to our servers in the EU so the assistants you connect can read it. Nothing is shared until you connect one."
+    }
+
+    enum Account {
+        static let title = "Connect your KROK account"
+        static let detail = "Sign in with Apple to use these workouts in Claude or ChatGPT. Your synced data stays in your KROK account."
+        static let linked = "Apple Account linked"
+    }
+
+    enum Choices {
+        static let title = "Your data"
+        static let header = "Data your assistant can see"
+        static let footer = "Apple Health asks for each group separately, and you can also change it in Apple Health. Switching a group off here deletes its data from KROK’s servers. Assistants describe your data and trends; they don’t give medical advice."
     }
 
     enum Home {
@@ -26,6 +39,7 @@ enum Copy {
     }
 
     enum Menu {
+        static let yourData = "Your data"
         static let help = "Help & Support"
         static let privacy = "Privacy Policy"
         static let deleteAll = "Delete All My Data"
@@ -43,7 +57,7 @@ enum Copy {
         static func connectTitle(_ name: String) -> String { "Connect \(name)" }
         static func consentTitle(_ name: String) -> String { "Share your workouts with \(name)?" }
         static func consentBody(_ name: String) -> String {
-            "You’ll get a private link. With it, \(name) can read your workouts, heart rate, GPS routes and daily summaries when you ask a question."
+            "You’ll get a private link. With it, \(name) can read your workouts, heart rate, GPS routes, and daily and hourly summaries, plus any extra data groups you switch on, when you ask a question."
         }
         static func consentTerms(_ company: String) -> String {
             "\(company) processes that data under its own terms. You can disconnect at any time."
@@ -63,6 +77,16 @@ enum Copy {
         static func disconnectMessage(_ name: String) -> String {
             "\(name) will immediately lose access. You can also remove the KROK connector in \(name)’s settings."
         }
+        static func authorizeTitle(_ name: String) -> String { "Authorize KROK in \(name)" }
+        static let oauthIntro = "Add KROK in your assistant, then sign in with the Apple Account you linked here. You’ll choose what data it can read on the authorization page."
+        static let oauthPending = "While directory approval is pending, use a custom connector with OAuth authentication."
+        static let copyServerURL = "Copy KROK server URL"
+        static func oauthHowTo(chatGPT: Bool) -> String {
+            chatGPT
+                ? "In ChatGPT, enable Developer mode, create KROK with this URL, and choose OAuth."
+                : "In Claude, open Customize → Connectors → Add custom connector and paste this URL."
+        }
+        static let oauthWarning = "Don’t choose No authentication. KROK will open a sign-in and consent page."
         static let genericError = "Something went wrong. Please try again."
     }
 

@@ -4,6 +4,7 @@ import { BatchError, WORKOUT_TYPE, parseBatch, type ParsedBatch, type StreamChun
 import { idsToParquet, rowsToParquet, streamToParquet, withDuck } from '../query/duck.js';
 import { addInterval, type BlobStore, type FileRef, type MetaStore, type StreamInfo, type TypeManifest, type WorkoutDataDoc } from '../store/types.js';
 import { log } from '../log.js';
+import { DEFAULT_CATEGORIES, categoryOfType } from '../config.js';
 
 export interface IngestDeps {
   incoming: BlobStore;
@@ -38,6 +39,15 @@ export async function ingestObject(objectPath: string, deps: IngestDeps, opts: {
 
   const prior = await meta.batchState(uid, batchId);
   if (prior) {
+    // Publishing is atomic, external cleanup isn't. Keep the input until those
+    // idempotent effects complete, then retry them without publishing twice.
+    if (prior === 'published' && await incoming.exists(objectPath)) {
+      const user = await meta.getUser(uid);
+      if (user && !user.deleting) {
+        const parsed = parseBatch(await incoming.read(objectPath));
+        await finishPublishedEffects(deps, uid, parsed);
+      }
+    }
     await incoming.delete(objectPath).catch(() => undefined);
     return prior === 'published' ? 'duplicate' : prior;
   }
@@ -69,6 +79,13 @@ export async function ingestObject(objectPath: string, deps: IngestDeps, opts: {
   }
 
   const { header } = parsed;
+  // Data of a category the user has not switched on is never stored (the app only sends enabled categories).
+  if (header.mode !== 'status' && !(user.categories ?? DEFAULT_CATEGORIES).includes(categoryOfType(header.type))) {
+    log.info('batch for a switched-off category dropped', { uid, batchId, type: header.type });
+    await meta.markBatch(uid, batchId, 'discarded', 'category not enabled');
+    await incoming.delete(objectPath).catch(() => undefined);
+    return 'discarded';
+  }
   if (header.mode === 'workoutdata') return ingestStreams(uid, batchId, objectPath, parsed, user.generation, deps);
   if (header.mode === 'status') return ingestStatus(uid, batchId, objectPath, parsed, user.generation, deps);
   const type = header.type;
@@ -108,18 +125,16 @@ export async function ingestObject(objectPath: string, deps: IngestDeps, opts: {
     // A deletion started while we were writing: remove what we wrote.
     await Promise.all(Object.values(written).map((f) => data.delete(f.path).catch(() => undefined)));
   }
+  if (result === 'published' || result === 'duplicate') await finishPublishedEffects(deps, uid, parsed);
   await incoming.delete(objectPath).catch(() => undefined);
-
-  // A deleted workout takes its raw data with it.
-  if (result === 'published' && type === WORKOUT_TYPE && parsed.tombstones.length) {
-    await dropWorkoutData(deps, uid, parsed.tombstones);
-  }
-
-  if (result === 'published' && header.reconcileId && header.reconcileDone && deps.onReconcileDone) {
-    await deps.onReconcileDone(uid, type, header.reconcileId);
-  }
   log.info('batch processed', { uid, batchId, type, result, records: parsed.recordCount, mode: header.mode, readMs: header.perf?.readMs, uploadMs: header.perf?.uploadMs });
   return result;
+}
+
+async function finishPublishedEffects(deps: IngestDeps, uid: string, parsed: ParsedBatch): Promise<void> {
+  const { header } = parsed;
+  if (header.type === WORKOUT_TYPE && parsed.tombstones.length) await dropWorkoutData(deps, uid, parsed.tombstones);
+  if (header.reconcileId && header.reconcileDone && deps.onReconcileDone) await deps.onReconcileDone(uid, header.type, header.reconcileId);
 }
 
 /** Deletes the raw-data index and Parquet files of workouts that no longer exist. */
@@ -171,7 +186,7 @@ async function ingestStreams(uid: string, batchId: string, objectPath: string, p
       for (const ch of chunks) for (const t of ch.t) if (t < firstT) firstT = t;
       written.push({
         wid: first.wid, st: first.st, gen: first.gen, points: local.points,
-        ref: { path, bytes: bytes.length },
+        ref: { path, bytes: bytes.length, ...(Object.keys(local.scale).length ? { scale: local.scale } : {}) },
         unit: first.unit,
         cols: [...new Set(chunks.flatMap((ch) => Object.keys(ch.cols)))],
         ...(Number.isFinite(firstT) ? { firstT } : {}),

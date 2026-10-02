@@ -5,6 +5,7 @@ struct ConnectView: View {
     @EnvironmentObject var model: AppModel
     @State private var selected: AIProvider?
     @State private var confirmDelete = false
+    @State private var showChoices = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,6 +21,9 @@ struct ConnectView: View {
         .background(Theme.background.ignoresSafeArea())
         .sheet(item: $selected) { provider in
             SetupSheet(provider: provider)
+        }
+        .sheet(isPresented: $showChoices) {
+            DataChoicesView().environmentObject(model)
         }
         #if DEBUG
         .sheet(isPresented: $model.showBenchmark, onDismiss: { model.finishSpeedTest() }) {
@@ -43,6 +47,7 @@ struct ConnectView: View {
             Menu {
                 Link(destination: Theme.supportURL) { Label(Copy.Menu.help, systemImage: "questionmark.circle") }
                 Link(destination: Theme.privacyURL) { Label(Copy.Menu.privacy, systemImage: "hand.raised") }
+                Button { showChoices = true } label: { Label(Copy.Menu.yourData, systemImage: "slider.horizontal.3") }
                 #if DEBUG
                 Button { model.runSpeedTest() } label: { Label(Copy.Menu.speedTest, systemImage: "speedometer") }
                 #endif
@@ -74,7 +79,10 @@ struct ConnectView: View {
                     ProviderPill(provider: provider, setUp: model.isSetUp(provider)) { selected = provider }
                 }
             }
-            .padding(.bottom, 16)
+            .padding(.bottom, 24)
+            // Below the assistants so they stay in reach; its explanation can grow at large text sizes.
+            AppleAccountView(style: .home)
+                .padding(.bottom, 16)
         }
         .padding(.horizontal, Theme.margin)
     }

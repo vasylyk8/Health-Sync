@@ -45,6 +45,7 @@ targets:
       path: HealthSync/HealthSync.entitlements
       properties:
         com.apple.developer.healthkit: true
+        com.apple.developer.applesignin: [Default]
         com.apple.developer.healthkit.access: []
         com.apple.developer.healthkit.background-delivery: true
         com.apple.developer.devicecheck.appattest-environment: production
@@ -56,13 +57,14 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UIRequiredDeviceCapabilities: [healthkit]
-        NSHealthShareUsageDescription: "KROK reads your workouts, heart rate, GPS routes and daily summaries (like sleep) so the AI assistants you connect can answer questions about your training. Nothing is shared until you connect one."
-        NSHealthUpdateUsageDescription: "KROK has read-only access to Apple Health and never writes to it."
+        NSHealthShareUsageDescription: "KROK reads your workouts from Apple Health, including heart rate, other measurements and GPS routes, plus daily and hourly summaries such as sleep, heart rate, steps and resting heart rate, so the AI assistants you connect (Claude, ChatGPT) can answer questions about your training and recovery. It also reads nutrition, heart alerts, glucose, insulin and blood pressure, symptoms and mood, cycle tracking, medications and profile details if you track them; Apple Health lets you choose each type, and KROK's Settings can switch each group off. Nothing is shared until you connect an assistant."
+        NSHealthUpdateUsageDescription: "KROK never writes to Apple Health."
         UIBackgroundModes: [fetch, processing]
-        BGTaskSchedulerPermittedIdentifiers: [app.healthsync.sync]
+        BGTaskSchedulerPermittedIdentifiers: [app.healthsync.sync, app.healthsync.refresh]
         ITSAppUsesNonExemptEncryption: false
         FirebaseAppDelegateProxyEnabled: false
         PrivacyPolicyURL: ${PUBLIC_BASE_URL}/privacy
+        MCPServerURL: https://krok-1d60a.firebaseapp.com/mcp
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ${BUNDLE_ID}
@@ -73,7 +75,10 @@ targets:
   HealthSyncTests:
     type: bundle.unit-test
     platform: iOS
-    sources: [HealthSyncTests]
+    sources:
+      - path: HealthSyncTests
+      - path: ../shared/compact-fixtures.json
+        buildPhase: resources
     dependencies:
       - target: HealthSync
     settings:

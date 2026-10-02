@@ -56,6 +56,10 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
         _ = try await call("deleteAllData", [:])
     }
 
+    func setCategories(_ ids: [String]) async throws {
+        _ = try await call("setCategories", ["categories": ids])
+    }
+
     func status() async throws -> ServerStatus {
         let data = try await call("getStatus", [:])
         let json = try JSONSerialization.data(withJSONObject: data ?? [:])
@@ -69,6 +73,35 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
 
     func signOut() async {
         try? Auth.auth().signOut()
+    }
+
+    func hasAppleAccount() async -> Bool {
+        Auth.auth().currentUser?.providerData.contains(where: { $0.providerID == "apple.com" }) ?? false
+    }
+
+    func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool) async throws {
+        _ = try await signIn()
+        guard let user = Auth.auth().currentUser else { throw BackendError.notSignedIn }
+        let credential = OAuthProvider.appleCredential(withIDToken: result.idToken, rawNonce: result.nonce, fullName: nil)
+        if user.providerData.contains(where: { $0.providerID == "apple.com" }) {
+            _ = try await user.reauthenticate(with: credential)
+            return
+        }
+        do {
+            _ = try await user.link(with: credential)
+        } catch let error as NSError where error.domain == AuthErrorDomain && error.code == AuthErrorCode.credentialAlreadyInUse.rawValue {
+            // Restoring an existing account is allowed only before local onboarding,
+            // with an empty outbox. Never silently switch an active user's dataset.
+            let currentStatus = try await status()
+            guard allowExistingAccount, user.isAnonymous, currentStatus.typesWithData == 0,
+                  let updated = error.userInfo[AuthErrorUserInfoUpdatedCredentialKey] as? AuthCredential else { throw AppleSignInError.accountConflict }
+            _ = try await Auth.auth().signIn(with: updated)
+        }
+        _ = try await Auth.auth().currentUser?.getIDToken(forcingRefresh: true)
+    }
+
+    func revokeAppleAuthorization(_ authorizationCode: String) async throws {
+        try await Auth.auth().revokeToken(withAuthorizationCode: authorizationCode)
     }
 
     func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {

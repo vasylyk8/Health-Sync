@@ -20,6 +20,8 @@ final class AppModel: ObservableObject {
     private var estimator = SyncEstimator()
     @Published var errorMessage: String?
     @Published var busy = false
+    @Published var appleAccountLinked = false
+    private let appleSignIn = AppleSignIn()
     /// What the connect button is waiting for right now (shown under it), so a stall can be told apart.
     @Published var connectStage = ""
     /// Shown under the sync status when the last sync attempt failed; cleared by the next success.
@@ -39,6 +41,9 @@ final class AppModel: ObservableObject {
     private let scope: SyncScope
     private let telemetry: Telemetry
     private let defaults: UserDefaults
+    private let consent: ConsentStore
+    /// Data categories switched on (core is always on).
+    @Published private(set) var enabledCategories: Set<String> = ["core"]
     private var started = false
     private var observing = false
 
@@ -49,10 +54,14 @@ final class AppModel: ObservableObject {
         self.scope = scope
         self.telemetry = telemetry
         self.defaults = defaults
+        let defaultCategories = Set(scope.categories.filter { $0.default == true }.map(\.id))
+        let consent = ConsentStore(defaults: defaults, fallback: defaultCategories)
+        self.consent = consent
+        enabledCategories = consent.enabled
         var config = SyncEngine.Config()
         config.device = UIDevice.current.model
         config.appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
-        engine = SyncEngine(source: source, uploader: backend, outbox: outbox, scope: scope, config: config, telemetry: telemetry)
+        engine = SyncEngine(source: source, uploader: backend, outbox: outbox, scope: scope, config: config, telemetry: telemetry, categories: { consent.enabled })
         phase = defaults.bool(forKey: "healthConnected") ? .home : .welcome
     }
 
@@ -91,6 +100,10 @@ final class AppModel: ObservableObject {
             }
             // HealthKit never reveals which read permissions were granted; we proceed either way
             // and show "No readable Health data found" later if nothing arrives.
+            // First connection: the default data groups are on (changeable in ••• → Your data).
+            let firstChoice = !consent.hasChoice
+            consent.persist()
+            enabledCategories = consent.enabled
             stage = "health-permission"
             connectStage = "Waiting for Apple Health…"
             // If Apple Health neither shows its permission screen nor answers, say what to do instead of
@@ -100,7 +113,7 @@ final class AppModel: ObservableObject {
                 self?.connectStage = Self.permissionStallHint
             }
             defer { hint.cancel() }
-            try await source.requestAuthorization(scope: scope)
+            try await source.requestAuthorization(scope: scope, categories: consent.enabled)
             hint.cancel()
             stage = "sign-in"
             connectStage = "Signing in…"
@@ -110,6 +123,10 @@ final class AppModel: ObservableObject {
             connectStage = "Registering this iPhone…"
             let tz = TimeZone.current.identifier
             try await Self.withTimeout(seconds: 25) { try await backend.registerDevice(timeZone: tz) }
+            if firstChoice {
+                let chosen = consent.enabled.sorted()
+                try await Self.withTimeout(seconds: 25) { try await backend.setCategories(chosen) }
+            }
             defaults.set(true, forKey: "healthConnected")
             telemetry.event("health_connected")
             busy = false
@@ -192,16 +209,47 @@ final class AppModel: ObservableObject {
                 done()
             }
         }
+        observeOtherData()
+    }
+
+    /// Background wake-ups for heart rate, steps and the extra data groups that are switched on (also after one is switched on).
+    private func observeOtherData() {
+        let engine = self.engine
+        source.observeOtherData(categories: consent.enabled) { done in
+            Task {
+                try? await engine.runWorkoutChanges(deadline: Date().addingTimeInterval(20))
+                done()
+            }
+        }
+    }
+
+    /// An existing install that never made a choice gets the default data groups the first time it runs this version.
+    private func applyDefaultCategoriesIfNeeded() async {
+        guard !consent.hasChoice else { return }
+        consent.persist()
+        enabledCategories = consent.enabled
+        let chosen = consent.enabled
+        do {
+            try await source.requestAuthorization(scope: scope, categories: chosen)
+            try await backend.setCategories(chosen.sorted())
+            for id in chosen where id != "core" { try await engine.categoryEnabled(id) }
+            observeOtherData()
+        } catch {
+            // Try again next time: forget the stored choice so the defaults are applied again.
+            defaults.removeObject(forKey: ConsentStore.key)
+        }
     }
 
     func syncNow() async {
         do {
             _ = try await backend.signIn()
+            appleAccountLinked = await backend.hasAppleAccount()
             if !started {
                 started = true
                 try await backend.registerDevice(timeZone: TimeZone.current.identifier)
             }
             await refreshStatus()
+            await applyDefaultCategoriesIfNeeded()
             // A background wake-up may be using the engine for a moment; wait for it instead of skipping the sync.
             var outcome = try await engine.run()
             var waits = 0
@@ -226,7 +274,25 @@ final class AppModel: ObservableObject {
 
     /// While workout details are still uploading, ask iOS for background time to continue. (HealthKit
     /// data is only readable while the phone is unlocked, so this helps only when iOS runs it then.)
+    /// Asks iOS for an occasional background refresh even when everything is in (it decides when; roughly every few hours at best).
+    func scheduleBackgroundRefresh() {
+        // Submitting a request for a task nobody registered a handler for crashes (UI tests, previews).
+        guard phase == .home, BackgroundTaskRegistry.shared.refreshRegistered else { return }
+        let request = BGAppRefreshTaskRequest(identifier: AppModel.refreshTaskId)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60)
+        try? BGTaskScheduler.shared.submit(request)
+    }
+
+    static let refreshTaskId = "app.healthsync.refresh"
+
+    /// What a background refresh does: the same quick catch-up as a wake for new data.
+    func runBackgroundRefresh() async {
+        scheduleBackgroundRefresh()
+        try? await engine.runWorkoutChanges(deadline: Date().addingTimeInterval(25))
+    }
+
     func scheduleBackgroundSyncIfNeeded() {
+        scheduleBackgroundRefresh()
         guard phase == .home, !progress.historyComplete else { return }
         let request = BGProcessingTaskRequest(identifier: AppModel.backgroundTaskId)
         request.requiresNetworkConnectivity = true
@@ -237,7 +303,50 @@ final class AppModel: ObservableObject {
     static let backgroundTaskId = "app.healthsync.sync"
 
     func refreshStatus() async {
-        if let s = try? await backend.status() { status = s }
+        guard let s = try? await backend.status() else { return }
+        status = s
+        // After a reinstall the phone has no choice yet: adopt what the server already holds.
+        if !consent.hasChoice, let remote = s.categories {
+            consent.set(Set(remote))
+            enabledCategories = consent.enabled
+        }
+    }
+
+    // MARK: Data categories
+
+    /// Categories offered in Settings (everything in the coverage file except the always-on core group).
+    var optionalCategories: [CoverageCategory] { scope.categories.filter { $0.id != "core" } }
+
+    func isEnabled(_ id: String) -> Bool { enabledCategories.contains(id) }
+
+    /// Switches a data category on (asks Apple Health for access to its types) or off (its data is deleted on the server).
+    func setCategory(_ id: String, on: Bool) async {
+        guard id != "core", isEnabled(id) != on else { return }
+        busy = true
+        defer { busy = false }
+        var next = consent.enabled
+        do {
+            if on {
+                next.insert(id)
+                try await source.requestAuthorization(scope: scope, categories: next)
+            } else {
+                next.remove(id)
+            }
+            // The server first: a failed call leaves the choice unchanged instead of syncing data it would reject.
+            try await backend.setCategories(next.sorted())
+            consent.set(next)
+            enabledCategories = consent.enabled
+            if on { try await engine.categoryEnabled(id) } else { try await engine.categoryDisabled(id) }
+            telemetry.event(on ? "category_on" : "category_off", ["category": id])
+            await refreshStatus()
+            if on {
+                observeOtherData()
+                syncTask?.cancel()
+                syncTask = Task { await syncNow() }
+            }
+        } catch {
+            errorMessage = friendly(error)
+        }
     }
 
     // MARK: Providers
@@ -288,6 +397,11 @@ final class AppModel: ObservableObject {
         busy = true
         defer { busy = false }
         do {
+            if await backend.hasAppleAccount() {
+                let identity = try await appleSignIn.authorize()
+                try await backend.linkAppleAccount(identity, allowExistingAccount: false)
+                try await backend.revokeAppleAuthorization(identity.authorizationCode)
+            }
             try await backend.deleteAllData()
             telemetry.event("data_deleted")
             Keychain.removeAll()
@@ -299,6 +413,7 @@ final class AppModel: ObservableObject {
             await backend.signOut()
             defaults.removeObject(forKey: "healthConnected")
             status = .empty
+            appleAccountLinked = false
             started = false
             // Clear `busy` before the screen changes: the new welcome screen must never render (or
             // miss an update to) a stale spinner with a disabled button.
@@ -306,6 +421,26 @@ final class AppModel: ObservableObject {
             withAnimation { phase = .welcome }
         } catch {
             errorMessage = friendly(error)
+        }
+    }
+
+    func linkAppleAccount(_ result: AppleSignInResult) async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            let allowExisting = phase == .welcome && outbox.pending().isEmpty
+            // Finish in-flight uploads before account restoration can change identity.
+            syncTask?.cancel()
+            await syncTask?.value
+            syncTask = nil
+            try await backend.linkAppleAccount(result, allowExistingAccount: allowExisting)
+            appleAccountLinked = await backend.hasAppleAccount()
+            await refreshStatus()
+            if phase == .home { start() }
+        } catch {
+            errorMessage = friendly(error)
+            if phase == .home { start() }
         }
     }
 

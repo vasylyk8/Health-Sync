@@ -18,11 +18,15 @@ import { handleMcp } from './mcp/server.js';
 import * as account from './account.js';
 import { AccountError, beginDeletion, parseProvider, purgeUserData, sweepDeletions } from './account.js';
 import { log } from './log.js';
+import { KrokOAuth } from './auth/oauth.js';
+import { FirestoreOAuthStore } from './auth/oauth-store.js';
+import { createOAuthRouter } from './auth/oauth-router.js';
 
 // Values written to functions/.env by the deploy workflow (see scripts/tasks/deploy.sh).
 const INCOMING_BUCKET = defineString('INCOMING_BUCKET');
 const DATA_BUCKET = defineString('DATA_BUCKET');
 const PUBLIC_BASE_URL = defineString('PUBLIC_BASE_URL');
+const OAUTH_BASE_URL = defineString('OAUTH_BASE_URL', { default: 'https://krok-1d60a.firebaseapp.com' });
 const RUNTIME_SA = defineString('RUNTIME_SA');
 const ENFORCE_APP_CHECK = defineBoolean('ENFORCE_APP_CHECK', { default: false });
 
@@ -43,6 +47,17 @@ function makeDeps() {
   };
 }
 const deps = () => (cached ??= makeDeps());
+let cachedOAuth: KrokOAuth | undefined;
+const oauth = () => (cachedOAuth ??= new KrokOAuth(new FirestoreOAuthStore(deps().db), OAUTH_BASE_URL.value()));
+let cachedRouter: ReturnType<typeof createOAuthRouter> | undefined;
+
+export const authorization = onRequest({ memory: '256MiB', invoker: 'public', timeoutSeconds: 30 }, (req, res) => {
+  cachedRouter ??= createOAuthRouter(oauth(), async (token) => {
+    const decoded = await getAuth().verifyIdToken(token, true);
+    return { uid: decoded.uid, apple: decoded.firebase.sign_in_provider === 'apple.com', reviewer: decoded.krokReviewer === true && decoded.firebase.sign_in_provider === 'password' };
+  }, deps().tokens);
+  cachedRouter(req, res);
+});
 
 // ---- Ingestion ------------------------------------------------------------------------------
 
@@ -67,7 +82,7 @@ export const mcp = onRequest(
   async (req, res) => {
     const d = deps();
     try {
-      await handleMcp(req, res, { tokens: d.tokens, limiter: d.tokens, accessLog: d.tokens, connections: d.tokens, meta: d.meta, data: d.data });
+      await handleMcp(req, res, { tokens: d.tokens, limiter: d.tokens, accessLog: d.tokens, connections: d.tokens, meta: d.meta, data: d.data, incoming: d.incoming, oauth: oauth() });
     } catch (err) {
       log.error('mcp request failed', { code: (err as { code?: string }).code ?? 'internal' });
       if (!res.headersSent) res.status(500).json({ error: 'internal' });
@@ -109,6 +124,11 @@ export const createConnectorLink = onCall(callableOpts, wrap(async (req) => {
 }));
 
 export const getStatus = onCall(callableOpts, wrap((req) => account.getStatus(deps().db, uidOf(req))));
+
+export const setCategories = onCall(callableOpts, wrap((req) => {
+  const d = deps();
+  return account.setCategories(d.db, { meta: d.meta, data: d.data }, uidOf(req), (req.data as { categories?: unknown })?.categories);
+}));
 
 export const batchExists = onCall(callableOpts, wrap(async (req) => {
   const uid = uidOf(req);

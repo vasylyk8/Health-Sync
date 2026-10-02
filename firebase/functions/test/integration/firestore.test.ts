@@ -3,9 +3,17 @@ import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { FirestoreMeta } from '../../src/store/firestore.js';
 import { emptyManifest } from '../../src/store/types.js';
-import { beginDeletion, createConnectorLink, disconnect, purgeUserData, registerDevice, sweepDeletions } from '../../src/account.js';
+import { beginDeletion, createConnectorLink, disconnect, purgeUserData, registerDevice, setCategories, sweepDeletions } from '../../src/account.js';
 import { hashToken } from '../../src/auth/tokens.js';
+import { DEFAULT_CATEGORIES } from '../../src/config.js';
 import { DirBlobs } from '../helpers/memory.js';
+import { KrokOAuth, DEFAULT_SCOPES, pkceChallenge } from '../../src/auth/oauth.js';
+import { FirestoreOAuthStore } from '../../src/auth/oauth-store.js';
+import { generateToken } from '../../src/auth/tokens.js';
+import type { Response } from 'express';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { getAuth } from 'firebase-admin/auth';
 
 if (!getApps().length) initializeApp({ projectId: 'demo-health-sync' });
 const db = getFirestore();
@@ -16,6 +24,69 @@ beforeEach(async () => {
 });
 
 const add = (m: ReturnType<typeof emptyManifest>, path: string) => ({ ...m, version: m.version + 1, files: { ...m.files, '2024-06': [...(m.files['2024-06'] ?? []), { path, bytes: 1 }] } });
+
+async function oauthCredentials() {
+  await registerDevice(db, 'oauth-user', 'UTC');
+  const oauth = new KrokOAuth(new FirestoreOAuthStore(db), 'https://krok.test');
+  const callback = 'https://claude.ai/api/mcp/auth_callback';
+  const client = await oauth.clientsStore.registerClient({ redirect_uris: [callback], token_endpoint_auth_method: 'none' });
+  let cookie = '', request = '';
+  await oauth.authorize(client, { redirectUri: callback, scopes: DEFAULT_SCOPES, codeChallenge: pkceChallenge(generateToken()), resource: new URL(oauth.resource) }, {
+    cookie: (_key: string, value: string) => { cookie = value; },
+    redirect: (_status: number, location: string) => { request = new URL(location).searchParams.get('request')!; },
+  } as unknown as Response);
+  const redirect = new URL(await oauth.finishConsent(request, cookie, 'oauth-user', true, false));
+  const credentials = await oauth.exchangeAuthorizationCode(client, redirect.searchParams.get('code')!, undefined, callback, new URL(oauth.resource));
+  return { oauth, client, credentials };
+}
+
+describe('OAuth on real Firestore transactions', () => {
+  it('provisions a dedicated emulator reviewer and refuses to overwrite a non-synthetic account', async () => {
+    const run = promisify(execFile);
+    const uid = 'krok-reviewer-integration';
+    const env = { ...process.env, GCP_PROJECT_ID: 'demo-health-sync', KROK_REVIEWER_UID: uid,
+      KROK_REVIEWER_EMAIL: 'integration-reviewer@example.test', KROK_REVIEWER_PASSWORD: 'Emulator-only-reviewer-password-123' };
+    await run(process.execPath, ['scripts/prepare-reviewer.mjs', '--apply'], { env });
+    expect((await getAuth().getUser(uid)).customClaims?.krokReviewer).toBe(true);
+    expect((await db.doc(`users/${uid}`).get()).get('synthetic')).toBe(true);
+    await run(process.execPath, ['scripts/prepare-reviewer.mjs', '--apply'], { env });
+    expect((await db.doc(`users/${uid}`).get()).get('oauthEpochs.claude')).toBe(1);
+    // Never convert an ordinary/customer account into a reviewer by accident.
+    await db.doc(`users/${uid}`).update({ synthetic: false });
+    await expect(run(process.execPath, ['scripts/prepare-reviewer.mjs', '--apply'], { env })).rejects.toThrow();
+    await getAuth().deleteUser(uid);
+  });
+  it('persists omitted optional fields, hashed credentials and TTL timestamps', async () => {
+    const { oauth, credentials } = await oauthCredentials();
+    expect((await oauth.verifyAccessToken(credentials.access_token)).extra?.uid).toBe('oauth-user');
+    const record = await db.doc(`oauthCredentials/${hashToken(credentials.access_token)}`).get();
+    expect(record.get('expireAt').toMillis()).toBe(record.get('expires'));
+    expect((await db.doc(`oauthCredentials/${credentials.access_token}`).get()).exists).toBe(false);
+    expect((await db.collection('users/oauth-user/oauthGrants').get()).size).toBe(1);
+  });
+  it('atomically rotates refresh credentials and persists grant revocation on concurrent replay', async () => {
+    const { oauth, client, credentials } = await oauthCredentials();
+    const results = await Promise.allSettled([0, 1].map(() => oauth.exchangeRefreshToken(client, credentials.refresh_token!, undefined, new URL(oauth.resource))));
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const winner = results.find((result) => result.status === 'fulfilled');
+    if (winner?.status === 'fulfilled') await expect(oauth.verifyAccessToken(winner.value.access_token)).rejects.toThrow(/disconnected/);
+  });
+  it('disconnect invalidates OAuth even when there is no legacy link', async () => {
+    const { oauth, credentials } = await oauthCredentials();
+    await disconnect(db, 'oauth-user', 'claude');
+    await expect(oauth.verifyAccessToken(credentials.access_token)).rejects.toThrow(/disconnected/);
+  });
+  it('deletion stops access immediately and removes credentials outside the user subtree', async () => {
+    const { oauth, credentials } = await oauthCredentials();
+    await db.doc('oauthCredentials/other-user-credential').set({ uid: 'other-user' });
+    await beginDeletion(db, 'oauth-user');
+    await expect(oauth.verifyAccessToken(credentials.access_token)).rejects.toThrow(/disconnected/);
+    await purgeUserData({ db, incoming: new DirBlobs(), data: new DirBlobs(), deleteAuthUser: async () => undefined }, 'oauth-user');
+    expect((await db.collection('oauthCredentials').where('uid', '==', 'oauth-user').get()).empty).toBe(true);
+    expect((await db.collection('users/oauth-user/oauthGrants').get()).empty).toBe(true);
+    expect((await db.doc('oauthCredentials/other-user-credential').get()).exists).toBe(true);
+  });
+});
 
 describe('FirestoreMeta.publish', () => {
   it('publishes, rejects duplicates and discards after a deletion started', async () => {
@@ -96,6 +167,28 @@ describe('accounts', () => {
   });
 });
 
+describe('setCategories', () => {
+  it('stores the choice (core is always on) and deletes the data of a category that was switched off', async () => {
+    await registerDevice(db, 'u8', 'UTC');
+    const data = new DirBlobs();
+    const deps = { meta, data };
+    // Every group starts on, so choosing two switches the others off (and deletes their data, none yet).
+    expect(await setCategories(db, deps, 'u8', ['devices', 'nutrition'])).toEqual({ categories: ['core', 'devices', 'nutrition'], removed: ['heart', 'mind', 'cycle', 'medications', 'profile'] });
+    await meta.publish({ uid: 'u8', type: '_events_devices', batchId: 'g1', generation: 1, mutate: (m) => add(m, 'data/u8/_events_devices/2024-06/g1.parquet') });
+    await meta.publish({ uid: 'u8', type: '_events_nutrition', batchId: 'n1', generation: 1, mutate: (m) => add(m, 'data/u8/_events_nutrition/2024-06/n1.parquet') });
+    await data.write('data/u8/_events_devices/2024-06/g1.parquet', Buffer.from('x'));
+    await data.write('data/u8/_events_nutrition/2024-06/n1.parquet', Buffer.from('x'));
+    const out = await setCategories(db, deps, 'u8', ['nutrition']);
+    expect(out).toEqual({ categories: ['core', 'nutrition'], removed: ['devices'] });
+    expect([...data.paths]).toEqual(['data/u8/_events_nutrition/2024-06/n1.parquet']);
+    expect(await meta.getManifest('u8', '_events_devices')).toBeNull();
+    expect(await meta.getManifest('u8', '_events_nutrition')).not.toBeNull();
+    expect((await db.doc('users/u8').get()).get('categories')).toEqual(['core', 'nutrition']);
+    await expect(setCategories(db, deps, 'u8', ['bogus'])).rejects.toThrow(/categories must be/);
+    await expect(setCategories(db, deps, 'nobody', [])).rejects.toThrow(/Register the device/);
+  });
+});
+
 describe('sweepDeletions', () => {
   it('finishes accounts stuck in deleting and leaves others alone', async () => {
     await registerDevice(db, 'stuck1', 'UTC');
@@ -140,6 +233,6 @@ describe('getStatus', () => {
     await db.doc('users/u7').update({ 'connections.claude': { setUpAt: 1, lastUsedAt: 1 }, lastVisibleAt: 5 });
     await db.doc('users/u7/types/HR').set({ coverage: { caughtUp: true, earliest: 100 } });
     await db.doc('users/u7/types/Steps').set({ coverage: { caughtUp: false, earliest: 50 } });
-    expect(await getStatus(db, 'u7')).toEqual({ registered: true, deleting: false, setUp: { claude: true, chatgpt: false }, lastVisibleAt: 5, historySyncedBackTo: 100, typesWithData: 2 });
+    expect(await getStatus(db, 'u7')).toEqual({ registered: true, deleting: false, setUp: { claude: true, chatgpt: false }, lastVisibleAt: 5, historySyncedBackTo: 100, typesWithData: 2, categories: DEFAULT_CATEGORIES });
   });
 });

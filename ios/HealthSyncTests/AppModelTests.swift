@@ -5,6 +5,15 @@ import XCTest
 final class StubBackend: Backend, @unchecked Sendable {
     var signInError: Error?
     var registerError: Error?
+    var appleLinked = false
+    var appleLinkError: Error?
+    var appleRestoreChoices: [Bool] = []
+    func hasAppleAccount() async -> Bool { appleLinked }
+    func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool) async throws {
+        appleRestoreChoices.append(allowExistingAccount)
+        if let appleLinkError { throw appleLinkError }
+        appleLinked = true
+    }
     func signIn() async throws -> String {
         if let signInError { throw signInError }
         return "stub-user"
@@ -13,6 +22,8 @@ final class StubBackend: Backend, @unchecked Sendable {
     func createLink(provider: String) async throws -> String { "https://example.test/mcp/\(provider)" }
     func disconnect(provider: String) async throws {}
     func deleteAllData() async throws {}
+    var categoryCalls: [[String]] = []
+    func setCategories(_ ids: [String]) async throws { categoryCalls.append(ids) }
     func status() async throws -> ServerStatus { .empty }
     func batchExists(batchId: String) async throws -> Bool { true }
     func signOut() async {}
@@ -47,6 +58,54 @@ final class AppModelTests: XCTestCase {
         let model = makeModel(backend)
         await model.syncNow()
         XCTAssertEqual(model.syncIssue?.contains("Pull down"), true)
+    }
+
+    func testAppleLinkOnWelcomeCanRestoreAnExistingAccount() async {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        await model.linkAppleAccount(AppleSignInResult(idToken: "test", nonce: "nonce", authorizationCode: "code"))
+        XCTAssertEqual(backend.appleRestoreChoices, [true])
+        XCTAssertTrue(model.appleAccountLinked)
+        XCTAssertEqual(model.phase, .welcome, "linking does not bypass Health permission onboarding")
+        XCTAssertFalse(model.busy)
+    }
+
+    func testAppleLinkNeverRestoresOverAnOnboardedDataset() async {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        model.phase = .home
+        await model.linkAppleAccount(AppleSignInResult(idToken: "test", nonce: "nonce", authorizationCode: "code"))
+        XCTAssertEqual(backend.appleRestoreChoices, [false])
+        XCTAssertTrue(model.appleAccountLinked)
+        XCTAssertEqual(model.phase, .home)
+    }
+
+    func testAppleAccountConflictKeepsTheCurrentIdentityAndShowsRecovery() async {
+        let backend = StubBackend()
+        backend.appleLinkError = AppleSignInError.accountConflict
+        let model = makeModel(backend)
+        await model.linkAppleAccount(AppleSignInResult(idToken: "test", nonce: "nonce", authorizationCode: "code"))
+        XCTAssertFalse(model.appleAccountLinked)
+        XCTAssertEqual(model.phase, .welcome)
+        XCTAssertTrue(model.errorMessage?.contains("workouts have not changed") == true)
+        XCTAssertFalse(model.busy)
+    }
+
+    func testAppleLinkCannotStartWhileAnotherActionIsBusy() async {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        model.busy = true
+        await model.linkAppleAccount(AppleSignInResult(idToken: "test", nonce: "nonce", authorizationCode: "code"))
+        XCTAssertTrue(backend.appleRestoreChoices.isEmpty)
+        XCTAssertTrue(model.busy)
+    }
+
+    func testSyncRecoversThePersistedAppleAccountState() async {
+        let backend = StubBackend()
+        backend.appleLinked = true
+        let model = makeModel(backend)
+        await model.syncNow()
+        XCTAssertTrue(model.appleAccountLinked)
     }
 
     func testConnectFailureNamesTheStepAndCode() async {
@@ -99,6 +158,34 @@ final class AppModelTests: XCTestCase {
         await fulfillment(of: [done], timeout: 15)
         XCTAssertEqual(model.phase, .home)
         XCTAssertFalse(model.busy)
+    }
+
+    func testSwitchingACategoryOnTellsTheServerFirstAndOffDeletesIt() async {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        await model.setCategory("devices", on: true)
+        XCTAssertTrue(model.isEnabled("devices"))
+        XCTAssertEqual(backend.categoryCalls.last, ["core", "devices"])
+        await model.setCategory("devices", on: false)
+        XCTAssertFalse(model.isEnabled("devices"))
+        XCTAssertEqual(backend.categoryCalls.last, ["core"])
+        await model.setCategory("core", on: false)
+        XCTAssertEqual(backend.categoryCalls.count, 2, "core is always on and never sent as a change")
+    }
+
+    func testDefaultCategoriesAreAppliedOnTheFirstSyncAndTheServerIsTold() async {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        var scope = SyncScope.empty
+        scope.categories = [CoverageCategory(id: "core", label: "Core", default: true), CoverageCategory(id: "devices", label: "Devices", default: true), CoverageCategory(id: "cycle", label: "Cycle", default: nil)]
+        let backend = StubBackend()
+        let model = AppModel(backend: backend, source: ScriptedSource(), outbox: Outbox(root: root), scope: scope, telemetry: NoTelemetry(), defaults: UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!)
+        XCTAssertTrue(model.isEnabled("devices"), "default groups are on from the start")
+        XCTAssertFalse(model.isEnabled("cycle"), "groups without a default stay off")
+        await model.syncNow()
+        XCTAssertEqual(backend.categoryCalls.first, ["core", "devices"])
+        let calls = backend.categoryCalls.count
+        await model.syncNow()
+        XCTAssertEqual(backend.categoryCalls.count, calls, "the defaults are applied once")
     }
 
     func testErrorMessagesAreActionable() {

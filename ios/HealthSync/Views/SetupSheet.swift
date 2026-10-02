@@ -13,10 +13,11 @@ struct SetupSheet: View {
     @State private var confirmDisconnect = false
     @State private var linkError: String?
 
-    private enum Screen { case consent, steps, connected }
+    private enum Screen { case consent, steps, connected, oauth }
 
     private var screen: Screen {
         if model.isSetUp(provider) && link == nil { return .connected }
+        if model.appleAccountLinked { return .oauth }
         if link == nil && !consented { return .consent }
         return .steps
     }
@@ -26,6 +27,7 @@ struct SetupSheet: View {
         case .consent: return Copy.Sheet.consentTitle(provider.name)
         case .steps: return Copy.Sheet.connectTitle(provider.name)
         case .connected: return Copy.Sheet.isSetUp(provider.name)
+        case .oauth: return Copy.Sheet.authorizeTitle(provider.name)
         }
     }
 
@@ -36,6 +38,7 @@ struct SetupSheet: View {
             case .consent: consentView
             case .steps: stepsView
             case .connected: connectedView
+            case .oauth: oauthView
             }
         }
         .padding(.horizontal, Theme.margin)
@@ -50,25 +53,7 @@ struct SetupSheet: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 16) {
-            Text(title)
-                .headlineText()
-                .foregroundStyle(Theme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 6)
-                .accessibilityAddTraits(.isHeader)
-            Spacer(minLength: 0)
-            Button { dismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel(Copy.Sheet.close)
-            .padding(.trailing, -10)
-        }
-        .padding(.top, 16)
+        SheetHeader(title: title) { dismiss() }
     }
 
     // MARK: Consent
@@ -165,15 +150,7 @@ struct SetupSheet: View {
             waitingRow
                 .padding(.bottom, 16)
         }
-        .task { await model.waitUntilSetUp(provider) }
-        .onChange(of: model.isSetUp(provider)) { _, isSetUp in
-            guard isSetUp else { return }
-            Haptics.success()
-            Task {
-                try? await Task.sleep(for: .seconds(1.5))
-                dismiss()
-            }
-        }
+        .closesWhenSetUp(provider: provider) { dismiss() }
     }
 
     private func copyLink() {
@@ -208,6 +185,67 @@ struct SetupSheet: View {
         .background(Theme.surface, in: Capsule())
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("waitingRow")
+    }
+
+    // MARK: Sign in with Apple (public connector)
+
+    private var oauthView: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text(Copy.Sheet.oauthIntro)
+                        .bodyText()
+                        .foregroundStyle(Theme.ink)
+                    Text(Copy.Sheet.oauthPending)
+                        .smallText()
+                        .foregroundStyle(Theme.muted)
+                    Text(Theme.mcpURL.absoluteString)
+                        .smallText()
+                        .monospaced()
+                        .foregroundStyle(Theme.ink)
+                        .textSelection(.enabled)
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    HStack(spacing: 12) {
+                        Button {
+                            UIPasteboard.general.string = Theme.mcpURL.absoluteString
+                            Haptics.success()
+                            copied = true
+                        } label: {
+                            Label(Copy.Sheet.copyServerURL, systemImage: "doc.on.doc")
+                        }
+                        .buttonStyle(StepActionStyle(filled: true))
+                        .accessibilityIdentifier("copyOAuthURL")
+                        if copied {
+                            Text(Copy.Sheet.copied)
+                                .smallText()
+                                .foregroundStyle(Theme.muted)
+                                .accessibilityIdentifier("oauthCopied")
+                        }
+                    }
+                    Button {
+                        openURL(provider.setupURL)
+                    } label: {
+                        Label(Copy.Sheet.openSite(provider.websiteLabel), systemImage: "arrow.up.right")
+                    }
+                    .buttonStyle(StepActionStyle(filled: false))
+                    .accessibilityIdentifier("openWebsite")
+                    Text(Copy.Sheet.oauthHowTo(chatGPT: provider.id == "chatgpt"))
+                        .bodyText()
+                        .foregroundStyle(Theme.ink)
+                    Text(Copy.Sheet.oauthWarning)
+                        .smallText()
+                        .foregroundStyle(Theme.muted)
+                }
+                .padding(.top, 24)
+                .padding(.bottom, 16)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            waitingRow
+                .padding(.bottom, 16)
+        }
+        .closesWhenSetUp(provider: provider) { dismiss() }
     }
 
     // MARK: Connected
@@ -279,5 +317,31 @@ private struct StepRow<Actions: View>: View {
                     .padding(.top, 12)
             }
         }
+    }
+}
+
+private extension View {
+    /// Waits for the assistant to start using the connection, then closes the sheet with a short confirmation.
+    func closesWhenSetUp(provider: AIProvider, dismiss: @escaping () -> Void) -> some View {
+        modifier(ClosesWhenSetUp(provider: provider, dismiss: dismiss))
+    }
+}
+
+private struct ClosesWhenSetUp: ViewModifier {
+    let provider: AIProvider
+    let dismiss: () -> Void
+    @EnvironmentObject var model: AppModel
+
+    func body(content: Content) -> some View {
+        content
+            .task { await model.waitUntilSetUp(provider) }
+            .onChange(of: model.isSetUp(provider)) { _, isSetUp in
+                guard isSetUp else { return }
+                Haptics.success()
+                Task {
+                    try? await Task.sleep(for: .seconds(1.5))
+                    dismiss()
+                }
+            }
     }
 }

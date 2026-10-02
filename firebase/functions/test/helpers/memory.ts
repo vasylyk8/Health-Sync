@@ -21,6 +21,7 @@ export class DirBlobs implements BlobStore {
   async delete(path: string) { this.paths.delete(path); }
   async exists(path: string) { return this.paths.has(path); }
   async list(prefix: string) { return [...this.paths].filter((p) => p.startsWith(prefix)).sort(); }
+  async hasAny(prefix: string) { return [...this.paths].some((p) => p.startsWith(prefix)); }
   async deletePrefix(prefix: string) { for (const p of [...this.paths]) if (p.startsWith(prefix)) this.paths.delete(p); }
 }
 
@@ -126,4 +127,4 @@ export async function upload(env: Env, opts: UploadOpts, records: object[]) {
   return { ...b, result };
 }
 
-export const deps = (env: Env, tz = 'UTC') => ({ uid: env.uid, meta: env.meta, data: env.data, now: () => env.now, tz });
+export const deps = (env: Env, tz = 'UTC') => ({ uid: env.uid, meta: env.meta, data: env.data, incoming: env.incoming, now: () => env.now, tz });

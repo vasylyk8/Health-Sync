@@ -31,6 +31,14 @@ final class Outbox: @unchecked Sendable {
         case detailDone(String)
         /// The raw data of these workouts (several per upload) is on the server.
         case detailsDone([String])
+        /// Daily rows of this chunk (key) with this content hash are on the server.
+        case dailyHash(key: String, hash: String)
+        /// Hourly series are on the server up to `through`; `at` (when set) marks the pass as finished.
+        case hourly(through: Date, at: Date?)
+        /// The profile entry was sent at this time.
+        case profileAt(Date)
+        /// The medication list was sent at this time.
+        case medicationsAt(Date)
     }
 
     struct State: Codable, Equatable {
@@ -49,11 +57,19 @@ final class Outbox: @unchecked Sendable {
         /// Workouts found on this iPhone at the last check (for progress).
         var workoutTotal = 0
         var lastSyncAt: Date?
+        /// Content hash of the daily rows last sent per chunk ("full|type|chunkStart" or "inc|type"), so unchanged rows are not sent again.
+        var dailyHashes: [String: String] = [:]
+        /// Hourly series: uploaded through this time, and when the last complete pass ended.
+        var hourlyThrough: Date?
+        var hourlyAt: Date?
+        var profileAt: Date?
+        var medicationsAt: Date?
 
         init() {}
 
         private enum CodingKeys: String, CodingKey {
             case schemaVersion, anchors, seq, recentDone, caughtUp, reconcile, dailyFullAt, detailsDone, workoutTotal, lastSyncAt
+            case dailyHashes, hourlyThrough, hourlyAt, profileAt, medicationsAt
         }
 
         /// Tolerant decoding: a state file written by an older app version (missing or extra keys)
@@ -70,6 +86,11 @@ final class Outbox: @unchecked Sendable {
             detailsDone = try c.decodeIfPresent(Set<String>.self, forKey: .detailsDone) ?? []
             workoutTotal = try c.decodeIfPresent(Int.self, forKey: .workoutTotal) ?? 0
             lastSyncAt = try c.decodeIfPresent(Date.self, forKey: .lastSyncAt)
+            dailyHashes = try c.decodeIfPresent([String: String].self, forKey: .dailyHashes) ?? [:]
+            hourlyThrough = try c.decodeIfPresent(Date.self, forKey: .hourlyThrough)
+            hourlyAt = try c.decodeIfPresent(Date.self, forKey: .hourlyAt)
+            profileAt = try c.decodeIfPresent(Date.self, forKey: .profileAt)
+        medicationsAt = try c.decodeIfPresent(Date.self, forKey: .medicationsAt)
         }
     }
 
@@ -189,6 +210,12 @@ final class Outbox: @unchecked Sendable {
             case .dailyFull(let at): s.dailyFullAt = at
             case .detailDone(let id): s.detailsDone.insert(id)
             case .detailsDone(let ids): s.detailsDone.formUnion(ids)
+            case .dailyHash(let key, let hash): s.dailyHashes[key] = hash
+            case .hourly(let through, let at):
+                s.hourlyThrough = max(s.hourlyThrough ?? through, through)
+                if let at { s.hourlyAt = at }
+            case .profileAt(let date): s.profileAt = date
+            case .medicationsAt(let date): s.medicationsAt = date
             case nil: break
             }
         }

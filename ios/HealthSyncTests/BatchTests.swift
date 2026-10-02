@@ -57,7 +57,8 @@ final class BatchTests: XCTestCase {
 
     func testCoverageResolvesOnThisOS() throws {
         let file = try XCTUnwrap(HealthTypes.loadCoverage(bundle: Bundle(for: AppModel.self)))
-        XCTAssertEqual(file.types.map(\.id).sorted(), ["HKWorkoutTypeIdentifier", "_daily", "_wstream"])
+        XCTAssertTrue(Set(file.types.map(\.id)).isSuperset(of: ["HKWorkoutTypeIdentifier", "_daily", "_wstream", "_hourly"]))
+        XCTAssertTrue(file.types.allSatisfy { t in (file.categories ?? []).contains { $0.id == (t.category ?? "core") } }, "every batch type belongs to a known category")
         let scope = HealthTypes.scope(file)
         // Every unit must be buildable and compatible, or the type is dropped.
         XCTAssertGreaterThan(Double(scope.workoutQuantities.count), Double(file.workoutQuantityTypes.count) * 0.9, "too many workout types failed to resolve")
@@ -76,10 +77,26 @@ final class BatchTests: XCTestCase {
 
     func testCoverageDoesNotAskForUnrelatedHealthData() throws {
         let file = try XCTUnwrap(HealthTypes.loadCoverage(bundle: Bundle(for: AppModel.self)))
-        let ids = Set(file.workoutQuantityTypes.map(\.id) + file.dailyMetrics.map(\.id))
-        for forbidden in ["SexualActivity", "Contraceptive", "Pregnancy", "Lactation", "BloodGlucose", "BloodPressure", "Electrocardiogram", "Medication", "HKClinical"] {
-            XCTAssertFalse(ids.contains { $0.contains(forbidden) }, "\(forbidden) must not be read")
+        let ids = Set(file.workoutQuantityTypes.map(\.id) + file.dailyMetrics.map(\.id) + (file.eventTypes ?? []).map(\.id) + (file.hourlyMetrics ?? []).map(\.id))
+        // Left out on purpose (see docs/COVERAGE_MATRIX.md): reproductive and sexual health, ECG, clinical records, questionnaires.
+        let forbidden = ["SexualActivity", "Contraceptive", "Pregnancy", "Lactation", "ProgesteroneTest", "Menopause", "Electrocardiogram", "HKClinical", "GAD7", "PHQ9",
+                         "PelvicPain", "BreastPain", "VaginalDryness", "HotFlashes", "BladderIncontinence", "Audiogram", "Handwashing", "Toothbrushing", "BloodType", "FitzpatrickSkinType"]
+        for item in forbidden {
+            XCTAssertFalse(ids.contains { $0.contains(item) }, "\(item) must not be read")
         }
+    }
+
+    func testEveryCategoryHasItsOwnTypesAndCoreIsAlwaysRequested() throws {
+        let file = try XCTUnwrap(HealthTypes.loadCoverage(bundle: Bundle(for: AppModel.self)))
+        let scope = HealthTypes.scope(file)
+        let coreOnly = HealthTypes.readPermissions(for: scope, categories: ["core"])
+        let all = HealthTypes.readPermissions(for: scope, categories: Set((file.categories ?? []).map(\.id)))
+        XCTAssertTrue(coreOnly.contains(HKObjectType.workoutType()))
+        XCTAssertFalse(coreOnly.contains(HKObjectType.quantityType(forIdentifier: .bloodGlucose)!), "glucose is only requested once its category is on")
+        XCTAssertFalse(coreOnly.contains { $0 is HKCharacteristicType })
+        XCTAssertTrue(all.contains(HKObjectType.quantityType(forIdentifier: .bloodGlucose)!))
+        XCTAssertGreaterThan(all.count, coreOnly.count)
+        for event in scope.events { XCTAssertTrue((file.categories ?? []).contains { $0.id == event.category }, "unknown category \(event.category)") }
     }
 
     /// HealthKit raises an exception (crash) for types that may not be requested. This catches
@@ -87,6 +104,6 @@ final class BatchTests: XCTestCase {
     func testReadPermissionsAreAcceptedByHealthKit() async throws {
         guard HKHealthStore.isHealthDataAvailable() else { throw XCTSkip("HealthKit unavailable") }
         let scope = HealthTypes.scope(HealthTypes.loadCoverage(bundle: Bundle(for: AppModel.self)))
-        _ = try await HKHealthStore().statusForAuthorizationRequest(toShare: [], read: HealthTypes.readPermissions(for: scope))
+        _ = try await HKHealthStore().statusForAuthorizationRequest(toShare: [], read: HealthTypes.readPermissions(for: scope, categories: Set((HealthTypes.loadCoverage(bundle: Bundle(for: AppModel.self))?.categories ?? []).map(\.id))))
     }
 }

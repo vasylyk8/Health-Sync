@@ -29,6 +29,10 @@ enum Theme {
         ?? URL(string: "https://krok-1d60a.web.app/privacy")!
     static var supportURL: URL { privacyURL.deletingLastPathComponent().appendingPathComponent("support") }
 
+    /// The public MCP endpoint people paste into an assistant when they sign in with Apple.
+    static let mcpURL: URL = (Bundle.main.object(forInfoDictionaryKey: "MCPServerURL") as? String).flatMap(URL.init(string:))
+        ?? URL(string: "https://krok-1d60a.firebaseapp.com/mcp")!
+
     // MARK: Metrics
 
     /// Side margin of every screen.

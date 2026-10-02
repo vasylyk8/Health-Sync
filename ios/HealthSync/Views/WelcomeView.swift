@@ -61,7 +61,7 @@ struct WelcomeView: View {
     }
 
     private var connectButton: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
             Button {
                 Task { await model.connectHealth() }
             } label: {
@@ -80,6 +80,13 @@ struct WelcomeView: View {
                     .multilineTextAlignment(.center)
                     .accessibilityIdentifier("connectStage")
             }
+            AppleAccountView(style: .welcome)
+            Text(Copy.Welcome.dataNote)
+                .smallText()
+                .foregroundStyle(Theme.muted)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
         }
     }
 }

@@ -8,6 +8,8 @@ export interface BlobStore {
   deletePrefix(prefix: string): Promise<void>;
   /** Object names starting with `prefix`. */
   list(prefix: string): Promise<string[]>;
+  /** Bounded existence check, avoiding an unbounded listing on the query path. */
+  hasAny?(prefix: string): Promise<boolean>;
   delete(path: string): Promise<void>;
   exists(path: string): Promise<boolean>;
 }
@@ -32,6 +34,11 @@ export interface Coverage {
 export interface FileRef {
   path: string;
   bytes: number;
+  /**
+   * Raw stream files only: columns stored as integers X with the real value X / scale[col] (delta-encoded
+   * integers are several times smaller than doubles). A column not listed here is a plain DOUBLE column.
+   */
+  scale?: Record<string, number>;
 }
 
 export interface TypeManifest {
@@ -49,6 +56,8 @@ export interface TypeManifest {
 }
 
 export interface UserDoc {
+  /** Consent categories the user switched on (see CATEGORIES in config.ts); missing = the defaults. */
+  categories?: string[];
   generation: number;
   deleting: boolean;
   createdAt: number;
@@ -56,6 +65,8 @@ export interface UserDoc {
   tz: string | null;
   connections: Partial<Record<string, { setUpAt: number; lastUsedAt: number }>>;
   links: Partial<Record<string, { tokenHash: string; createdAt: number }>>;
+  oauthEpochs?: Partial<Record<string, number>>;
+  oauthProfileId?: string;
 }
 
 export type BatchState = 'published' | 'rejected' | 'discarded';

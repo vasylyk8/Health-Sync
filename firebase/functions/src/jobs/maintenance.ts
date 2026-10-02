@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { lit, withDuck } from '../query/duck.js';
+import { PARQUET_OPTIONS, lit, withDuck } from '../query/duck.js';
+import { ROW_KEY } from '../query/context.js';
 import { dataPath, dropWorkoutData } from '../ingest/ingest.js';
 import { WORKOUT_TYPE } from '../ingest/batch.js';
 import type { BlobStore, MetaStore } from '../store/types.js';
@@ -75,12 +76,12 @@ export async function compactType(deps: Deps, uid: string, type: string): Promis
       const dataFiles = local.slice(0, files.length).map(lit).join(',');
       const tombFiles = local.slice(files.length).map(lit).join(',');
       const out = join(dir, 'merged.parquet');
-      const dropDeleted = tombFiles ? `AND split_part(id, '#', 1) NOT IN (SELECT id FROM read_parquet([${tombFiles}]))` : '';
+      const dropDeleted = tombFiles ? `AND (id IS NULL OR split_part(id, '#', 1) NOT IN (SELECT id FROM read_parquet([${tombFiles}])))` : '';
       await c.run(`COPY (
           SELECT * FROM read_parquet([${dataFiles}], union_by_name=true) WHERE true ${dropDeleted}
-          QUALIFY row_number() OVER (PARTITION BY id ORDER BY seq DESC, batch DESC) = 1
+          QUALIFY row_number() OVER (PARTITION BY ${ROW_KEY} ORDER BY seq DESC, batch DESC) = 1
           ORDER BY s
-        ) TO ${lit(out)} (FORMAT parquet, COMPRESSION zstd)`);
+        ) TO ${lit(out)} (${PARQUET_OPTIONS})`);
       const path = dataPath(uid, type, partition, `compact-${Date.now()}`);
       await deps.data.write(path, await readFile(out));
       const ok = await deps.meta.swapFiles(uid, type, partition, files.map((f) => f.path), { path, bytes: (await stat(out)).size });

@@ -5,12 +5,16 @@ import { z } from 'zod';
 import { LIMITS, type Provider } from '../config.js';
 import { TOKEN_RE, hashToken, type AccessLog, type Connections, type RateLimiter, type TokenStore } from '../auth/tokens.js';
 import type { BlobStore, MetaStore } from '../store/types.js';
-import { ToolError, type QueryDeps } from '../query/context.js';
+import { checkPendingUploads, ToolError, type QueryDeps } from '../query/context.js';
 import type { ToolResult } from '../query/common.js';
+import { EVENT_TYPES } from '../config.js';
+import { DAILY_GROUPS, getGlucose, getHealthEvents, getHourlySeries, getNutritionLog, getProfile, getRecovery, getTrainingLoad } from '../query/health.js';
 import {
   getDailyContext, getWorkout, getWorkoutRoute, getWorkoutSeries, getWorkouts, workoutBestEfforts, workoutElevation, workoutHrDrift, workoutHrZones, workoutSplits,
 } from '../query/workouts.js';
 import { log } from '../log.js';
+import type { KrokOAuth } from '../auth/oauth.js';
+import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 
 export interface McpDeps {
   tokens: TokenStore;
@@ -19,7 +23,9 @@ export interface McpDeps {
   connections: Connections;
   meta: MetaStore;
   data: BlobStore;
+  incoming?: BlobStore;
   now?: () => number;
+  oauth?: Pick<KrokOAuth, 'verifyAccessToken' | 'resource' | 'issuer'>;
 }
 
 export const SERVER_INSTRUCTIONS = `This server gives read-only access to the user's own Apple Health workouts, mirrored from their iPhone by the KROK app, plus one row of daily context (sleep, resting heart rate, HRV, activity, body measurements...) per day.
@@ -28,7 +34,11 @@ How to use it:
 2. get_workout gives one workout in full: Apple's statistics and metadata, pause/lap events, which raw streams exist, and the daily context around it (e.g. last night's sleep).
 3. For exact answers about pace, splits, heart rate zones, drift, best efforts or elevation, call the workout_* calculation tools. They run on the server over the full raw data and are exact. Do not estimate these yourself from sampled points.
 4. get_workout_series and get_workout_route return individual raw data points (heart rate, power, cadence, GPS...). They are downsampled or paged to fit, and say so; use them when the user wants to see the data itself.
-5. get_daily_context returns daily metrics for a date range.
+5. get_daily_context returns daily metrics for a date range. Filter with groups or metrics, or use rollup week/month for long periods.
+6. get_hourly_series gives hourly heart rate (avg/min/max), steps and HRV for any period (all-day, not only workouts).
+7. get_recovery compares last night's HRV, resting heart rate, sleep and breathing with the user's own 60-day baseline; get_training_load estimates fitness (CTL), fatigue (ATL) and form (TSB) from the workouts.
+8. Opt-in data (only when the user switched it on in the app): get_glucose (continuous glucose, also around a workout), get_health_events (cardiac alerts, symptoms, blood pressure, insulin, medications), get_nutrition_log (timed nutrient entries, e.g. what was eaten before a workout), get_profile (age, sex). A tool reports when its category is switched off.
+For glucose, insulin, blood pressure, medications, symptoms, mood and cycle data: describe data and trends only. Never diagnose, never advise on insulin or medication doses, and suggest a clinician for concerns.
 Dates are local calendar dates (YYYY-MM-DD) in the user's timezone unless you pass another IANA timezone. Offsets are seconds from the workout start.
 Heart rate zones need the user's maximum heart rate or zone boundaries: ask, do not guess.
 GPS routes hide the first and last 300 m by default to protect the user's home and work locations. Only request the full route if the user explicitly asks for exact start/end points.
@@ -118,29 +128,109 @@ const TOOLS: { name: string; title: string; description: string; input: z.ZodRaw
   {
     name: 'get_daily_context',
     title: 'Daily context metrics',
-    description: 'One row per local day with metrics such as sleep, resting heart rate, HRV, VO2 max, steps, activity rings, body measurements, nutrition, mindfulness and cycle data (whatever the user records). Max 400 days per call. Missing metrics were not recorded.',
-    input: { start_date: dateField, end_date: dateField },
+    description: 'One row per local day with metrics such as sleep, resting heart rate, HRV, VO2 max, steps, activity rings, body measurements, nutrition, mindfulness and cycle data (whatever the user records and switched on). Max 400 days per call. Missing metrics were not recorded. To keep results small pass groups (sleep, heart, activity, mobility, body, nutrition, cycle, mind, audio) or exact metrics; pass rollup "week" or "month" for averages over up to 10 years.',
+    input: {
+      start_date: dateField, end_date: dateField,
+      groups: z.array(z.enum(DAILY_GROUPS as [string, ...string[]])).max(9).optional().describe('Metric groups to include'),
+      metrics: z.array(z.string().max(60)).max(40).optional().describe('Exact metric names to include'),
+      rollup: z.enum(['week', 'month']).optional().describe('Average over weeks or months instead of daily rows'),
+    },
     run: (q, a) => getDailyContext(q, a as never),
+  },
+  {
+    name: 'get_hourly_series',
+    title: 'Hourly heart rate, steps or HRV',
+    description: 'All-day hourly values outside workouts: HeartRate (avg/min/max per hour), StepCount (steps per hour), HeartRateVariabilitySDNN or HeartRateVariabilityRMSSD (hourly average). resolution "hour" up to 62 days, "day" (daily average/min/max or step totals) up to 400 days. Hours with no readings are missing.',
+    input: { series: z.enum(['HeartRate', 'StepCount', 'HeartRateVariabilitySDNN', 'HeartRateVariabilityRMSSD']), start_date: dateField, end_date: dateField, timezone: tzField, resolution: z.enum(['hour', 'day']).optional() },
+    run: (q, a) => getHourlySeries(q, a as never),
+  },
+  {
+    name: 'get_recovery',
+    title: 'Recovery vs your own baseline',
+    description: 'Compares one day (default: the latest) with the user\'s previous 60 days (window_days 14-180): HRV, resting heart rate, respiratory rate, sleep duration and stages, SpO2, wrist temperature, plus overnight (sleeping) heart rate and HRV. Returns value, baseline mean/spread, percent change, z-score and a status for each. Use it for "how recovered am I" questions.',
+    input: { date: dateField.optional(), window_days: z.number().int().min(14).max(180).optional(), timezone: tzField },
+    run: (q, a) => getRecovery(q, a as never),
+  },
+  {
+    name: 'get_training_load',
+    title: 'Training load: fitness, fatigue and form',
+    description: 'Estimated training load per day from workouts (heart-rate based TRIMP, or Apple effort score when there is no heart rate), with 42-day fitness (CTL), 7-day fatigue (ATL) and form (TSB), ramp rate and weekly totals. Optional max_hr, resting_hr and sex improve it; otherwise they are estimated from the data. Apple\'s own Training Load is not readable, so this is an independent estimate.',
+    input: { end_date: dateField.optional(), days: z.number().int().min(7).max(180).optional(), max_hr: z.number().min(120).max(250).optional(), resting_hr: z.number().min(25).max(120).optional(), sex: z.enum(['male', 'female']).optional(), timezone: tzField },
+    run: (q, a) => getTrainingLoad(q, a as never),
+  },
+  {
+    name: 'get_glucose',
+    title: 'Blood glucose (CGM)',
+    description: 'Only if the user switched on glucose data. With workout_id: glucose before, during and after that workout (before_minutes default 120, after_minutes default 360) with insulin entries. With start_date/end_date (max 120 days): mean, time in range, time below/above, CV, GMI per day and overall. Targets default to 70-180 mg/dL; mmol/L = mg/dL / 18. Data may lag by hours (Dexcom saves to Apple Health late). Describe patterns only; never advise on insulin or medication.',
+    input: { workout_id: workoutId.optional(), start_date: dateField.optional(), end_date: dateField.optional(), before_minutes: z.number().int().min(0).max(720).optional(), after_minutes: z.number().int().min(0).max(1440).optional(), low_mg_dl: z.number().min(40).max(120).optional(), high_mg_dl: z.number().min(120).max(300).optional(), timezone: tzField },
+    run: (q, a) => getGlucose(q, a as never),
+  },
+  {
+    name: 'get_health_events',
+    title: 'Health events and entries',
+    description: `Only for categories the user switched on. Timed events and entries: category "heart" (AFib burden, high/low heart rate and irregular rhythm alerts, low cardio fitness, hypertension notifications, lung function), "devices" (blood glucose readings, insulin delivery, blood pressure), "mind" (symptoms with severity), "nutrition" (every nutrient entry, alcohol, blood alcohol), "medications" (the user's medication list). Or pass exact types. Types: ${[...EVENT_TYPES.keys()].join(', ')}. Max 500 events. Describe only; never diagnose or advise on doses.`,
+    input: { category: z.enum(['heart', 'devices', 'mind', 'nutrition', 'medications']).optional(), types: z.array(z.string().max(60)).max(20).optional(), start_date: dateField, end_date: dateField, timezone: tzField, limit: z.number().int().min(1).max(500).optional() },
+    run: (q, a) => getHealthEvents(q, a as never),
+  },
+  {
+    name: 'get_nutrition_log',
+    title: 'Timed nutrition entries',
+    description: 'Only if the user switched on nutrition data. Entries logged in a nutrition app with time and nutrients (default energy, protein, carbs, fat, caffeine, water, alcohol; pass nutrients for others such as iron or sodium). Pass workout_id (+ hours_before, default 6) to see what was eaten before a workout, or a date range. Many people log only some meals.',
+    input: { workout_id: workoutId.optional(), hours_before: z.number().min(0.5).max(48).optional(), start_date: dateField.optional(), end_date: dateField.optional(), nutrients: z.array(z.string().max(40)).max(20).optional(), timezone: tzField },
+    run: (q, a) => getNutritionLog(q, a as never),
+  },
+  {
+    name: 'get_profile',
+    title: 'Profile (age, sex)',
+    description: 'Only if the user switched on profile data: date of birth, age, biological sex, wheelchair use, activity mode, and a rough estimated maximum heart rate (use only as a starting point; ask for the measured one).',
+    input: {},
+    run: (q) => getProfile(q),
   },
 ];
 
-function buildServer(q: QueryDeps, deps: McpDeps, provider: Provider): McpServer {
+export function toolScopes(name: string): string[] {
+  if (['get_daily_context', 'get_hourly_series', 'get_recovery'].includes(name)) return ['health:daily:read'];
+  if (['get_workout', 'get_training_load'].includes(name)) return ['health:workouts:read', 'health:daily:read'];
+  if (['get_glucose', 'get_nutrition_log'].includes(name)) return ['health:events:read', 'health:workouts:read'];
+  if (name === 'get_health_events') return ['health:events:read'];
+  if (name === 'get_profile') return ['health:profile:read'];
+  if (name === 'get_workout_route') return ['health:workouts:read', 'health:routes:read'];
+  if (['get_workouts', 'get_workout_series', 'workout_hr_zones', 'workout_splits', 'workout_hr_drift', 'workout_best_efforts', 'workout_elevation'].includes(name)) return ['health:workouts:read'];
+  throw new Error(`Declare OAuth permissions before registering tool: ${name}`);
+}
+
+function buildServer(q: QueryDeps, deps: McpDeps, provider: Provider, identity?: AuthInfo): McpServer {
   const server = new McpServer({ name: 'krok', version: '1.0.0' }, { instructions: SERVER_INSTRUCTIONS });
   for (const tool of TOOLS) {
     server.registerTool(
       tool.name,
-      { title: tool.title, description: tool.description, inputSchema: tool.input, annotations: { readOnlyHint: true, openWorldHint: false } },
+      { title: tool.title, description: tool.description, inputSchema: tool.input,
+        outputSchema: z.object({ dataAsOf: z.string().nullable(), complete: z.boolean(), coverage: z.array(z.record(z.string(), z.unknown())), notes: z.array(z.string()) }).passthrough(),
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        _meta: { securitySchemes: identity ? [{ type: 'oauth2', scopes: toolScopes(tool.name) }] : [{ type: 'noauth' }] } },
       (async (args: Record<string, unknown>) => {
         const started = Date.now();
         let ok = false;
         try {
-          const result = await withDeadline(tool.run(q, args ?? {}), LIMITS.requestDeadlineMs);
+          if (identity) {
+            const required = [...toolScopes(tool.name), ...(tool.name === 'get_workout_route' && args?.include_full_route === true ? ['health:routes:full'] : [])];
+            if (required.some((s) => !identity.scopes.includes(s))) {
+              return { isError: true, content: [{ type: 'text' as const, text: 'This connection does not have permission for that data. Reconnect KROK and grant the required permissions.' }],
+                _meta: { 'mcp/www_authenticate': [`Bearer resource_metadata="${deps.oauth?.issuer}.well-known/oauth-protected-resource/mcp", error="insufficient_scope", scope="${required.join(' ')}"`] } };
+            }
+          }
+          // Fresh for every tool: the stateless HTTP server's context is request-local.
+          q.pendingUploadCheck = undefined;
+          const result = await withDeadline((async () => {
+            await checkPendingUploads(q);
+            return tool.run(q, args ?? {});
+          })(), LIMITS.requestDeadlineMs);
           const text = JSON.stringify(result);
           if (Buffer.byteLength(text) > LIMITS.maxResponseBytes) {
             throw new ToolError('too_large', 'The result is too large to return in full. Use a shorter range or a coarser period.');
           }
           ok = true;
-          return { content: [{ type: 'text' as const, text }] };
+          return { structuredContent: result, content: [{ type: 'text' as const, text }] };
         } catch (err) {
           const message = err instanceof ToolError ? err.message : 'Something went wrong reading the data. Try a smaller request.';
           if (!(err instanceof ToolError)) log.error('tool failed', { tool: tool.name, code: (err as { code?: string }).code ?? 'internal' });
@@ -152,6 +242,15 @@ function buildServer(q: QueryDeps, deps: McpDeps, provider: Provider): McpServer
       }) as never,
     );
   }
+  if (identity) server.registerTool('get_account', {
+    title: 'Identify the connected KROK account', description: 'Identify the KROK account authorized by this connection. Returns a stable opaque ID, without email or health data.',
+    inputSchema: {}, outputSchema: { id: z.string(), nickname: z.string() },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    _meta: { 'openai/profile': true, securitySchemes: [{ type: 'oauth2', scopes: [] }] },
+  }, async () => {
+    const profile = { id: String(identity.extra?.profileId), nickname: 'KROK account' };
+    return { structuredContent: profile, content: [{ type: 'text', text: JSON.stringify(profile) }] };
+  });
   return server;
 }
 
@@ -187,10 +286,36 @@ function send(res: ServerResponse, status: number, body: object) {
   res.end(JSON.stringify(body));
 }
 
-/** HTTP entry point for /mcp/<token>. Stateless: a fresh MCP server per request. */
+/** HTTP entry point for OAuth and legacy links. Stateless: one server per request. */
 export async function handleMcp(req: IncomingMessage & { body?: unknown }, res: ServerResponse, deps: McpDeps): Promise<void> {
   const now = deps.now ?? Date.now;
   res.setHeader('Cache-Control', 'no-store');
+  if ((req.url ?? '').split('?')[0] === '/mcp' && deps.oauth) {
+    let identity: AuthInfo;
+    try {
+      const bearer = /^Bearer ([A-Za-z0-9_-]{43})$/i.exec(String(req.headers.authorization ?? ''))?.[1];
+      if (!bearer) throw new Error('missing');
+      identity = await deps.oauth.verifyAccessToken(bearer);
+    } catch {
+      res.setHeader('WWW-Authenticate', `Bearer resource_metadata="${deps.oauth.issuer}.well-known/oauth-protected-resource/mcp"`);
+      return send(res, 401, { error: 'unauthorized', message: 'Connect KROK and sign in with Apple to authorize access.' });
+    }
+    if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); return send(res, 405, { error: 'method_not_allowed' }); }
+    const uid = String(identity.extra?.uid), provider = identity.extra?.provider as Provider;
+    const user = await deps.meta.getUser(uid);
+    if (!user || user.deleting) return send(res, 401, { error: 'unauthorized' });
+    if (!await deps.limiter.hit(`oauth_mcp_${uid}_${provider}`, LIMITS.mcpRequestsPerMinute, 60_000)) {
+      res.setHeader('Retry-After', '60'); return send(res, 429, { error: 'too_many_requests' });
+    }
+    await deps.connections.touch(uid, provider, now(), user.connections[provider]).catch(() => undefined);
+    const q: QueryDeps = { uid, meta: deps.meta, data: deps.data, incoming: deps.incoming, now, tz: user.tz ?? 'UTC' };
+    const server = buildServer(q, deps, provider, identity);
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    res.on('close', () => { void transport.close(); void server.close(); });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+    return;
+  }
   const match = /^\/mcp\/([^/?#]+)\/?(?:[?#].*)?$/.exec(req.url ?? '');
   const token = match?.[1] ?? '';
   const ip = (String(req.headers['x-forwarded-for'] ?? '').split(',')[0] || req.socket.remoteAddress || '?').trim();
@@ -222,7 +347,7 @@ export async function handleMcp(req: IncomingMessage & { body?: unknown }, res: 
 
   await deps.connections.touch(rec.uid, rec.provider, now(), user.connections[rec.provider]).catch(() => undefined);
 
-  const q: QueryDeps = { uid: rec.uid, meta: deps.meta, data: deps.data, now, tz: user.tz ?? 'UTC' };
+  const q: QueryDeps = { uid: rec.uid, meta: deps.meta, data: deps.data, incoming: deps.incoming, now, tz: user.tz ?? 'UTC' };
   const server = buildServer(q, deps, rec.provider);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   res.on('close', () => {

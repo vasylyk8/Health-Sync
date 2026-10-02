@@ -40,7 +40,7 @@ iPhone (workouts + raw streams + daily rows → durable outbox) → Storage inco
 ### Key design choices
 - **Mirror, not live pull.** AI services can't reach a phone, and iOS locks HealthKit while the phone is locked.
 - **Summary first, raw on request.** Tools return Apple's summary; raw streams and the route are downsampled or paged (and say so); exact calculations (zones, splits, drift, best efforts, elevation) run on the server over the full raw data.
-- **Privacy by default.** Only workouts and a fixed list of daily metrics are read; route start/end (300 m) are hidden unless the user explicitly asks for the exact route.
+- **Privacy by default.** Workouts, activity, sleep and recovery are read by default; nutrition, heart alerts, glucose/insulin/blood pressure, symptoms and mood, cycle, medications and profile are separate switches that start on (Apple Health still asks per type; switching one off deletes its data). Route start/end (300 m) are hidden unless the user explicitly asks for the exact route.
 - **Nothing lost, nothing silently wrong.** A HealthKit anchor only advances after the server has the data. A workout's raw data is "complete" only when every promised point arrived; tools report coverage and completeness, and never return aggregates over truncated data.
 - **Apple's numbers.** Apple's own workout statistics are shown as recorded; sleep merges overlapping sources by picking one per night.
 - **Read-only, private links.** Only a hash of each 256-bit link is stored. Links are revoked instantly by Disconnect or Delete.

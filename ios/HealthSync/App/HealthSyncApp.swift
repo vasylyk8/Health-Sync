@@ -16,7 +16,7 @@ struct HealthSyncApp: App {
         let source: HealthSource
         let telemetry: Telemetry
         if uiTesting || args.contains("-healthBench") || !FirebaseBackend.configure() {
-            backend = FakeBackend()
+            backend = FakeBackend(appleLinked: uiTesting && args.contains("-appleLinked"))
             source = FakeHealthSource()
             telemetry = NoTelemetry()
         } else {
@@ -35,6 +35,19 @@ struct HealthSyncApp: App {
             BGTaskScheduler.shared.register(forTaskWithIdentifier: AppModel.backgroundTaskId, using: nil) { task in
                 let work = Task { @MainActor in
                     await model.syncNow()
+                    task.setTaskCompleted(success: true)
+                }
+                task.expirationHandler = {
+                    work.cancel()
+                    task.setTaskCompleted(success: false)
+                }
+            }
+        }
+        if !uiTesting {
+            BackgroundTaskRegistry.shared.refreshRegistered = true
+            BGTaskScheduler.shared.register(forTaskWithIdentifier: AppModel.refreshTaskId, using: nil) { task in
+                let work = Task { @MainActor in
+                    await model.runBackgroundRefresh()
                     task.setTaskCompleted(success: true)
                 }
                 task.expirationHandler = {

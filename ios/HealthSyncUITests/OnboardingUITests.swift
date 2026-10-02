@@ -37,6 +37,25 @@ final class OnboardingUITests: XCTestCase {
         snapshot("00-Welcome-Chicago")
     }
 
+    func testAppleAccountCanUsePublicOAuthWithoutCreatingAPrivateLink() {
+        let app = launch(["-onboarded", "-appleLinked"])
+        XCTAssertTrue(app.staticTexts["Apple Account linked"].waitForExistence(timeout: 10))
+        app.buttons["provider.claude"].tap()
+        XCTAssertTrue(app.buttons["copyOAuthURL"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["consentContinue"].exists)
+        app.buttons["copyOAuthURL"].tap()
+        XCTAssertTrue(app.staticTexts["oauthCopied"].waitForExistence(timeout: 5))
+        snapshot("05-Apple-OAuth-Setup")
+    }
+
+    func testAppleSignInIsOfferedWithoutBlockingHealthOnboarding() {
+        let app = launch()
+        XCTAssertTrue(app.buttons["appleSignIn"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["connectHealth"].isHittable)
+        app.buttons["connectHealth"].tap()
+        XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 10))
+    }
+
     func testConnectClaudeShowsSetUpCheckmark() {
         let app = launch(["-onboarded"])
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))

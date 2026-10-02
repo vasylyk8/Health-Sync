@@ -5,7 +5,7 @@ import { covers, type BlobStore, type MetaStore, type TypeManifest } from '../st
 import { lit } from './duck.js';
 
 export class ToolError extends Error {
-  constructor(readonly code: 'not_found' | 'too_large' | 'bad_request' | 'no_data' | 'unavailable', message: string) {
+  constructor(readonly code: 'not_found' | 'too_large' | 'bad_request' | 'no_data' | 'unavailable' | 'category_disabled', message: string) {
     super(message);
   }
 }
@@ -14,9 +14,22 @@ export interface QueryDeps {
   uid: string;
   meta: MetaStore;
   data: BlobStore;
+  incoming?: BlobStore;
+  pendingUploadCheck?: Promise<boolean>;
+  pendingUploadsDetected?: boolean;
   now: () => number;
   /** Default timezone (the phone's current zone). */
   tz: string;
+}
+
+/** Conservative completeness: an earlier accepted page may still be in flight.
+ * One bounded storage lookup per tool, shared by all of its type loads. */
+export async function checkPendingUploads(deps: QueryDeps): Promise<void> {
+  if (!deps.incoming) return;
+  const prefix = `incoming/${deps.uid}/`;
+  deps.pendingUploadCheck ??= deps.incoming.hasAny
+    ? deps.incoming.hasAny(prefix) : deps.incoming.list(prefix).then((paths) => paths.length > 0);
+  deps.pendingUploadsDetected = await deps.pendingUploadCheck;
 }
 
 export function validTz(tz: string): string {
@@ -98,7 +111,10 @@ export interface LoadOptions {
 }
 
 const EMPTY_ROWS =
-  'SELECT NULL::VARCHAR k, NULL::VARCHAR id, NULL::BIGINT s, NULL::BIGINT e, NULL::DOUBLE v, NULL::INTEGER c, NULL::VARCHAR u, NULL::VARCHAR agg, NULL::VARCHAR src, NULL::VARCHAR bid, NULL::VARCHAR dev, NULL::VARCHAR tz, NULL::VARCHAR extra, NULL::BIGINT seq, NULL::VARCHAR batch, NULL::VARCHAR rid WHERE false';
+  'SELECT NULL::VARCHAR k, NULL::VARCHAR id, NULL::BIGINT s, NULL::BIGINT e, NULL::DOUBLE v, NULL::DOUBLE v2, NULL::DOUBLE v3, NULL::INTEGER c, NULL::VARCHAR u, NULL::VARCHAR agg, NULL::VARCHAR src, NULL::VARCHAR bid, NULL::VARCHAR dev, NULL::VARCHAR tz, NULL::VARCHAR extra, NULL::BIGINT seq, NULL::VARCHAR batch, NULL::VARCHAR rid WHERE false';
+
+/** Identity of a row: its id, or (series, start, source) for rows without one (hourly buckets, dense readings). */
+export const ROW_KEY = `COALESCE(id, concat_ws('|', agg, s::VARCHAR, src))`;
 
 /**
  * Downloads only the monthly partitions of one type that overlap the range and creates table
@@ -114,6 +130,7 @@ export async function loadType(
   alias: string,
   opts: LoadOptions,
 ): Promise<TypeManifest | null> {
+  await checkPendingUploads(deps);
   const man = await deps.meta.getManifest(deps.uid, type);
   const all = man?.files ?? {};
   const months = range === 'all' ? null : new Set(monthsBetween(range[0], range[1]));
@@ -137,8 +154,8 @@ export async function loadType(
   const src = dataFiles.length ? `SELECT * FROM read_parquet(${list(dataFiles)}, union_by_name=true)` : EMPTY_ROWS;
   const tombSql = tombFiles.length ? `SELECT id FROM read_parquet(${list(tombFiles)})` : 'SELECT NULL::VARCHAR id WHERE false';
   await c.run(`CREATE OR REPLACE TEMP TABLE ${alias} AS
-    SELECT * FROM (${src}) r WHERE id NOT IN (${tombSql})
-    QUALIFY row_number() OVER (PARTITION BY id ORDER BY seq DESC, batch DESC) = 1`);
+    SELECT * FROM (${src}) r WHERE (id IS NULL OR id NOT IN (${tombSql}))
+    QUALIFY row_number() OVER (PARTITION BY ${ROW_KEY} ORDER BY seq DESC, batch DESC) = 1`);
   return man;
 }
 

@@ -175,6 +175,34 @@ struct FlowLayout: Layout {
     }
 }
 
+/// Title and close button at the top of a sheet.
+struct SheetHeader: View {
+    let title: String
+    let close: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            Text(title)
+                .headlineText()
+                .foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 6)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 0)
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel(Copy.Sheet.close)
+            .padding(.trailing, -10)
+        }
+        .padding(.top, 16)
+    }
+}
+
 /// Light haptics, used sparingly.
 enum Haptics {
     static func tap() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }

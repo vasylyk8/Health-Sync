@@ -14,12 +14,16 @@ const N = Number(process.argv[2] ?? 500);
 // NOISE=1: sensor-like randomness (real data compresses far worse than smooth formulas).
 const noise = process.env.NOISE === '1';
 const r = (amp: number) => (noise ? (Math.random() - 0.5) * amp : 0);
+// ROUND=1: round values like the app now does before encoding (GPS 1e-5 deg, altitude/speed 0.1, other values 4 decimals).
+const roundValues = process.env.ROUND === '1';
+const SCALE_BY_COL: Record<string, number> = { lat: 1e5, lon: 1e5, alt: 10, spd: 10, crs: 1, ha: 1, va: 1, v: 1e4 };
+const rv = (col: string, v: number) => (roundValues ? Math.round(v * SCALE_BY_COL[col]!) / SCALE_BY_COL[col]! : v);
 const env = makeEnv(Date.UTC(2026, 8, 1, 12));
 const gen = env.now;
 const DUR = 5400;
 const stream = (wid: string, st: string, step: number, s: number, cols: Record<string, (i: number) => number>, unit?: string) => {
   const n = Math.floor(DUR / step);
-  return { k: 'ws', wid, st, gen, ...(unit ? { u: unit } : {}), t: Array.from({ length: n }, (_, i) => s + i * step * 1000), ...Object.fromEntries(Object.entries(cols).map(([c, f]) => [c, Array.from({ length: n }, (_, i) => f(i))])) };
+  return { k: 'ws', wid, st, gen, ...(unit ? { u: unit } : {}), t: Array.from({ length: n }, (_, i) => s + i * step * 1000), ...Object.fromEntries(Object.entries(cols).map(([c, f]) => [c, Array.from({ length: n }, (_, i) => rv(c, f(i)))])) };
 };
 const header = (type: string, mode: string, extra: object = {}) => ({ kind: 'header', schema: 2, batchId: randomUUID(), type, seq: 1, createdAt: env.now, mode, checkedAt: env.now, ...extra });
 async function send(lines: object[]) {
@@ -65,9 +69,16 @@ const tIngest = Date.now() - t0;
 let stored = 0;
 for (const p of env.data.paths) stored += statSync(join(env.data.root, p)).size;
 const mb = (b: number) => (b / 1024 / 1024).toFixed(1);
+const byStream: Record<string, number> = {};
+for (const p of env.data.paths) {
+  const m = /\/wstream\/[^/]+\/([^/]+)\//.exec(p);
+  const key = m ? m[1]! : p.includes('/HKWorkoutTypeIdentifier/') ? 'summaries' : 'other';
+  byStream[key] = (byStream[key] ?? 0) + statSync(join(env.data.root, p)).size;
+}
 console.log(`${N} workouts, ${points.toLocaleString()} raw points`);
 console.log(`upload (gzipped NDJSON): ${mb(uploadBytes)} MB total, ${(uploadBytes / N / 1024).toFixed(0)} KB per workout`);
 console.log(`stored (Parquet):        ${mb(stored)} MB total, ${(stored / N / 1024).toFixed(0)} KB per workout`);
+console.log('stored KB per workout by stream: ' + Object.entries(byStream).map(([k, b]) => `${k} ${(b / N / 1024).toFixed(1)}`).join(', '));
 console.log(`ingest time: summaries ${tSummaries} ms, streams ${tIngest - tSummaries} ms (${((tIngest - tSummaries) / N).toFixed(0)} ms per workout, local, excluding network/Firestore latency)`);
 
 const q = deps(env, 'UTC');
