@@ -535,6 +535,14 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
                 errors[i] = error
             }
         }
+        // What the last daily pass found, for the in-app speed test: which metrics had data, were empty or failed (and why).
+        let withData = perMetric.filter { !($0 ?? []).isEmpty }.count
+        let empty = perMetric.indices.filter { perMetric[$0] != nil && perMetric[$0]!.isEmpty }.map { metrics[$0].key }
+        let failed = errors.keys.sorted().map { i -> String in
+            let ns = errors[i]! as NSError
+            return "\(metrics[i].key) \(ns.domain.replacingOccurrences(of: "com.apple.", with: "")) \(ns.code)"
+        }
+        sourceLock.withLock { lastDailyReport = "\(withData)/\(metrics.count) metrics with data. Empty: \(empty.isEmpty ? "none" : empty.joined(separator: ", ")). Failed: \(failed.isEmpty ? "none" : failed.joined(separator: "; "))" }
         if let transient = errors.values.first(where: { !Self.isPermanentFailure($0) }) {
             // Give up on a metric that keeps failing (three chunks in a row), so one stubborn query cannot block the rest forever.
             let tries = sourceLock.withLock { () -> Int in dailyTransientFailures += 1; return dailyTransientFailures }
@@ -622,6 +630,10 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
         var predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
         if appleOnly, let sources = await appleSourcesPredicate(type) { predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [predicate, sources]) }
+        // Same read gate as every other HealthKit read: dozens of year-long statistics queries at once, next to thousands of
+        // workout reads, left the daily queries failing (and their metrics out of the rows).
+        await queryGate.acquire()
+        defer { queryGate.release() }
         let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
             let q = HKStatisticsCollectionQuery(quantityType: type, quantitySamplePredicate: predicate, options: options, anchorDate: from, intervalComponents: DateComponents(day: 1))
             q.initialResultsHandler = { _, collection, error in
@@ -910,6 +922,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     private var observedTypes = Set<String>()
     private var dailyTransientFailures = 0
+    private var lastDailyReport = ""
+    var dailyReport: String { sourceLock.withLock { lastDailyReport } }
     private var hourlyTransientFailures = 0
 
     /// Heart rate and steps (hourly series) and every event type of the switched-on categories wake the app in the
@@ -1318,6 +1332,7 @@ extension HealthKitSource {
         let years = earliest.map { Date().timeIntervalSince($0) / year } ?? 0
         let oneYear = await Self.timed { _ = try? await self.dailyContext(from: Date().addingTimeInterval(-365 * 86_400), to: Date()) }
         emit("G daily: oldest date \(f(eSecs)) s (\(f(years)) years), one year of daily metrics \(f(oneYear)) s")
+        emit("G2 daily result: \(dailyReport)")
 
         // H. Uploads from the sync that ran before this test (same app session).
         emit("H " + (SyncTiming.shared.uploadSummary() ?? "no uploads yet in this app session (run the test during Step 4 to include them)"))

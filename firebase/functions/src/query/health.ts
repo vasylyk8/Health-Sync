@@ -71,9 +71,11 @@ export async function dailyMaps(c: DuckDBConnection, dir: string, deps: QueryDep
   let i = 0;
   for (const type of dailyTypes(cats)) {
     const alias = `d${i++}`;
-    const man = await loadType(c, dir, deps, type, [startMs, endMs], alias, { what: 'raw', budget: { bytes: 0 } });
+    // Every upload of a day is kept and merged metric by metric (the later upload wins per metric), so a later partial
+    // upload of the same day (a pass where some HealthKit queries failed) cannot erase metrics an earlier one had.
+    const man = await loadType(c, dir, deps, type, [startMs, endMs], alias, { what: 'raw', budget: { bytes: 0 }, keepVersions: true });
     mans.push([type, man]);
-    for (const r of await rows(c, `SELECT id, extra FROM ${alias} WHERE k = 'day' AND id >= ${lit(from)} AND id <= ${lit(to)}`)) {
+    for (const r of await rows(c, `SELECT id, extra FROM ${alias} WHERE k = 'day' AND id >= ${lit(from)} AND id <= ${lit(to)} ORDER BY seq ASC, batch ASC`)) {
       const day = String(r.id);
       byDay.set(day, { ...(byDay.get(day) ?? {}), ...((parseExtra(r.extra).m as Record<string, unknown>) ?? {}) });
     }

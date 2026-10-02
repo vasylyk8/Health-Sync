@@ -39,6 +39,15 @@ describe('daily context with categories, groups and rollups', () => {
     expect((off.days as Record<string, unknown>[])[0]).toHaveProperty('steps');
   });
 
+  it('a later partial upload of a day does not erase the metrics an earlier upload had', async () => {
+    const env = makeEnv();
+    await upload(env, stats(env), [{ k: 'day', day: days[0]!, m: { steps: 9000, restingHr: 52, sleepAsleepMin: 420 } }]);
+    // A pass where most HealthKit queries failed: only one metric, and it changed.
+    await upload(env, stats(env), [{ k: 'day', day: days[0]!, m: { sleepAsleepMin: 430, envAudioMax: 88 } }]);
+    const r = await getDailyContext(deps(env), { start_date: days[0]!, end_date: days[0]! });
+    expect(r.days).toEqual([{ date: days[0], steps: 9000, restingHr: 52, sleepAsleepMin: 430, envAudioMax: 88 }]);
+  });
+
   it('averages by week and month', async () => {
     const env = makeEnv();
     await upload(env, stats(env), days.map((d, i) => ({ k: 'day', day: d, m: { steps: 1000 * (i + 1), sleepBedtime: '23:00' } })));
