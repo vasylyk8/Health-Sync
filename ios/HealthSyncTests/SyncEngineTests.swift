@@ -500,6 +500,20 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertEqual(box.state.anchors["ev:BloodGlucose"], Data("G2".utf8))
     }
 
+    func testDailyHistoryIsReadAgainAfterAnAppUpdate() async throws {
+        let source = ScriptedSource()
+        source.earliestDaily = Date(timeIntervalSinceNow: -400 * 86_400)
+        source.daily = [["k": "day", "day": "2024-06-20", "m": .object(["steps": 1])]]
+        let box = Outbox(root: root)
+        // An older app finished a (possibly incomplete) full pass a moment ago.
+        try box.update { $0.dailyFullAt = Date(); $0.dailyVersion = 0 }
+        let (engine, _) = makeEngine(source, RecordingUploader(), outbox: box)
+        _ = try await engine.run()
+        let first = try XCTUnwrap(source.dailyRanges.first)
+        XCTAssertLessThan(first.from.timeIntervalSinceNow, -399 * 86_400, "the whole history is read again, not just the last days")
+        XCTAssertEqual(box.state.dailyVersion, SyncEngine.dailyVersion)
+    }
+
     func testEmptyRecentPassSkipsTheUpload() async throws {
         let up = RecordingUploader()
         let (engine, box) = makeEngine(ScriptedSource(), up)

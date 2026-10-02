@@ -291,6 +291,17 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Pull down to refresh: starts a sync if none is running and returns after a moment, so the spinner never hangs
+    /// for the minutes a large sync can take (a refresh that is still "in progress" ignores further pulls).
+    func pullToRefresh() async {
+        await refreshStatus()
+        if !progress.isSyncing {
+            syncTask?.cancel()
+            syncTask = Task { await syncNow() }
+        }
+        try? await Task.sleep(for: .seconds(2))
+    }
+
     func syncNow() async {
         do {
             _ = try await backend.signIn()

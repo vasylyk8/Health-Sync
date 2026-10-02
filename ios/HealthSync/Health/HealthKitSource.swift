@@ -478,14 +478,26 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         return out
     }
 
+    /// Errors that retrying cannot fix (no permission for this type, a type this iOS does not have): the metric is left out.
+    static func isPermanentFailure(_ error: Error) -> Bool {
+        let ns = error as NSError
+        guard ns.domain == HKErrorDomain else { return false }
+        switch HKError.Code(rawValue: ns.code) {
+        case .errorHealthDataUnavailable, .errorHealthDataRestricted, .errorInvalidArgument, .errorAuthorizationDenied,
+             .errorAuthorizationNotDetermined, .errorRequiredAuthorizationDenied, .errorNoData:
+            return true
+        default:
+            return false
+        }
+    }
+
     private func dailyRecords(_ metrics: [DailyMetric], from: Date, to: Date) async throws -> [Record] {
         let cal = Calendar.current
         let start = cal.startOfDay(for: from)
         // The metrics are independent queries (dozens per year of history), so several run at the same time;
         // results are merged in the metrics' order so the output does not depend on which finished first.
         var perMetric = [[DailyCell]?](repeating: nil, count: metrics.count)
-        var failures = 0
-        var firstError: Error?
+        var errors: [Int: Error] = [:]
         let limit = max(1, Self.dailyConcurrency)
         await withTaskGroup(of: (Int, [DailyCell]?, Error?).self) { group in
             var next = 0
@@ -505,15 +517,31 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             for _ in 0 ..< min(limit, metrics.count) { startNext() }
             while let (i, cells, error) = await group.next() {
                 if let error {
-                    failures += 1
-                    firstError = firstError ?? error
+                    errors[i] = error
                 } else {
                     perMetric[i] = cells
                 }
                 startNext()
             }
         }
-        if failures > 0, failures == metrics.count, let firstError { throw firstError }
+        // A query that failed for a passing reason (Apple Health busy or briefly locked) works a moment later: try those
+        // again one at a time. If one still fails, the whole chunk fails, so it is retried on the next run instead of
+        // being recorded as complete with metrics (sleep, steps, resting heart rate...) silently missing.
+        for i in errors.keys.sorted() {
+            do {
+                perMetric[i] = try await dailyCells(metrics[i], start: start, to: to, calendar: cal)
+                errors[i] = nil
+            } catch {
+                errors[i] = error
+            }
+        }
+        if let transient = errors.values.first(where: { !Self.isPermanentFailure($0) }) {
+            // Give up on a metric that keeps failing (three chunks in a row), so one stubborn query cannot block the rest forever.
+            let tries = sourceLock.withLock { () -> Int in dailyTransientFailures += 1; return dailyTransientFailures }
+            if tries <= 3 { throw transient }
+        } else {
+            sourceLock.withLock { dailyTransientFailures = 0 }
+        }
         var days: [String: [String: RecordValue]] = [:]
         for cells in perMetric {
             for c in cells ?? [] { days[c.day, default: [:]][c.key] = c.value }
@@ -867,6 +895,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     private var observedTypes = Set<String>()
+    private var dailyTransientFailures = 0
 
     /// Heart rate and steps (hourly series) and every event type of the switched-on categories wake the app in the
     /// background too, so new readings (a CGM, a logged meal) reach the server without opening the app. iOS decides
