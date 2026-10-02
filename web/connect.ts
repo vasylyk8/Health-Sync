@@ -24,7 +24,10 @@ async function start() {
   // Serve login and Firebase auth helpers from the same Hosting origin. This avoids
   // third-party storage restrictions during redirect sign-in on Safari.
   const auth = getAuth(initializeApp({ ...config, authDomain: location.hostname }));
-  await getRedirectResult(auth);
+  // A failed Apple callback must not leave the user stranded without retry/cancel.
+  let appleRedirectFailed = false;
+  try { await getRedirectResult(auth); }
+  catch { appleRedirectFailed = true; }
   if (!request) {
     status.textContent = 'Start the connection in Claude or ChatGPT. To link your existing data, first sign in with Apple inside KROK on your iPhone.';
     return;
@@ -49,10 +52,13 @@ async function start() {
     signIn.hidden = !!user;
     approve.disabled = !user;
     document.querySelector<HTMLElement>('#switch-account')!.hidden = !user;
-    status.textContent = user ? 'Signed in. Authorize access only if this is the assistant you chose to connect.' : 'Sign in using the same Apple Account you linked in the KROK iPhone app.';
+    status.textContent = user ? 'Signed in. Authorize access only if this is the assistant you chose to connect.'
+      : appleRedirectFailed ? 'Apple sign-in did not complete. Try signing in again, or cancel and restart the connection in your assistant. If Apple shows a different app, cancel and contact KROK support.'
+      : 'Sign in using the same Apple Account you linked in the KROK iPhone app.';
   };
   onAuthStateChanged(auth, updateUser);
   signIn.onclick = async () => {
+    appleRedirectFailed = false;
     try { await signInWithRedirect(auth, new OAuthProvider('apple.com')); }
     catch { status.textContent = 'Apple sign-in could not start. Try again.'; }
   };

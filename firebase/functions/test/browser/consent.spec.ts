@@ -93,6 +93,62 @@ test('cancel works without Apple login and preserves state', async ({ page }) =>
   await expect(page).toHaveURL(/error=access_denied/);
   expect(new URL(page.url()).searchParams.get('state')).toBe('browser-state');
 });
+test('failed Apple callback retains retry and cancel without granting access', async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem('test-apple-redirect-failure', '1'));
+  await begin(page);
+  await expect(page.locator('#status')).toContainText('Apple sign-in did not complete');
+  await expect(page.locator('#status')).not.toContainText('Firebase: Error');
+  await expect(page.getByRole('button', { name: 'Sign in with Apple', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Allow access' })).toBeDisabled();
+  await page.route('https://claude.ai/**', (route) => route.fulfill({ body: 'Cancelled.' }));
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page).toHaveURL(/error=access_denied/);
+});
+test('reviewer can recover from a failed Apple callback using real emulator login', async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem('test-apple-redirect-failure', '1'));
+  await begin(page);
+  await expect(page.locator('#status')).toContainText('Apple sign-in did not complete');
+  await signIn(page);
+  await expect(page.locator('#status')).toContainText('Signed in.');
+});
+test('real Firebase redirect can load its required Google helper under Hosting CSP', async ({ page }) => {
+  await page.addInitScript(() => {
+    sessionStorage.setItem('firebase:pendingRedirect:fake-api-key:[DEFAULT]', JSON.stringify('true'));
+  });
+  let requested = false;
+  await page.route('https://apis.google.com/**', async (route) => {
+    requested = true;
+    // Model a helper module timeout, not an Apple login. The real Firebase SDK
+    // must first request and execute this external script under the actual CSP.
+    await route.fulfill({ contentType: 'text/javascript', body: `
+      document.documentElement.dataset.googleHelperLoaded = 'true';
+      window.gapi = { load: (_, options) => options.ontimeout() };
+      window[new URL(document.currentScript.src).searchParams.get('onload')]();
+    ` });
+  });
+  await begin(page);
+  expect(requested).toBe(true);
+  await expect(page.locator('html')).toHaveAttribute('data-google-helper-loaded', 'true');
+  await expect(page.getByRole('button', { name: 'Allow access' })).toBeDisabled();
+});
+test('Hosting CSP still refuses scripts from unrelated origins', async ({ page }) => {
+  await begin(page);
+  await page.route('https://untrusted.example/**', (route) => route.fulfill({
+    contentType: 'text/javascript', body: `document.documentElement.dataset.untrustedScriptLoaded = 'true';`,
+  }));
+  await page.evaluate(() => {
+    document.addEventListener('securitypolicyviolation', (event) => {
+      if (event.blockedURI.startsWith('https://untrusted.example/')) {
+        document.documentElement.dataset.untrustedScriptBlocked = 'true';
+      }
+    });
+    const script = document.createElement('script');
+    script.src = 'https://untrusted.example/script.js';
+    document.head.append(script);
+  });
+  await expect(page.locator('html')).toHaveAttribute('data-untrusted-script-blocked', 'true');
+  await expect(page.locator('html')).not.toHaveAttribute('data-untrusted-script-loaded', 'true');
+});
 test('expired browser binding gives actionable recovery and no consent controls', async ({ page }) => {
   await page.goto(`${base}/connect?request=${'Z'.repeat(43)}`);
   await expect(page.locator('#status')).toContainText('Start again');

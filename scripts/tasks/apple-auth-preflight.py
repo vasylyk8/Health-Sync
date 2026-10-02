@@ -30,6 +30,27 @@ print("Apple provider is enabled; Services ID matches the CI configuration.")
 print("Confirmed KROK bundle ID: com.vasylyk.krok; Team ID: AAZHPDPD2B.")
 print("Private-key format and integrity validated without revealing its contents.")
 
+# Matching client IDs alone does not validate Apple's server-side code exchange.
+# Report only equality/presence flags; provider responses can contain private keys.
+apple = config.get("appleSignInConfig", {}).get("codeFlowConfig", {})
+checks = {
+    "Firebase Apple team matches KROK": apple.get("teamId") == os.environ["APPLE_TEAM_ID"],
+    "Firebase Apple signing key ID matches CI": apple.get("keyId") == os.environ["APPLE_SIGN_IN_KEY_ID"],
+    "Firebase Apple private key configured": bool(apple.get("privateKey")),
+}
+if apple.get("privateKey"):
+    def public_key(private_key):
+        result = subprocess.run(["openssl", "pkey", "-pubout"], input=private_key,
+                                text=True, capture_output=True)
+        return result.stdout.strip() if result.returncode == 0 else None
+    expected_public = public_key(os.environ["APPLE_SIGN_IN_KEY_P8"])
+    checks["Firebase Apple private key matches CI"] = bool(expected_public) and public_key(apple["privateKey"]) == expected_public
+for name, passed in checks.items():
+    print(("PASS: " if passed else "FAIL: ") + name)
+if not all(checks.values()):
+    raise SystemExit("Firebase Apple signing configuration is incomplete or differs from KROK's configured credentials. No provider settings were changed.")
+print("Apple portal check still required: Services ID must use com.vasylyk.krok as its primary App ID and include the active Firebase return URL. This preflight does not verify Apple's consent branding or a live Apple account login.")
+
 # Reuse the existing App Store Connect signer, capturing its token instead of logging it.
 if all(os.environ.get(name) for name in ["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_P8"]):
     asc_token = subprocess.check_output(["python3", str(Path(__file__).with_name("asc_jwt.py"))], text=True).strip()
