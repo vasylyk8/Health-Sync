@@ -24,7 +24,8 @@ final class StubBackend: Backend, @unchecked Sendable {
         if let signInError { throw signInError }
         return uid
     }
-    func registerDevice(timeZone: String) async throws { if let registerError { throw registerError } }
+    var registerCalls = 0
+    func registerDevice(timeZone: String) async throws { registerCalls += 1; if let registerError { throw registerError } }
     func createLink(provider: String) async throws -> String { "https://example.test/mcp/\(provider)" }
     func disconnect(provider: String) async throws {}
     func deleteAllData() async throws {}
@@ -42,6 +43,24 @@ final class AppModelTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let defaults = UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!
         return AppModel(backend: backend, source: ScriptedSource(), outbox: Outbox(root: root), scope: .empty, telemetry: NoTelemetry(), defaults: defaults)
+    }
+
+    func testAnAccountSwitchStartsTheFirstSyncOverOnTheNewAccount() async throws {
+        let backend = StubBackend()
+        let box = Outbox(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let model = AppModel(backend: backend, source: ScriptedSource(), outbox: box, scope: .empty, telemetry: NoTelemetry(), defaults: UserDefaults(suiteName: "switch-\(UUID().uuidString)")!)
+        await model.syncNow()
+        try box.update { $0.detailsDone = ["W1"] }
+        let registered = backend.registerCalls
+        // The old account was removed on the server; the app fell back to a new one. What the outbox says is uploaded went to the old account.
+        backend.uid = "stub-user-2"
+        await model.syncNow()
+        XCTAssertGreaterThan(backend.registerCalls, registered, "the new account is registered")
+        XCTAssertTrue(box.state.detailsDone.isEmpty, "everything is uploaded again to the new account")
+        // The same account again leaves the outbox alone.
+        try box.update { $0.detailsDone = ["W2"] }
+        await model.syncNow()
+        XCTAssertEqual(box.state.detailsDone, ["W2"])
     }
 
     func testOfflineSyncShowsAnIssueThatClearsOnSuccess() async {
