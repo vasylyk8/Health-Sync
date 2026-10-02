@@ -63,4 +63,20 @@ final class OutboxMigrationTests: XCTestCase {
         try box.complete(d)
         XCTAssertEqual(box.state.dailyFullAt, Date(timeIntervalSince1970: 7))
     }
+
+    func testSequenceNumbersStartAboveWhatAnEarlierInstallSent() throws {
+        let box = Outbox(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let first = try box.nextSeq("_daily")
+        XCTAssertGreaterThanOrEqual(first, Outbox.seqFloor(Date(timeIntervalSinceNow: -60)), "a fresh install starts at the current time, above any earlier install's numbers")
+        XCTAssertEqual(try box.nextSeq("_daily"), first + 1)
+        XCTAssertEqual(try box.reserveSeqs("_daily", count: 5), first + 2)
+        XCTAssertEqual(try box.nextSeq("_daily"), first + 7)
+    }
+
+    func testSmallSequenceNumbersFromAnOlderAppJumpToTheClock() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let box = Outbox(root: root)
+        try box.update { $0.seq["_daily"] = 14 }
+        XCTAssertGreaterThan(try box.nextSeq("_daily"), 1_000_000_000_000)
+    }
 }

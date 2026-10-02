@@ -154,21 +154,25 @@ final class Outbox: @unchecked Sendable {
         state = s
     }
 
+    /// Sequence numbers start at the current time in milliseconds and then count up. The server keeps the row with the
+    /// highest number per record, so a fresh install (empty state) must start above everything an earlier install
+    /// sent; otherwise its complete rows lose to the old, possibly incomplete ones.
+    private static let clockEra: Int64 = 1_000_000_000_000
+    static func seqFloor(_ now: Date = Date()) -> Int64 { Int64(now.timeIntervalSince1970 * 1000) }
+
     /// Reserves the next sequence number for a type (persisted before use, so it never repeats).
     func nextSeq(_ typeId: String) throws -> Int64 {
-        var n: Int64 = 0
-        try update { s in
-            n = (s.seq[typeId] ?? 0) + 1
-            s.seq[typeId] = n
-        }
-        return n
+        try reserveSeqs(typeId, count: 1)
     }
 
     /// Reserves `count` consecutive sequence numbers for a type with one state write; returns the first.
     func reserveSeqs(_ typeId: String, count: Int) throws -> Int64 {
         var first: Int64 = 0
         try update { s in
-            first = (s.seq[typeId] ?? 0) + 1
+            var last = s.seq[typeId] ?? 0
+            // A counter below the clock era (fresh state, or an older app's) jumps to the clock once, then just counts up.
+            if last < Self.clockEra { last = max(last, Self.seqFloor()) }
+            first = last + 1
             s.seq[typeId] = first + Int64(max(1, count)) - 1
         }
         return first

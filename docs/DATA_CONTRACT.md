@@ -36,7 +36,7 @@ rejects every other batch type and record kind, and drops batches of a category 
 | `_events_heart`, `_events_nutrition`, `_events_devices`, `_events_mind`, `_events_medications`, `_events_profile` | `anchored` | `ev`, `d` | event/sample logs of an optional category |
 | `_status` | `status` | `c` | "checked, nothing new" for the types above |
 
-- `seq`: per-type monotonic counter; the server keeps the highest `seq` per record id ("latest wins"). The app keeps its counters across upgrades.
+- `seq`: per-type monotonic counter; the server keeps the highest `seq` per record id ("latest wins"). The app keeps its counters across upgrades, and a counter that is empty or still small (a fresh install, or an older app) starts at the current time in milliseconds, so a reinstall never numbers below what an earlier install sent.
 - `window`: the time range this batch fully covers (used for coverage). For `_daily` it goes to the statistics coverage.
 - `caughtUp`: true when an anchored page returned fewer results than its limit, meaning the whole history up to `checkedAt` has been sent.
 - `perf`: timings only, never health data.
