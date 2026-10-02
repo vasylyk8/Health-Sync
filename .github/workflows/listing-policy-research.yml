@@ -1,0 +1,18 @@
+name: listing-policy-research
+on:
+  push:
+    branches: [codex/public-listing-prep]
+    paths: ['scripts/tasks/listing-policy-research.py', '.github/workflows/listing-policy-research.yml']
+permissions:
+  contents: read
+jobs:
+  fetch-public-sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/tasks/listing-policy-research.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: listing-policy-sources
+          path: policy-research
