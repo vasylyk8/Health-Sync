@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# IRREVERSIBLE in "run" mode: deletes every account and all stored data. "plan" is read-only.
+# IRREVERSIBLE in "run" mode: deletes every real account and its data. The synthetic monitoring user and the
+# directory reviewer account are kept. "plan" is read-only.
 #   scripts/tasks/purge-all.sh plan|run
 source "$(dirname "$0")/lib.sh"
 MODE="${1:-plan}"

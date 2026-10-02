@@ -1,7 +1,8 @@
-// IRREVERSIBLE: deletes every account (Firebase Auth user, Firestore user tree, tokens, OAuth credentials,
-// access log) and every stored byte (incoming and data buckets). Run through scripts/tasks/purge-all.sh.
-//   npx tsx scripts/purge-all.ts plan    read-only report: what exists, nothing is changed
-//   npx tsx scripts/purge-all.ts run     delete everything
+// IRREVERSIBLE: deletes every real account (Firebase Auth user, Firestore user tree, tokens, OAuth credentials,
+// access log, stored data). The synthetic monitoring user and the directory reviewer account are always kept.
+// Run through scripts/tasks/purge-all.sh.
+//   npx tsx scripts/purge-all.ts plan    read-only report: what would be deleted and what is kept
+//   npx tsx scripts/purge-all.ts run     delete the real accounts
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -23,37 +24,44 @@ const incoming = new GcsBlobs(storage.bucket(incomingBucketName(project)) as nev
 const data = new GcsBlobs(storage.bucket(dataBucketName(project)) as never);
 
 const short = (uid: string) => `${uid.slice(0, 6)}…`;
+/** The synthetic monitoring user and the review account are never touched. */
+const SYNTHETIC_UID = 'synthetic-monitor';
+const REVIEWER_UID = /^krok-reviewer-[A-Za-z0-9_-]{1,80}$/;
 
 // Every account: Firestore user trees (including ones whose root doc is gone) and Auth users.
 const uids = new Set<string>();
 for (const ref of await db.collection('users').listDocuments()) uids.add(ref.id);
 const authUsers: Record<string, string> = {};
+const reviewerClaim = new Set<string>();
 let page: string | undefined;
 do {
   const res = await auth.listUsers(1000, page);
   for (const u of res.users) {
     uids.add(u.uid);
     authUsers[u.uid] = u.providerData.map((p) => p.providerId).join(',') || 'anonymous/none';
+    if (u.customClaims?.krokReviewer === true) reviewerClaim.add(u.uid);
   }
   page = res.pageToken;
 } while (page);
 
-const count = async (name: string) => (await db.collection(name).count().get()).data().count;
 console.log(`project ${project}`);
-console.log(`accounts: ${uids.size}`);
+console.log(`accounts found: ${uids.size}`);
+const doomed: string[] = [];
 for (const uid of [...uids].sort()) {
   const snap = await db.collection('users').doc(uid).get();
-  const d = snap.data() as { createdAt?: number; deleting?: boolean; links?: Record<string, unknown> } | undefined;
-  console.log(` - ${short(uid)} auth[${authUsers[uid] ?? 'none'}] firestore[${snap.exists ? 'yes' : 'no'}] created ${d?.createdAt ? new Date(d.createdAt).toISOString() : '?'} links[${Object.keys(d?.links ?? {}).join(',') || 'none'}]${d?.deleting ? ' (deleting)' : ''}`);
+  const d = snap.data() as { createdAt?: number; deleting?: boolean; synthetic?: boolean; links?: Record<string, unknown> } | undefined;
+  const keep = uid === SYNTHETIC_UID || REVIEWER_UID.test(uid) || reviewerClaim.has(uid) || d?.synthetic === true;
+  if (!keep) doomed.push(uid);
+  console.log(` - ${keep ? 'KEEP  ' : 'DELETE'} ${keep ? uid : short(uid)} auth[${authUsers[uid] ?? 'none'}] firestore[${snap.exists ? 'yes' : 'no'}] created ${d?.createdAt ? new Date(d.createdAt).toISOString() : '?'} links[${Object.keys(d?.links ?? {}).join(',') || 'none'}]${d?.deleting ? ' (deleting)' : ''}`);
 }
-console.log(`tokens: ${await count('tokens')}, oauthCredentials: ${await count('oauthCredentials')}, accessLog: ${await count('accessLog')}`);
+console.log(`to delete: ${doomed.length} account(s); kept: ${uids.size - doomed.length}`);
 if (mode === 'plan') {
   console.log('plan only: nothing was changed.');
   process.exit(0);
 }
 
 let failures = 0;
-for (const uid of uids) {
+for (const uid of doomed) {
   try {
     await purgeUserData({ db, incoming, data, deleteAuthUser: (u) => auth.deleteUser(u) }, uid);
     console.log(`purged ${short(uid)}`);
@@ -62,9 +70,5 @@ for (const uid of uids) {
     console.error(`FAILED ${short(uid)}: ${(err as Error).message}`);
   }
 }
-// Anything left that no account owns (orphans), then the derived collections.
-await incoming.deletePrefix('incoming/');
-await data.deletePrefix('data/');
-for (const name of ['tokens', 'oauthCredentials', 'accessLog']) await db.recursiveDelete(db.collection(name));
-console.log(`done. accounts left in Firestore: ${(await db.collection('users').listDocuments()).length}`);
+console.log(`done. accounts left in Firestore: ${(await db.collection('users').listDocuments()).map((r) => r.id).join(', ') || 'none'}`);
 if (failures) process.exit(1);
