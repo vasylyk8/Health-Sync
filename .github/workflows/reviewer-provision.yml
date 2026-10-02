@@ -30,12 +30,16 @@ jobs:
           cache-dependency-path: firebase/functions/package-lock.json
       - run: npm ci
         working-directory: firebase/functions
+      - run: npm run build
+        working-directory: firebase/functions
       - run: npx playwright install --with-deps chromium
         working-directory: firebase/functions
-      - name: Complete synthetic fixtures and verify production access without exposing credentials
+      - name: Validate synthetic production dataset and reviewer access without exposing credentials
         run: python3 scripts/tasks/provision-directory-reviewer.py --apply
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: directory-reviewer-verification-no-credentials
-          path: /tmp/krok-reviewer-verification.json
+          path: |
+            /tmp/krok-reviewer-verification.json
+            /tmp/krok-reviewer-dataset-verification.json

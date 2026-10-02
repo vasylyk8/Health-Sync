@@ -72,6 +72,7 @@ provider_enabled = bool(email_config.get('enabled') and email_config.get('passwo
 env = {**os.environ, 'KROK_REVIEWER_UID': credentials['uid'], 'KROK_REVIEWER_EMAIL': credentials['email'],
        'KROK_REVIEWER_PASSWORD': credentials['password']}
 subprocess.run(['node', 'firebase/functions/scripts/prepare-reviewer.mjs', '--apply', '--reuse', '--reseed'], cwd=root, env=env, check=True)
+subprocess.run(['node', 'firebase/functions/scripts/verify-reviewer-dataset.mjs'], cwd=root, env=env, check=True)
 if not provider_enabled:
     Path('/tmp/krok-reviewer-verification.json').write_text(json.dumps({'syntheticOnly': True,
         'accountProvisioned': True, 'emailPasswordProviderEnabled': False,
