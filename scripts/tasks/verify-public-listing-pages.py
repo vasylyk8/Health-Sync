@@ -9,7 +9,7 @@ def read(path):
         assert response.status == 200
         return response.read(), {name.lower(): value for name, value in response.headers.items()}
 
-for path in ['/', '/support', '/privacy', '/mcp-docs', '/connect']:
+for path in ['/', '/support', '/privacy', '/mcp-docs', '/connect', '/terms']:
     content, headers = read(path)
     html = content.decode()
     assert 'KROK' in html and '/icon.png' in html
@@ -24,6 +24,11 @@ for path in ['/', '/support', '/privacy', '/mcp-docs', '/connect']:
         assert 'same Apple Account' in html
     if path == '/privacy':
         assert '2ndOp Inc' in html and 'Public assistant connections' in html
+    if path == '/terms':
+        assert 'KROK Terms of Service' in html and 'October 2, 2026' in html
+        assert '2ndOp Inc' in html and 'people aged 16 or older' in html
+        assert '1 Yule Ave' not in html and 'vasylyk@outlook.com' not in html
+        assert 'draft terms' not in html and 'Items for publisher/legal approval' not in html
     print('PASS: deployed public page ' + path)
 css, _ = read('/style.css')
 assert b'--ink:#3a3a3c' in css and b'--background:#141414' in css

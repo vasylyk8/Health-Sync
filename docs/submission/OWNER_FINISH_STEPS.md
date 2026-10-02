@@ -8,17 +8,17 @@ The production account is created and its credentials are stored in [KROK Secret
 
 The approved change set `signIn.email.enabled=true` and `signIn.email.passwordRequired=true` in project `krok-1d60a`. Apple login remains supported; health OAuth still requires Apple or an administrator-marked password reviewer. Unit and real Auth-emulator browser tests confirm ordinary password users are refused. Normal production verification never changes provider settings.
 
-Record the two walkthroughs using `RECORDING_GUIDE.md`. Use the email/password from the secret in “Directory reviewer access” on the OAuth page after starting connection in each host. The real host cases and recording URLs remain required; synthetic protocol checks cannot replace them.
+Both walkthroughs were recorded and visually sampled on October 2, 2026; see the platform demo review files. Run any remaining acceptance cases using `RECORDING_GUIDE.md`. Use the email/password from the secret in “Directory reviewer access” on the OAuth page after starting connection in each host. The real host cases and recording URLs remain required; synthetic protocol checks cannot replace them.
 
 ## Terms and eligibility
 
-Review `docs/legal/TERMS_OF_SERVICE.md`. A local preview can be generated with `python3 scripts/tasks/prepare-terms-page.py`; it stays outside Hosting. Approve the actual terms and age/country/consumer-law decisions before `--publish-approved`, deploy `/terms`, verify public content, then add its real URL to the upload. Do not treat approving code as accepting directory legal attestations.
+The publisher approved `docs/legal/TERMS_OF_SERVICE.md` on October 2, 2026 after requesting removal of the street address and email. The approved page is staged at `firebase/hosting/terms.html`; verify `/terms` after deployment. This approval covers the terms wording and publication, not directory policy attestations.
 
 OpenAI's PHI prohibition and sensitive-data requirements need a publisher compliance determination for the actual Apple Health inventory. Use the documented eligibility question if clarification is needed. Consent and “not medical advice” do not establish acceptance by themselves.
 
 ## Organization, portal and domain
 
-1. Sign in at [OpenAI Platform](https://platform.openai.com/login). Select/create the organization for **2ndOp Inc**, then complete business verification in [organization settings](https://platform.openai.com/settings/organization/general). Keep selected organization/project and verified public identity consistent with the package.
+1. The publisher reports that **2ndOp Inc verification is approved** as of October 2, 2026. This was not independently inspected in the portal. Sign in at [OpenAI Platform](https://platform.openai.com/login). Select/create the organization for **2ndOp Inc**, then complete business verification in [organization settings](https://platform.openai.com/settings/organization/general). Keep selected organization/project and verified public identity consistent with the package.
 2. Once approved legal URLs and real recordings are incorporated, build and validate the final ZIP. Confirm a supported category, the country allowlist excluding RU/BY, and real case evidence. Open [OpenAI plugin submissions](https://platform.openai.com/plugins) and upload the final draft using the organization owner or Apps Management Write role. Inspect the saved fields; an upload is not a submission.
 3. Supply the exact domain challenge token and the portal-selected host. `prepare-domain-challenge.py` stages the token at `/.well-known/openai-apps-challenge` and refuses replacing a different token. Deploy, check exact plain-text response on that origin, and confirm domain verification. Static files take precedence over Firebase rewrites; do not change the OAuth discovery handler to carry a placeholder token.
 4. Complete actual saved-version OAuth and all eight host cases, secure reviewer fields and scans. The authorized owner completes current legal/policy attestations. Submit for review only with complete evidence. Publication follows approval as a separate step.
