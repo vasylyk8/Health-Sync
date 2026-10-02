@@ -13,6 +13,7 @@ const uid = process.env.KROK_REVIEWER_UID ?? 'krok-reviewer-directory';
 const email = process.env.KROK_REVIEWER_EMAIL;
 const password = process.env.KROK_REVIEWER_PASSWORD;
 const apply = process.argv.includes('--apply');
+const reuse = process.argv.includes('--reuse');
 if (!['krok-1d60a', 'demo-health-sync'].includes(project)) throw new Error('Use the confirmed KROK project or the local demo-health-sync emulator.');
 if (!/^krok-reviewer-[A-Za-z0-9_-]{1,80}$/.test(uid) || uid === monitorUid) throw new Error('A dedicated reviewer UID is required.');
 if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !password || password.length < 20) throw new Error('Provide reviewer email and a password of at least 20 characters through environment variables.');
@@ -33,6 +34,10 @@ if ((existingDoc.exists && existingDoc.get('synthetic') !== true)
   throw new Error('Refusing to replace an account that is not the dedicated synthetic reviewer.');
 }
 if (existingDoc.get('deleting') === true) throw new Error('Reviewer account is being deleted; wait for cleanup before reprovisioning.');
+if (reuse && existingAuth && existingDoc.exists) {
+  console.log('Dedicated synthetic reviewer already exists; preserving password, grants and fixtures. Verification follows.');
+  process.exit(0);
+}
 if (existingAuth) {
   await auth.updateUser(uid, { password, disabled: false });
   await auth.revokeRefreshTokens(uid);

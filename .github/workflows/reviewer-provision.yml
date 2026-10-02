@@ -1,0 +1,41 @@
+name: reviewer-provision
+on:
+  push:
+    branches: [codex/public-listing-prep]
+    paths: ['.github/workflows/reviewer-provision.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: krok-directory-reviewer
+  cancel-in-progress: false
+jobs:
+  prepare-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: firebase/functions/package-lock.json
+      - run: npm ci
+        working-directory: firebase/functions
+      - run: npx playwright install --with-deps chromium
+        working-directory: firebase/functions
+      - name: Prepare dedicated account and verify production access without exposing credentials
+        run: python3 scripts/tasks/provision-directory-reviewer.py --apply
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: directory-reviewer-verification-no-credentials
+          path: /tmp/krok-reviewer-verification.json
