@@ -2,8 +2,13 @@ name: reviewer-provision
 on:
   push:
     branches: [codex/public-listing-prep]
-    paths: ['.github/workflows/reviewer-provision.yml']
+    paths: ['.github/workflows/reviewer-provision.yml', 'firebase/functions/scripts/*reviewer*.mjs', 'scripts/tasks/provision-directory-reviewer.py']
   workflow_dispatch:
+    inputs:
+      enable_password_provider:
+        description: 'Apply the project-wide provider change only after explicit owner approval'
+        type: boolean
+        default: false
 permissions:
   contents: read
   id-token: write
@@ -34,6 +39,9 @@ jobs:
         working-directory: firebase/functions
       - run: npx playwright install --with-deps chromium
         working-directory: firebase/functions
+      - name: Apply explicitly owner-approved password provider change
+        if: (github.event_name == 'workflow_dispatch' && inputs.enable_password_provider) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[approved-reviewer-provider]'))
+        run: python3 scripts/tasks/enable-reviewer-password-provider.py --apply
       - name: Validate synthetic production dataset and reviewer access without exposing credentials
         run: python3 scripts/tasks/provision-directory-reviewer.py --apply
       - uses: actions/upload-artifact@v4
