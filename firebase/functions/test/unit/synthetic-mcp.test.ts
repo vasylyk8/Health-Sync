@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 // @ts-expect-error plain JS module shared with the monitoring scripts
-import { alertOn, dailyValue, DAILY_KEYS, hourHrv, MEAL_KCAL, MEAL_PROTEIN, mealOn, PROFILE } from '../../../../scripts/synthetic/data.mjs';
+import { dailyValue, DAILY_KEYS, hourHrv, MEAL_KCAL, MEAL_PROTEIN, mealOn, PROFILE } from '../../../../scripts/synthetic/data.mjs';
 import { TOOL_NAMES } from '../../src/mcp/server.js';
 import { startSynthetic } from '../helpers/synthetic.js';
 
