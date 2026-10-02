@@ -161,10 +161,6 @@ struct SetupSheet: View {
         }
         Haptics.success()
         copied = true
-        Task {
-            try? await Task.sleep(for: .seconds(3))
-            copied = false
-        }
     }
 
     private var waitingRow: some View {
