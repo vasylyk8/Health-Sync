@@ -93,6 +93,24 @@ test('cancel works without Apple login and preserves state', async ({ page }) =>
   await expect(page).toHaveURL(/error=access_denied/);
   expect(new URL(page.url()).searchParams.get('state')).toBe('browser-state');
 });
+test('failed Apple callback retains retry and cancel without granting access', async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem('test-apple-redirect-failure', '1'));
+  await begin(page);
+  await expect(page.locator('#status')).toContainText('Apple sign-in did not complete');
+  await expect(page.locator('#status')).not.toContainText('Firebase: Error');
+  await expect(page.getByRole('button', { name: 'Sign in with Apple', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Allow access' })).toBeDisabled();
+  await page.route('https://claude.ai/**', (route) => route.fulfill({ body: 'Cancelled.' }));
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page).toHaveURL(/error=access_denied/);
+});
+test('reviewer can recover from a failed Apple callback using real emulator login', async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem('test-apple-redirect-failure', '1'));
+  await begin(page);
+  await expect(page.locator('#status')).toContainText('Apple sign-in did not complete');
+  await signIn(page);
+  await expect(page.locator('#status')).toContainText('Signed in.');
+});
 test('expired browser binding gives actionable recovery and no consent controls', async ({ page }) => {
   await page.goto(`${base}/connect?request=${'Z'.repeat(43)}`);
   await expect(page.locator('#status')).toContainText('Start again');
