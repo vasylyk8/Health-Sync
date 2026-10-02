@@ -17,7 +17,7 @@ class Content(HTMLParser):
             self.skip += 1
         if tag == 'a':
             href = dict(attrs).get('href', '')
-            if any(word in href.lower() for word in ('submit', 'partner', 'directory', 'guideline', 'policy', 'privacy')):
+            if any(word in href.lower() for word in ('submit', 'submission', 'partner', 'directory', 'guideline', 'policy', 'privacy', 'platform.openai.com', 'security')):
                 self.links.append(href)
     def handle_endtag(self, tag):
         if tag in ('script', 'style', 'nav', 'header', 'footer'):
@@ -30,6 +30,7 @@ sources = {
     'openai-guidelines': 'https://developers.openai.com/apps-sdk/app-submission-guidelines/',
     'openai-submission': 'https://developers.openai.com/apps-sdk/deploy/submission/',
     'anthropic-directory': 'https://claude.com/connectors',
+    'anthropic-submission': 'https://claude.com/docs/connectors/building/submission',
     'anthropic-mcp': 'https://docs.claude.com/en/docs/mcp',
 }
 out = pathlib.Path('policy-research')
