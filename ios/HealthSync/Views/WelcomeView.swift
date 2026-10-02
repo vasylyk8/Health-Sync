@@ -37,6 +37,12 @@ struct WelcomeView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
                 .riseIn(delay: 0.05)
+                .padding(.bottom, 16)
+            // In the scrolling part: pinned next to the buttons it would push them off screen at large text sizes.
+            Text(Copy.Welcome.dataNote)
+                .smallText()
+                .foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 24)
         }
         .padding(.horizontal, Theme.margin)
@@ -81,12 +87,6 @@ struct WelcomeView: View {
                     .accessibilityIdentifier("connectStage")
             }
             AppleAccountView(style: .welcome)
-            Text(Copy.Welcome.dataNote)
-                .smallText()
-                .foregroundStyle(Theme.muted)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 4)
         }
     }
 }
