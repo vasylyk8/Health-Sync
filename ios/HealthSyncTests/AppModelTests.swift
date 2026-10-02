@@ -249,6 +249,12 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.busy)
     }
 
+    func testMedicationsStartOffSoFirstRunHasOnePermissionSheet() {
+        let scope = HealthTypes.scope(HealthTypes.loadCoverage())
+        XCTAssertNotEqual(scope.categories.first { $0.id == "medications" }?.default, true)
+        XCTAssertEqual(scope.categories.first { $0.id == "cycle" }?.default, true, "other groups keep their defaults")
+    }
+
     func testMedicationSheetIsNotPartOfTheMainPermissionRequest() async throws {
         let source = MedicationSource()
         var scope = SyncScope.empty
