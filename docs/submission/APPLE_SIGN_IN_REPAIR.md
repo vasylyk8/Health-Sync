@@ -2,6 +2,10 @@
 
 The October 2 production screenshot shows Apple's **Sniped** name and icon. Apple's primary app association supplies this branding. The production read-only check confirms Firebase's Services ID, team, key ID and private key match GitHub configuration, and KROK's native App ID has Sign in with Apple enabled. This does not prove the Services ID/key are associated with the right primary app or that Apple's live code exchange succeeds.
 
+## Confirmed callback policy defect
+
+The owner changed the Services ID primary app to KROK, and Apple's screen now displays KROK. A separate Chromium reproduction with the real Firebase SDK found Hosting's `script-src 'self'` blocks Google's required redirect helper from `https://apis.google.com`. PR34 permits that origin, preserves unrelated script restrictions and keeps failed callbacks recoverable. The before/after test uses a mocked helper response and does not complete an Apple login. After deployment, first retest a fresh real Apple connection before deciding whether a key change is necessary. Postdeployment verification checks the live script policy too.
+
 ## Inspect before changing
 
 1. Open [Firebase Apple authentication](https://console.firebase.google.com/project/krok-1d60a/authentication/providers). Open **Apple** and note the **Services ID**, **Apple Team ID**, and **Key ID**. Do not copy the private key into chat. Team must be `AAZHPDPD2B`.

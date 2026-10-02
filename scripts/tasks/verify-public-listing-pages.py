@@ -14,6 +14,9 @@ for path in ['/', '/support', '/privacy', '/mcp-docs', '/connect']:
     html = content.decode()
     assert 'KROK' in html and '/icon.png' in html
     assert "img-src 'self' data:" in headers['content-security-policy']
+    if path == '/connect':
+        script_sources = headers['content-security-policy'].split('script-src ', 1)[1].split(';', 1)[0].split()
+        assert 'https://apis.google.com' in script_sources, 'Firebase redirect helper blocked by deployed script policy'
     assert headers['x-content-type-options'] == 'nosniff'
     if path == '/':
         assert 'Your Apple Health, meet your AI.' in html
