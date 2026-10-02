@@ -47,7 +47,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: firebase/functions
       - name: Apply explicitly owner-approved password provider change
-        if: (github.event_name == 'workflow_dispatch' && inputs.enable_password_provider) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[approved-reviewer-provider]'))
+        if: github.event_name == 'workflow_dispatch' && inputs.enable_password_provider
         run: python3 scripts/tasks/enable-reviewer-password-provider.py --apply
       - name: Validate synthetic production dataset and reviewer access without exposing credentials
         env:

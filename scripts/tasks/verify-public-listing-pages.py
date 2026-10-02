@@ -7,14 +7,14 @@ base = 'https://krok-1d60a.firebaseapp.com'
 def read(path):
     with urllib.request.urlopen(base + path, timeout=30) as response:
         assert response.status == 200
-        return response.read(), dict(response.headers)
+        return response.read(), {name.lower(): value for name, value in response.headers.items()}
 
 for path in ['/', '/support', '/privacy', '/mcp-docs', '/connect']:
     content, headers = read(path)
     html = content.decode()
     assert 'KROK' in html and '/icon.png' in html
-    assert "img-src 'self' data:" in headers['Content-Security-Policy']
-    assert headers['X-Content-Type-Options'] == 'nosniff'
+    assert "img-src 'self' data:" in headers['content-security-policy']
+    assert headers['x-content-type-options'] == 'nosniff'
     if path == '/':
         assert 'Your Apple Health, meet your AI.' in html
     if path == '/support':
