@@ -57,6 +57,10 @@ enum HealthBench {
     static func run(_ m: BenchModel) async {
         startMainThreadWatchdog()
         let args = ProcessInfo.processInfo.arguments
+        if args.contains("-dailyCheck") {
+            await DailyCheck.run(m)
+            return
+        }
         let count = args.firstIndex(of: "-benchCount").flatMap { Int(args[$0 + 1]) } ?? 300
         let store = HKHealthStore()
         let scope = HealthTypes.scope(HealthTypes.loadCoverage())

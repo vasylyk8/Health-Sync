@@ -1,0 +1,44 @@
+# End-to-end check of the app's daily-metrics pass against the iOS simulator's real HealthKit: writes a few days of readings,
+# reads them back through the app's own code and fails if a metric that has data does not come out.
+name: daily-check
+on:
+  push:
+    branches: ['fix/daily-results-accounting']
+    paths: ['.github/workflows/daily-check.yml', 'ios/HealthSync/Health/HealthDailyCheck.swift', 'ios/HealthSync/Health/HealthKitSource.swift', 'ios/HealthSyncUITests/DailyCheckUITests.swift']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: ios
+    env:
+      BUNDLE_ID: app.healthsync.dev
+      APPLE_TEAM_ID: ''
+      PUBLIC_BASE_URL: https://krok-1d60a.web.app
+      SIM_DEVICE: iPhone 17 Pro
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          brew install xcodegen
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+      - name: Generate project
+        run: xcodegen generate --spec project.yml
+      - name: Daily check
+        run: |
+          xcodebuild test -project HealthSync.xcodeproj -scheme HealthSync \
+            -destination "platform=iOS Simulator,name=$SIM_DEVICE" \
+            -only-testing:HealthSyncUITests/DailyCheckUITests \
+            -resultBundlePath daily.xcresult \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= 2>&1 | tee daily.log | grep -E "DAILYLOG|DAILYUI|error:|Test Case|\*\* TEST"
+          exit ${PIPESTATUS[0]}
+      - name: Keep the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-check-log
+          path: ios/daily.log

@@ -498,36 +498,39 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         // results are merged in the metrics' order so the output does not depend on which finished first.
         var perMetric = [[DailyCell]?](repeating: nil, count: metrics.count)
         var errors: [Int: Error] = [:]
+        var received = 0
         let limit = max(1, Self.dailyConcurrency)
-        await withTaskGroup(of: (Int, [DailyCell]?, Error?).self) { group in
+        await withTaskGroup(of: (Int, Result<[DailyCell], Error>).self) { group in
             var next = 0
             func startNext() {
                 guard next < metrics.count else { return }
                 let i = next
                 next += 1
                 group.addTask {
+                    // One metric failing (e.g. no permission) must not lose the others.
                     do {
-                        return (i, try await SyncTiming.shared.measure("hk.daily") { try await self.dailyCells(metrics[i], start: start, to: to, calendar: cal) }, nil)
+                        return (i, .success(try await SyncTiming.shared.measure("hk.daily") { try await self.dailyCells(metrics[i], start: start, to: to, calendar: cal) }))
                     } catch {
-                        // One metric failing (e.g. no permission) must not lose the others.
-                        return (i, nil, error)
+                        return (i, .failure(error))
                     }
                 }
             }
             for _ in 0 ..< min(limit, metrics.count) { startNext() }
-            while let (i, cells, error) = await group.next() {
-                if let error {
-                    errors[i] = error
-                } else {
-                    perMetric[i] = cells
+            for await (i, result) in group {
+                received += 1
+                switch result {
+                case .success(let cells): perMetric[i] = cells
+                case .failure(let error): errors[i] = error
                 }
                 startNext()
             }
         }
+        // A metric with neither a result nor an error (it never reported back) is treated like a failed one: tried again below.
+        let lost = metrics.indices.filter { perMetric[$0] == nil && errors[$0] == nil }
         // A query that failed for a passing reason (Apple Health busy or briefly locked) works a moment later: try those
         // again one at a time. If one still fails, the whole chunk fails, so it is retried on the next run instead of
         // being recorded as complete with metrics (sleep, steps, resting heart rate...) silently missing.
-        for i in errors.keys.sorted() {
+        for i in (Set(errors.keys).union(lost)).sorted() {
             do {
                 perMetric[i] = try await dailyCells(metrics[i], start: start, to: to, calendar: cal)
                 errors[i] = nil
@@ -537,12 +540,13 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
         // What the last daily pass found, for the in-app speed test: which metrics had data, were empty or failed (and why).
         let withData = perMetric.filter { !($0 ?? []).isEmpty }.count
+        let dataKeys = perMetric.indices.filter { !(perMetric[$0] ?? []).isEmpty }.prefix(12).map { metrics[$0].key }
         let empty = perMetric.indices.filter { perMetric[$0] != nil && perMetric[$0]!.isEmpty }.map { metrics[$0].key }
         let failed = errors.keys.sorted().map { i -> String in
             let ns = errors[i]! as NSError
             return "\(metrics[i].key) \(ns.domain.replacingOccurrences(of: "com.apple.", with: "")) \(ns.code)"
         }
-        sourceLock.withLock { lastDailyReport = "\(withData)/\(metrics.count) metrics with data. Empty: \(empty.isEmpty ? "none" : empty.joined(separator: ", ")). Failed: \(failed.isEmpty ? "none" : failed.joined(separator: "; "))" }
+        sourceLock.withLock { lastDailyReport = "\(withData)/\(metrics.count) metrics with data (\(dataKeys.joined(separator: ", "))), \(received) of \(metrics.count) reported, \(lost.count) retried. Empty: \(empty.isEmpty ? "none" : empty.joined(separator: ", ")). Failed: \(failed.isEmpty ? "none" : failed.joined(separator: "; "))" }
         if let transient = errors.values.first(where: { !Self.isPermanentFailure($0) }) {
             // Give up on a metric that keeps failing (three chunks in a row), so one stubborn query cannot block the rest forever.
             let tries = sourceLock.withLock { () -> Int in dailyTransientFailures += 1; return dailyTransientFailures }
