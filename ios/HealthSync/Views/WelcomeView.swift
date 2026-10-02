@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WelcomeView: View {
     @EnvironmentObject var model: AppModel
+    private let showChicago = ChicagoMarathon.isActive()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -13,67 +14,72 @@ struct WelcomeView: View {
                 .scrollBounceBehavior(.basedOnSize)
             }
             connectButton
-                .padding(.horizontal, 24)
-                .padding(.vertical, 16)
+                .padding(.horizontal, Theme.margin)
+                .padding(.bottom, 16)
         }
+        .background(Theme.background.ignoresSafeArea())
     }
 
     private var content: some View {
-        VStack(spacing: 0) {
-            Spacer()
-            Image(systemName: "heart.text.square.fill")
-                .font(.system(size: 88))
-                .foregroundStyle(Theme.accent.gradient)
-                .accessibilityHidden(true)
-            Text("KROK")
-                .font(.largeTitle.bold())
-                .accessibilityAddTraits(.isHeader)
-                .padding(.top, 20)
-            Text("Ask Claude or ChatGPT about your Apple Health workouts.")
-                .font(.title3)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(Theme.mutedText)
-                .padding(.top, 8)
-                .padding(.horizontal, 32)
-            Spacer()
-            VStack(spacing: 4) {
-                Text("Your workouts, with their detailed measurements and GPS routes, and a daily summary (sleep, resting heart rate and similar) are copied securely to our servers in the EU so the assistants you connect can read them. Nothing is shared until you connect one.")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.mutedText)
-                    .multilineTextAlignment(.center)
-                Link("Privacy Policy", destination: Theme.privacyURL)
-                    .font(.footnote.weight(.medium))
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
+        VStack(alignment: .leading, spacing: 0) {
+            Wordmark()
+                .frame(height: 44)
+            Spacer(minLength: 24)
+            if showChicago {
+                chicago
+                    .riseIn()
+                Spacer(minLength: 24)
             }
-            .padding(.horizontal, 24)
+            Text(Copy.Welcome.tagline)
+                .tracking(-1.8)
+                .displayText()
+                .foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+                .riseIn(delay: 0.05)
+                .padding(.bottom, 32)
         }
+        .padding(.horizontal, Theme.margin)
+    }
+
+    private var chicago: some View {
+        VStack(spacing: 16) {
+            ChicagoMarathonArt()
+                .frame(maxWidth: 342)
+            VStack(spacing: 2) {
+                Text(Copy.Welcome.chicagoCaption)
+                    .tracking(4.5)
+                    .smallText(.semibold)
+                Text(Copy.Welcome.chicagoDate)
+                    .tracking(1.5)
+                    .smallText()
+            }
+            .foregroundStyle(Theme.muted)
+            .accessibilityElement(children: .combine)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var connectButton: some View {
         VStack(spacing: 8) {
-            connectButtonBody
+            Button {
+                Task { await model.connectHealth() }
+            } label: {
+                HStack(spacing: 10) {
+                    if model.busy { ProgressView().tint(Theme.onInk) }
+                    Text(Copy.Welcome.connectButton)
+                }
+            }
+            .buttonStyle(PillButtonStyle())
+            .disabled(model.busy)
+            .accessibilityIdentifier("connectHealth")
             if model.busy, !model.connectStage.isEmpty {
-                Text(model.connectStage).font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("connectStage")
+                Text(model.connectStage)
+                    .smallText()
+                    .foregroundStyle(Theme.muted)
+                    .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("connectStage")
             }
         }
-    }
-
-    private var connectButtonBody: some View {
-        Button {
-            Task { await model.connectHealth() }
-        } label: {
-            HStack {
-                if model.busy { ProgressView().tint(.white) }
-                Text("Connect to Apple Health")
-            }
-            .font(.headline)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
-        .disabled(model.busy)
-        .accessibilityIdentifier("connectHealth")
     }
 }

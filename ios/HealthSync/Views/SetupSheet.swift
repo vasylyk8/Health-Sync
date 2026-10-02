@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// Consent, then three illustrated steps. Closes itself once the assistant uses the link.
+/// Consent, then three steps. Closes itself once the assistant uses the link.
 struct SetupSheet: View {
     let provider: AIProvider
     @EnvironmentObject var model: AppModel
@@ -13,52 +13,87 @@ struct SetupSheet: View {
     @State private var confirmDisconnect = false
     @State private var linkError: String?
 
+    private enum Screen { case consent, steps, connected }
+
+    private var screen: Screen {
+        if model.isSetUp(provider) && link == nil { return .connected }
+        if link == nil && !consented { return .consent }
+        return .steps
+    }
+
+    private var title: String {
+        switch screen {
+        case .consent: return Copy.Sheet.consentTitle(provider.name)
+        case .steps: return Copy.Sheet.connectTitle(provider.name)
+        case .connected: return Copy.Sheet.isSetUp(provider.name)
+        }
+    }
+
     var body: some View {
-        NavigationStack {
-            Group {
-                if model.isSetUp(provider) && link == nil {
-                    connectedView
-                } else if link == nil && !consented {
-                    consentView
-                } else {
-                    stepsView
-                }
-            }
-            .navigationTitle("Connect \(provider.name)")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+        VStack(spacing: 0) {
+            header
+            switch screen {
+            case .consent: consentView
+            case .steps: stepsView
+            case .connected: connectedView
             }
         }
+        .padding(.horizontal, Theme.margin)
+        .background(Theme.background.ignoresSafeArea())
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(Theme.sheetRadius)
+        .presentationBackground(Theme.background)
         .onAppear {
             link = model.existingLink(for: provider)
             if model.isSetUp(provider) { link = nil }
         }
     }
 
+    private var header: some View {
+        HStack(alignment: .top, spacing: 16) {
+            Text(title)
+                .headlineText()
+                .foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 6)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 0)
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel(Copy.Sheet.close)
+            .padding(.trailing, -10)
+        }
+        .padding(.top, 16)
+    }
+
+    // MARK: Consent
+
     private var consentView: some View {
         VStack(spacing: 0) {
-            // Scrolls at large Dynamic Type sizes; Continue stays reachable below it.
-            GeometryReader { geo in
-                ScrollView {
-                    VStack(spacing: 20) {
-                        Spacer(minLength: 0)
-                        Image(systemName: "lock.shield.fill").font(.system(size: 56)).foregroundStyle(provider.tint.gradient)
-                            .accessibilityHidden(true)
-                        Text("Share your workouts with \(provider.name)?").font(.title2.bold()).multilineTextAlignment(.center)
-                        Text("You'll get a private link. With it, \(provider.name) can read your workouts (including detailed measurements and GPS routes) and daily summaries whenever you ask it a question. \(provider.company) processes that data under its own terms. You can disconnect at any time.")
-                            .multilineTextAlignment(.center).foregroundStyle(Theme.mutedText)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 24)
-                    .frame(minHeight: geo.size.height)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(Copy.Sheet.consentBody(provider.name))
+                        .bodyText()
+                        .foregroundStyle(Theme.ink)
+                    Text(Copy.Sheet.consentTerms(provider.company))
+                        .bodyText()
+                        .foregroundStyle(Theme.muted)
                 }
-                .scrollBounceBehavior(.basedOnSize)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 24)
             }
+            .scrollBounceBehavior(.basedOnSize)
             VStack(spacing: 12) {
                 if let linkError {
                     Label(linkError, systemImage: "exclamationmark.triangle.fill")
-                        .font(.footnote).foregroundStyle(Theme.warning).multilineTextAlignment(.center)
+                        .smallText()
+                        .foregroundStyle(Theme.ink)
+                        .multilineTextAlignment(.center)
                         .accessibilityIdentifier("linkError")
                 }
                 Button {
@@ -69,73 +104,71 @@ struct SetupSheet: View {
                             consented = true
                         } else {
                             // The app-level alert sits underneath this sheet, so show the reason here.
-                            linkError = model.errorMessage ?? "Something went wrong. Please try again."
+                            linkError = model.errorMessage ?? Copy.Sheet.genericError
                             model.errorMessage = nil
                         }
                     }
                 } label: {
-                    HStack {
-                        if model.busy { ProgressView() }
-                        Text("Continue").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+                    HStack(spacing: 10) {
+                        if model.busy { ProgressView().tint(Theme.onInk) }
+                        Text(Copy.Sheet.continueButton)
                     }
                 }
-                .buttonStyle(.borderedProminent).controlSize(.large)
+                .buttonStyle(PillButtonStyle())
                 .disabled(model.busy)
                 .accessibilityIdentifier("consentContinue")
             }
-            .padding(.horizontal, 24)
             .padding(.vertical, 16)
         }
     }
 
+    // MARK: Steps
+
     private var stepsView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                ForEach(Array(provider.steps.enumerated()), id: \.offset) { index, step in
-                    StepCard(number: index + 1, step: step, tint: provider.tint, badgeTint: provider.badgeTint) {
-                        switch index {
-                        case 0:
-                            Button {
-                                if let link {
-                                    // The link is a credential: keep it off Universal Clipboard and let it expire.
-                                    UIPasteboard.general.setItems([["public.utf8-plain-text": link]],
-                                                                  options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(600)])
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    if let notice = provider.notice {
+                        Label {
+                            Text(notice).smallText().foregroundStyle(Theme.ink)
+                        } icon: {
+                            Image(systemName: "info.circle").foregroundStyle(Theme.ink)
+                        }
+                    }
+                    ForEach(Array(provider.steps.enumerated()), id: \.offset) { index, step in
+                        StepRow(number: index + 1, step: step) {
+                            switch index {
+                            case 0:
+                                Button(action: copyLink) {
+                                    Label(copied ? Copy.Sheet.copied : Copy.Sheet.copyLink, systemImage: copied ? "checkmark" : "doc.on.doc")
                                 }
-                                UINotificationFeedbackGenerator().notificationOccurred(.success)
-                                copied = true
-                                Task {
-                                    try? await Task.sleep(for: .seconds(3))
-                                    copied = false
+                                .buttonStyle(StepActionStyle(filled: true))
+                                .accessibilityIdentifier("copyLink")
+                            case 1:
+                                Button {
+                                    openURL(provider.setupURL)
+                                } label: {
+                                    Label(Copy.Sheet.openSite(provider.websiteLabel), systemImage: "arrow.up.right")
                                 }
-                            } label: {
-                                Label(copied ? "Copied" : "Copy Link", systemImage: copied ? "checkmark" : "doc.on.doc").frame(maxWidth: .infinity)
+                                .buttonStyle(StepActionStyle(filled: false))
+                                .accessibilityIdentifier("openWebsite")
+                            default:
+                                EmptyView()
                             }
-                            .buttonStyle(.borderedProminent)
-                            .accessibilityIdentifier("copyLink")
-                        case 1:
-                            Button {
-                                openURL(provider.setupURL)
-                            } label: {
-                                Label("Open \(provider.websiteLabel)", systemImage: "safari").frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered)
-                            .accessibilityIdentifier("openWebsite")
-                        default:
-                            EmptyView()
                         }
                     }
                 }
-                if let tip = provider.tip {
-                    Label(tip, systemImage: "info.circle").font(.footnote).foregroundStyle(Theme.mutedText)
-                }
-                waitingRow
+                .padding(.top, 16)
+                .padding(.bottom, 16)
             }
-            .padding(20)
+            .scrollBounceBehavior(.basedOnSize)
+            waitingRow
+                .padding(.bottom, 16)
         }
         .task { await model.waitUntilSetUp(provider) }
         .onChange(of: model.isSetUp(provider)) { _, isSetUp in
             guard isSetUp else { return }
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptics.success()
             Task {
                 try? await Task.sleep(for: .seconds(1.5))
                 dismiss()
@@ -143,69 +176,108 @@ struct SetupSheet: View {
         }
     }
 
+    private func copyLink() {
+        if let link {
+            // The link is a credential: keep it off Universal Clipboard and let it expire.
+            UIPasteboard.general.setItems([["public.utf8-plain-text": link]],
+                                          options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(600)])
+        }
+        Haptics.success()
+        copied = true
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            copied = false
+        }
+    }
+
     private var waitingRow: some View {
         HStack(spacing: 12) {
             if model.isSetUp(provider) {
-                Image(systemName: "checkmark.circle.fill").font(.title2).foregroundStyle(Theme.success)
-                Text("\(provider.name) is set up").font(.headline)
+                CheckBadge()
+                Text(Copy.Sheet.isSetUp(provider.name))
+                    .bodyText(.semibold)
+                    .foregroundStyle(Theme.ink)
             } else {
                 ProgressView()
-                Text("Waiting for \(provider.name) to connect…").foregroundStyle(Theme.mutedText)
+                Text(Copy.Sheet.waiting(provider.name))
+                    .smallText()
+                    .foregroundStyle(Theme.muted)
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding()
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .frame(maxWidth: .infinity, minHeight: Theme.pillHeight)
+        .background(Theme.surface, in: Capsule())
+        .accessibilityElement(children: .combine)
         .accessibilityIdentifier("waitingRow")
     }
 
+    // MARK: Connected
+
     private var connectedView: some View {
-        VStack(spacing: 18) {
-            Spacer()
-            Image(systemName: "checkmark.circle.fill").font(.system(size: 64)).foregroundStyle(Theme.success)
-                .accessibilityHidden(true)
-            Text("\(provider.name) is set up").font(.title2.bold())
-            Text("Ask \(provider.name) about your runs, rides, heart rate zones, pace and recovery. It reads your workout data only when you ask.")
-                .multilineTextAlignment(.center).foregroundStyle(Theme.mutedText)
-            Spacer()
-            Button("Disconnect \(provider.name)", role: .destructive) { confirmDisconnect = true }
+        VStack(spacing: 0) {
+            ScrollView {
+                Text(Copy.Sheet.connectedBody(provider.name))
+                    .bodyText()
+                    .foregroundStyle(Theme.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 24)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            Button(Copy.Sheet.disconnect(provider.name)) { confirmDisconnect = true }
+                .buttonStyle(PillButtonStyle(kind: .secondary))
                 .accessibilityIdentifier("disconnect")
+                .padding(.vertical, 16)
         }
-        .padding(24)
-        .confirmationDialog("Disconnect \(provider.name)?", isPresented: $confirmDisconnect, titleVisibility: .visible) {
-            Button("Disconnect", role: .destructive) {
+        .confirmationDialog(Copy.Sheet.disconnectTitle(provider.name), isPresented: $confirmDisconnect, titleVisibility: .visible) {
+            Button(Copy.Sheet.disconnectConfirm, role: .destructive) {
                 Task {
                     await model.disconnect(provider)
                     dismiss()
                 }
             }
         } message: {
-            Text("\(provider.name) will immediately lose access. You can also remove the KROK connector in \(provider.name)'s settings.")
+            Text(Copy.Sheet.disconnectMessage(provider.name))
         }
     }
 }
 
-private struct StepCard<Actions: View>: View {
+private struct StepRow<Actions: View>: View {
     let number: Int
     let step: AIProvider.Step
-    let tint: Color
-    let badgeTint: Color
     @ViewBuilder let actions: () -> Actions
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("\(number)")
-                    .font(.subheadline.bold()).foregroundStyle(.white)
-                    .frame(width: 26, height: 26)
-                    .background(badgeTint, in: Circle())
-                Text(step.title).font(.headline)
+        HStack(alignment: .top, spacing: 16) {
+            Text("\(number)")
+                .smallText(.semibold)
+                .foregroundStyle(Theme.onInk)
+                .frame(width: 28, height: 28)
+                .background(Theme.ink, in: Circle())
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(step.title)
+                    .bodyText(.semibold)
+                    .foregroundStyle(Theme.ink)
+                    .accessibilityAddTraits(.isHeader)
+                Text(step.detail)
+                    .smallText()
+                    .foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !step.chips.isEmpty {
+                    FlowLayout(spacing: 8) {
+                        ForEach(step.chips, id: \.self) { chip in
+                            Text(chip)
+                                .smallText()
+                                .foregroundStyle(Theme.ink)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                    }
+                    .padding(.top, 12)
+                }
+                actions()
+                    .padding(.top, 12)
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isHeader)
-            Text(step.detail).font(.subheadline).foregroundStyle(Theme.mutedText)
-            IllustrationView(kind: step.illustration, tint: tint)
-            actions()
         }
     }
 }

@@ -10,8 +10,14 @@ final class AppModel: ObservableObject {
     @Published var phase: Phase
     @Published var status: ServerStatus = .empty
     @Published var progress = SyncProgress(detailsDone: 0, detailsTotal: 0, isSyncing: false) {
-        didSet { keepScreenAwakeDuringFirstSync() }
+        didSet {
+            keepScreenAwakeDuringFirstSync()
+            updateEstimate()
+        }
     }
+    /// Rough time left for the first sync, in coarse steps (see `SyncEstimator`).
+    @Published private(set) var estimate = SyncEstimate()
+    private var estimator = SyncEstimator()
     @Published var errorMessage: String?
     @Published var busy = false
     /// What the connect button is waiting for right now (shown under it), so a stall can be told apart.
@@ -55,6 +61,17 @@ final class AppModel: ObservableObject {
     private func keepScreenAwakeDuringFirstSync() {
         let firstSync = progress.isSyncing && !progress.historyComplete
         if UIApplication.shared.isIdleTimerDisabled != firstSync { UIApplication.shared.isIdleTimerDisabled = firstSync }
+    }
+
+    private func updateEstimate() {
+        estimator.record(detailsDone: progress.detailsDone, detailsTotal: progress.detailsTotal,
+                         historyComplete: progress.historyComplete, now: ProcessInfo.processInfo.systemUptime)
+        if estimator.estimate != estimate { estimate = estimator.estimate }
+    }
+
+    /// Saves the running totals (called when the app goes to the background).
+    func flushStats() {
+        Task { await engine.flushStats() }
     }
 
     // MARK: Onboarding
@@ -275,6 +292,10 @@ final class AppModel: ObservableObject {
             telemetry.event("data_deleted")
             Keychain.removeAll()
             outbox.reset()
+            await engine.resetStats()
+            estimator = SyncEstimator()
+            estimate = SyncEstimate()
+            progress = SyncProgress(detailsDone: 0, detailsTotal: 0, isSyncing: false)
             await backend.signOut()
             defaults.removeObject(forKey: "healthConnected")
             status = .empty
