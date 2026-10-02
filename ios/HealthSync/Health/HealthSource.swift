@@ -57,6 +57,8 @@ protocol HealthSource: Sendable {
     func benchmark(onUpdate: @escaping @Sendable (String) -> Void) async
     /// Registers a background observer for new workouts; `onChange` must call its completion when done.
     func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void)
+    /// Registers background observers for heart rate, steps and the event types of these categories; `onChange` must call its completion when done.
+    func observeOtherData(categories: Set<String>, onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void)
 }
 
 extension HealthSource {
@@ -65,6 +67,7 @@ extension HealthSource {
         [DailyBatch(typeId: HealthTypes.dailyId, category: "core", records: try await dailyContext(from: from, to: to))]
     }
     func hourlySeries(from: Date, to: Date) async throws -> [Record] { [] }
+    func observeOtherData(categories: Set<String>, onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {}
     func profileRecords() async throws -> [Record] { [] }
     func medicationRecords() async throws -> [Record] { [] }
     var queryConcurrency: Int { 1 }

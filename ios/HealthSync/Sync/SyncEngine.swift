@@ -277,6 +277,11 @@ actor SyncEngine {
             try await uploadDetails(index)
             try checkTime()
             try await dailyContext()
+            // A wake for new readings (glucose, a logged meal, heart rate) also sends those, not only workouts.
+            try await eventsSync(force: true)
+            try await hourlyHistory()
+            try await profileSync()
+            try await medicationSync()
         } catch is OutOfTime {
             // Everything is resumable; the next run continues.
         }
@@ -388,10 +393,10 @@ actor SyncEngine {
     }
 
     /// Events and timed entries of every switched-on category, each type as its own anchored pass.
-    private func eventsSync() async throws {
+    private func eventsSync(force: Bool = false) async throws {
         let categories = enabledCategories
         let now = self.now()
-        if let last = lastEventsAt, now.timeIntervalSince(last) < config.minRefresh { return }
+        if !force, let last = lastEventsAt, now.timeIntervalSince(last) < config.minRefresh { return }
         for event in scope.events where categories.contains(event.category) && event.sampleType != nil {
             let type = SyncType(id: event.typeId, kind: .events, sampleType: event.sampleType, event: event)
             while true {

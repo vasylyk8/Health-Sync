@@ -173,6 +173,21 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(backend.categoryCalls.count, 2, "core is always on and never sent as a change")
     }
 
+    func testDefaultCategoriesAreAppliedOnTheFirstSyncAndTheServerIsTold() async {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        var scope = SyncScope.empty
+        scope.categories = [CoverageCategory(id: "core", label: "Core", default: true), CoverageCategory(id: "devices", label: "Devices", default: true), CoverageCategory(id: "cycle", label: "Cycle", default: nil)]
+        let backend = StubBackend()
+        let model = AppModel(backend: backend, source: ScriptedSource(), outbox: Outbox(root: root), scope: scope, telemetry: NoTelemetry(), defaults: UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!)
+        XCTAssertTrue(model.isEnabled("devices"), "default groups are on from the start")
+        XCTAssertFalse(model.isEnabled("cycle"), "groups without a default stay off")
+        await model.syncNow()
+        XCTAssertEqual(backend.categoryCalls.first, ["core", "devices"])
+        let calls = backend.categoryCalls.count
+        await model.syncNow()
+        XCTAssertEqual(backend.categoryCalls.count, calls, "the defaults are applied once")
+    }
+
     func testErrorMessagesAreActionable() {
         XCTAssertTrue(AppModel.message(for: URLError(.notConnectedToInternet)).contains("offline"))
         XCTAssertTrue(AppModel.message(for: NSError(domain: "com.firebase.functions", code: 8)).contains("Too many"))

@@ -203,7 +203,7 @@ export function parseCategories(value: unknown): string[] {
   if (!Array.isArray(value) || value.some((c) => typeof c !== 'string' || !CATEGORY_IDS.has(c))) {
     throw new AccountError('invalid-argument', `categories must be a list of: ${[...CATEGORY_IDS].join(', ')}`);
   }
-  return [...new Set<string>([...DEFAULT_CATEGORIES, ...(value as string[])])].sort();
+  return [...new Set<string>(['core', ...(value as string[])])].sort();
 }
 
 /** Removes every stored byte and index entry of the types in one consent category. Idempotent. */

@@ -40,7 +40,7 @@ struct WelcomeView: View {
                 .padding(.horizontal, 24)
                 .padding(.vertical, 16)
             VStack(spacing: 4) {
-                Text("Your workouts, with their detailed measurements and GPS routes, plus daily and hourly summaries (sleep, heart rate, steps and similar) are copied securely to our servers in the EU so the assistants you connect can read them. You can add more kinds of data later, such as nutrition or glucose, one group at a time. Nothing is shared until you connect an assistant.")
+                Text("Your workouts, with their detailed measurements and GPS routes, plus daily and hourly summaries (sleep, heart rate, steps and similar) are copied securely to our servers in the EU so the assistants you connect can read them. It also reads nutrition, heart alerts, glucose, symptoms, cycle, medication and profile data if you track them; you choose in Apple Health and can switch each group off later. Nothing is shared until you connect an assistant.")
                     .font(.footnote)
                     .foregroundStyle(Theme.mutedText)
                     .multilineTextAlignment(.center)
