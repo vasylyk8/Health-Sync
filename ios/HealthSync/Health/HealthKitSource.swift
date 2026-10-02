@@ -156,9 +156,11 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     /// Apple's own zones for this workout (the boundaries Apple used and the time spent in each zone), per quantity such as
-    /// heart rate. Needs the iOS 27 SDK and iOS 27; older builds and phones send none.
+    /// heart rate. Needs the iOS 27 SDK to compile and iOS 27 to run, so it is behind the `IOS27_SDK` compilation flag:
+    /// once the build machine has Xcode 27, add `SWIFT_ACTIVE_COMPILATION_CONDITIONS: IOS27_SDK` to the app target in project.yml.
+    /// (The CI Xcode today has a new enough Swift but an older SDK, so a compiler-version check is not enough.)
     private func appleZones(_ w: HKWorkout) -> RecordValue? {
-        #if compiler(>=6.3)
+        #if IOS27_SDK
         guard #available(iOS 27.0, *), let groups = w.zoneGroupsByType, !groups.isEmpty else { return nil }
         var out: [String: RecordValue] = [:]
         for (type, group) in groups {

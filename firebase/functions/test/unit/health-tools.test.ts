@@ -152,6 +152,7 @@ describe('glucose, events, nutrition and profile (opt-in categories)', () => {
 
   it('refuses while a category is switched off, with a message the AI can pass on', async () => {
     const env = makeEnv();
+    env.meta.users.get(env.uid)!.categories = ['core'];
     await expect(getGlucose(deps(env), { start_date: '2024-06-20', end_date: '2024-06-20' })).rejects.toMatchObject({ code: 'category_disabled' });
     await expect(getHealthEvents(deps(env), { category: 'mind', start_date: '2024-06-20', end_date: '2024-06-20' })).rejects.toThrow(/switched off/);
   });

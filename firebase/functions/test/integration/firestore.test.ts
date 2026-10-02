@@ -5,6 +5,7 @@ import { FirestoreMeta } from '../../src/store/firestore.js';
 import { emptyManifest } from '../../src/store/types.js';
 import { beginDeletion, createConnectorLink, disconnect, purgeUserData, registerDevice, setCategories, sweepDeletions } from '../../src/account.js';
 import { hashToken } from '../../src/auth/tokens.js';
+import { DEFAULT_CATEGORIES } from '../../src/config.js';
 import { DirBlobs } from '../helpers/memory.js';
 
 if (!getApps().length) initializeApp({ projectId: 'demo-health-sync' });
@@ -161,6 +162,6 @@ describe('getStatus', () => {
     await db.doc('users/u7').update({ 'connections.claude': { setUpAt: 1, lastUsedAt: 1 }, lastVisibleAt: 5 });
     await db.doc('users/u7/types/HR').set({ coverage: { caughtUp: true, earliest: 100 } });
     await db.doc('users/u7/types/Steps').set({ coverage: { caughtUp: false, earliest: 50 } });
-    expect(await getStatus(db, 'u7')).toEqual({ registered: true, deleting: false, setUp: { claude: true, chatgpt: false }, lastVisibleAt: 5, historySyncedBackTo: 100, typesWithData: 2, categories: ['core'] });
+    expect(await getStatus(db, 'u7')).toEqual({ registered: true, deleting: false, setUp: { claude: true, chatgpt: false }, lastVisibleAt: 5, historySyncedBackTo: 100, typesWithData: 2, categories: DEFAULT_CATEGORIES });
   });
 });
