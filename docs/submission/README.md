@@ -1,6 +1,6 @@
 # KROK public listing preparation
 
-Publisher: **2ndOp Inc**. OpenAI organization registration and business verification have not started. KROK is currently free; future subscriptions are outside this release. Intended availability: every country supported by the target platform except Russia (RU) and Belarus (BY). PR30 is the design source for all new public-facing work.
+Publisher: **2ndOp Inc**. The publisher reports OpenAI organization verification is approved as of October 2, 2026; the portal was not independently inspected. KROK is currently free; future subscriptions are outside this release. Intended availability: every country supported by the target platform except Russia (RU) and Belarus (BY). PR30 is the design source for all new public-facing work.
 
 ## Coverage and sequence
 
@@ -18,11 +18,11 @@ Batch A: requirements, listing copy, shared branding, cases and recording guide.
 ## Current gaps
 
 - OpenAI health-data eligibility needs careful review; consumer-health consent does not override the PHI prohibition.
-- `docs/legal/TERMS_OF_SERVICE.md` is proposed text, not a published agreement. No terms URL is declared complete.
+- `docs/legal/TERMS_OF_SERVICE.md` was approved by the publisher on October 2, 2026, with street address and email removed. `/terms` is staged for publication; verify its live content after deployment.
 - The dedicated reviewer is provisioned and its credentials stored in Secret Manager. After explicit owner approval, the password provider was enabled. Production browser sign-in, PKCE, all 18 MCP tools, scope refusals, refresh rotation and revocation passed. The callbacks were captured by the verifier; actual saved-version ChatGPT/Claude sessions and recordings remain separate. Never commit or include credentials in listing packages.
-- All eight real-host cases in `docs/PUBLIC_MCP_REVIEW_CASES.md` remain **Not run** in both hosts. Automated tests do not change this status.
-- Both real recordings are pending. The owner has agreed to record them. No demo URL is invented.
+- The demo recordings support a subset of real-host behavior. Completion of all eight cases in `docs/PUBLIC_MCP_REVIEW_CASES.md` remains unverified; do not mark the entire suite passed from the demos or automated tests.
+- Both real recordings were supplied and visually sampled. See `KROK_CHATGPT_DEMO_REVIEW_2026-10-02.md` and `KROK_CLAUDE_DEMO_REVIEW_2026-10-02.md` for the links, observed behavior and review limits.
 - The OpenAI package now has an explicit ISO allowlist excluding RU/BY, subject to the host's own supported regions. Validate portal acceptance and Claude targeting controls before publication; see `COUNTRY_TARGETING.md`.
-- No organization verified, portal draft uploaded, legal attestation made, directory review submitted or listing published by this preparation batch.
+- Organization verification is owner-reported approved. No portal draft upload, directory policy attestation, directory submission or listing publication has been performed by this preparation batch.
 
 Use [platform requirements](PLATFORM_REQUIREMENTS.md), [recording guide](RECORDING_GUIDE.md) and [reviewer runbook](REVIEWER_RUNBOOK.md) to close these gaps in order.

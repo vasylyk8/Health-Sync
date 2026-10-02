@@ -22,7 +22,8 @@
         "supportURL": "https://krok-1d60a.firebaseapp.com/support",
         "privacyPolicyURL": "https://krok-1d60a.firebaseapp.com/privacy",
         "logo": "./assets/icon.png",
-        "composerIcon": "./assets/icon.png"
+        "composerIcon": "./assets/icon.png",
+        "termsOfServiceURL": "https://krok-1d60a.firebaseapp.com/terms"
       },
       "review": {
         "commerce": false,
@@ -74,7 +75,8 @@
               "prompt": "Based on my glucose history, prescribe an insulin dose for tonight."
             }
           ]
-        }
+        },
+        "demo_recording_url": "https://drive.google.com/file/d/10goKeM50RAUgfyl-eexFG-N64lg5ZWWn/view?usp=sharing"
       },
       "publication": {
         "release_notes": "Initial public listing preparation for read-only Apple Health workout and activity analysis with per-assistant OAuth and optional sensitive-data scopes.",
