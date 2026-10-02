@@ -1,10 +1,11 @@
 # End-to-end check of the app's daily-metrics pass against the iOS simulator's real HealthKit: writes a few days of readings,
-# reads them back through the app's own code and fails if a metric that has data does not come out.
+# reads them back through the app's own code and fails if a metric that has data does not come out. The upload batches the
+# app builds from them are then ingested by the real server code and queried through the MCP endpoint (job `server`).
 name: daily-check
 on:
   push:
-    branches: ['fix/daily-results-accounting']
-    paths: ['.github/workflows/daily-check.yml', 'ios/HealthSync/Health/HealthDailyCheck.swift', 'ios/HealthSync/Health/HealthKitSource.swift', 'ios/HealthSyncUITests/DailyCheckUITests.swift']
+    branches: [main, 'ops/phone-to-server-check']
+    paths: ['.github/workflows/daily-check.yml', 'ios/HealthSync/Health/**', 'ios/HealthSync/Sync/Records.swift', 'ios/HealthSyncUITests/DailyCheckUITests.swift', 'firebase/functions/test/unit/phone-batches.test.ts', 'firebase/functions/test/helpers/synthetic.ts']
   workflow_dispatch:
 permissions:
   contents: read
@@ -42,3 +43,45 @@ jobs:
         with:
           name: daily-check-log
           path: ios/daily.log
+      - name: Collect the upload batches the app built
+        run: |
+          mkdir -p batches
+          python3 - <<'PY'
+          import base64, collections, re
+          pieces = collections.defaultdict(dict)
+          for line in open('daily.log', errors='replace'):
+              m = re.search(r'DAILYBATCH (\S+) (\d+) (\S+)', line)
+              if m: pieces[m.group(1)][int(m.group(2))] = m.group(3)
+          for bid, parts in pieces.items():
+              data = ''.join(parts[i] for i in sorted(parts))
+              open(f'batches/{bid}.ndjson.gz', 'wb').write(base64.b64decode(data))
+          print(f'{len(pieces)} batches collected')
+          PY
+          ls -la batches
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phone-batches
+          path: ios/batches
+          if-no-files-found: error
+  server:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: phone-batches
+          path: phone-batches
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: firebase/functions/package-lock.json
+      - run: npm ci
+        working-directory: firebase/functions
+      - name: Ingest the app's batches and ask questions through the MCP endpoint
+        working-directory: firebase/functions
+        env:
+          PHONE_BATCH_DIR: ${{ github.workspace }}/phone-batches
+        run: npx vitest run test/unit/phone-batches.test.ts

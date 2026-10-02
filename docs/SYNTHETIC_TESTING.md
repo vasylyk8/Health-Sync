@@ -22,6 +22,9 @@ Bump `DATA_VERSION` when it changes: the deploy re-seeds the live synthetic user
 `synthetic-mcp.test.ts` fails if a tool exists that no test asks, and if any daily metric in `shared/coverage.json`
 does not come back out of `get_daily_context`. Add a generator to `data.mjs` and an assertion to the test.
 
-## Not covered here
-The phone side (HealthKit queries, upload batching) is checked by the `daily-check` workflow (simulator HealthKit
-seeded with readings, the app's real daily pass). Linking the two (simulator batches into this server) is a next step.
+## Phone to server
+The `daily-check` workflow seeds the iOS simulator's HealthKit with readings, runs the app's real daily pass, builds the
+upload batches with the app's own batch writer and dumps them. A second job ingests those exact files with the real
+server code and asks `get_daily_context` for them through the MCP endpoint (`test/unit/phone-batches.test.ts`), so a
+metric the phone drops or the server mangles fails the run. Only the daily pass is chained so far (not workouts, hourly
+series or events), and the seeded HealthKit has 12 data types.

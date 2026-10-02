@@ -8,7 +8,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { generateToken, hashToken } from '../../src/auth/tokens.js';
 import { handleMcp, type McpDeps } from '../../src/mcp/server.js';
 import { ingestObject } from '../../src/ingest/ingest.js';
-import { makeEnv } from './memory.js';
+import { makeEnv, type Env } from './memory.js';
 // @ts-expect-error plain JS module shared with the monitoring scripts
 import { batches, FULL_CATEGORIES, TZ } from '../../../../scripts/synthetic/data.mjs';
 
@@ -23,6 +23,11 @@ export async function startSynthetic() {
     const r = await ingestObject(path, { incoming: env.incoming, data: env.data, meta: env.meta, now: () => env.now });
     if (r !== 'published') throw new Error(`batch ${lines[0]!.type} was ${r}`);
   }
+  return serve(env);
+}
+
+/** Serves an environment's data over the real MCP endpoint and returns a client that asks questions the way an AI does. */
+export async function serve(env: Env) {
   const token = generateToken();
   const auth = {
     tokens: new Map([[hashToken(token), { uid: env.uid, provider: 'claude' as const, createdAt: 0 }]]),
