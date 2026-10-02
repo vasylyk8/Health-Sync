@@ -1,32 +1,48 @@
 import SwiftUI
 
-/// Settings: which groups of Apple Health data KROK reads and shares with the connected assistants.
+/// Which groups of Apple Health data KROK reads and shares with the connected assistants.
 /// Workouts, activity, sleep and recovery are always on; the other groups start on and can be switched off here.
 struct DataChoicesView: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
+        VStack(spacing: 0) {
+            SheetHeader(title: Copy.Choices.title) { dismiss() }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(Copy.Choices.header)
+                        .smallText()
+                        .foregroundStyle(Theme.muted)
+                        .padding(.top, 24)
+                        .padding(.bottom, 8)
                     ForEach(model.optionalCategories) { category in
-                        Toggle(category.label, isOn: binding(category.id))
-                            .disabled(model.busy)
-                            .accessibilityIdentifier("category.\(category.id)")
+                        Toggle(isOn: binding(category.id)) {
+                            Text(category.label)
+                                .bodyText()
+                                .foregroundStyle(Theme.ink)
+                        }
+                        .tint(Theme.ink)
+                        .disabled(model.busy)
+                        .frame(minHeight: 52)
+                        .accessibilityIdentifier("category.\(category.id)")
+                        Divider().overlay(Theme.track)
                     }
-                } header: {
-                    Text("Data your assistant can see")
-                } footer: {
-                    Text("Apple Health asks for each group separately, and you can also change it in Apple Health. Switching a group off here deletes its data from KROK's servers. Assistants describe your data and trends; they don't give medical advice.")
+                    Text(Copy.Choices.footer)
+                        .smallText()
+                        .foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 16)
+                        .padding(.bottom, 24)
                 }
             }
-            .navigationTitle("Your data")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
-            }
+            .scrollBounceBehavior(.basedOnSize)
         }
+        .padding(.horizontal, Theme.margin)
+        .background(Theme.background.ignoresSafeArea())
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(Theme.sheetRadius)
+        .presentationBackground(Theme.background)
     }
 
     private func binding(_ id: String) -> Binding<Bool> {

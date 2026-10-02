@@ -77,6 +77,7 @@ struct HealthSyncApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active, !benchMode { model.start() }
+            if phase == .background { model.flushStats() }
         }
     }
 }
@@ -91,36 +92,11 @@ struct RootView: View {
             case .home: ConnectView()
             }
         }
+        .background(Theme.background.ignoresSafeArea())
         .alert("Something went wrong", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(model.errorMessage ?? "")
         }
     }
-}
-
-enum Theme {
-    static let mcpURL = (Bundle.main.object(forInfoDictionaryKey: "MCPServerURL") as? String).flatMap(URL.init(string:))
-        ?? URL(string: "https://krok-1d60a.firebaseapp.com/mcp")!
-    /// Small secondary text: darker than SwiftUI's .secondary so it clears the 4.5:1 contrast audit
-    /// on every background (the audit flagged .secondary as "nearly passed").
-    static let mutedText = Color(UIColor { traits in
-        traits.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.72) : UIColor(white: 0, alpha: 0.72)
-    })
-    /// Slightly deeper pink in light mode so small pink text and white-on-pink buttons meet 4.5:1 contrast.
-    static let accent = Color(UIColor { traits in
-        traits.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 0.22, blue: 0.37, alpha: 1) : UIColor(red: 0.86, green: 0.11, blue: 0.29, alpha: 1)
-    })
-    /// Green that stays readable as small text on a light background.
-    static let success = Color(UIColor { traits in
-        traits.userInterfaceStyle == .dark ? UIColor.systemGreen : UIColor(red: 0.10, green: 0.50, blue: 0.20, alpha: 1)
-    })
-    /// Orange that stays readable as small text on a light background.
-    static let warning = Color(UIColor { traits in
-        traits.userInterfaceStyle == .dark ? UIColor.systemOrange : UIColor(red: 0.70, green: 0.32, blue: 0.0, alpha: 1)
-    })
-    /// Set at build time from the deployed site (Info.plist key PrivacyPolicyURL).
-    static let privacyURL: URL = (Bundle.main.object(forInfoDictionaryKey: "PrivacyPolicyURL") as? String).flatMap(URL.init(string:))
-        ?? URL(string: "https://krok-1d60a.web.app/privacy")!
-    static var supportURL: URL { privacyURL.deletingLastPathComponent().appendingPathComponent("support") }
 }

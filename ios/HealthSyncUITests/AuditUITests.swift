@@ -20,7 +20,10 @@ final class AuditUITests: XCTestCase {
     private func audit(_ app: XCUIApplication, knownHomeLayoutIssues: Bool = false) throws {
         let run = {
             try app.performAccessibilityAudit { issue in
-                knownHomeLayoutIssues && (issue.auditType == .dynamicType || issue.auditType == .textClipped)
+                if knownHomeLayoutIssues && (issue.auditType == .dynamicType || issue.auditType == .textClipped) { return true }
+                // Name the element in the failure so it can be found without opening the result bundle.
+                XCTFail("\(issue.compactDescription) | \(issue.detailedDescription) | element: \(issue.element?.debugDescription ?? "none")")
+                return true
             }
         }
         do {

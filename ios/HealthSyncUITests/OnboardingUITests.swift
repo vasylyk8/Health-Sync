@@ -9,7 +9,7 @@ final class OnboardingUITests: XCTestCase {
 
     private func launch(_ extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-uiTesting"] + extra
+        app.launchArguments = ["-uiTesting"] + (extra.contains("-chicago") ? [] : ["-noChicago"]) + extra
         app.launch()
         return app
     }
@@ -28,7 +28,13 @@ final class OnboardingUITests: XCTestCase {
         app.buttons["connectHealth"].tap()
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["provider.chatgpt"].exists)
-        XCTAssertTrue(app.staticTexts["Requires ChatGPT Plus"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["heroMetric"].waitForExistence(timeout: 5))
+    }
+
+    func testChicagoArtShowsWhileActive() {
+        let app = launch(["-chicago"])
+        XCTAssertTrue(app.staticTexts["CHICAGO MARATHON"].waitForExistence(timeout: 5))
+        snapshot("00-Welcome-Chicago")
     }
 
     func testAppleAccountCanUsePublicOAuthWithoutCreatingAPrivateLink() {

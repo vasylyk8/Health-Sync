@@ -18,6 +18,14 @@ struct SyncProgress: Equatable, Sendable {
     var phase = 0
     /// Recent workouts and the daily context are on the server: the AI is already useful.
     var recentReady = false
+    /// Which of the four steps are finished (for the step bar on Home).
+    var recentDone = false
+    var dailyDone = false
+    var historyDone = false
+    /// Running totals for the big numbers on Home.
+    var stats = SyncStatsSnapshot()
+    /// Finished flags for [recent workouts, daily context, workout history, workout details].
+    var stepFlags: [Bool] { [recentDone, dailyDone, historyDone, historyComplete] }
     var stepTitle: String {
         switch phase {
         case 1: return "Step 1 of 4: recent workouts"
@@ -104,10 +112,13 @@ actor SyncEngine {
     /// Outbox entries being uploaded by a raw-data upload task (a flush skips them, so nothing is sent twice).
     private var uploading: Set<String> = []
     private var lastEmptyCheck: [String: Date] = [:]
+    /// Totals behind the big numbers on Home (kept next to the outbox so they survive relaunches).
+    private let stats: SyncStatsStore
 
     init(source: HealthSource, uploader: Uploader, outbox: Outbox, scope: SyncScope, config: Config = Config(),
          now: @escaping @Sendable () -> Date = Date.init, timeZone: @escaping @Sendable () -> String = { TimeZone.current.identifier },
-         telemetry: Telemetry = NoTelemetry(), categories: @escaping @Sendable () -> Set<String> = { ["core"] }) {
+         telemetry: Telemetry = NoTelemetry(), stats: SyncStatsStore? = nil,
+         categories: @escaping @Sendable () -> Set<String> = { ["core"] }) {
         self.categories = categories
         self.source = source
         self.uploader = uploader
@@ -117,6 +128,19 @@ actor SyncEngine {
         self.now = now
         self.timeZone = timeZone
         self.telemetry = telemetry
+        let s = outbox.state
+        let hasHistory = !s.recentDone.isEmpty || !s.caughtUp.isEmpty || !s.detailsDone.isEmpty || s.dailyFullAt != nil
+        self.stats = stats ?? SyncStatsStore(url: outbox.root.appendingPathComponent("stats.json"), historyExists: hasHistory)
+    }
+
+    /// Forgets the totals (Delete All My Data).
+    func resetStats() {
+        stats.reset()
+    }
+
+    /// Writes the totals to disk (when the app goes to the background).
+    func flushStats() {
+        stats.flush()
     }
 
     func onProgress(_ handler: @escaping @Sendable (SyncProgress) -> Void) {
@@ -132,16 +156,22 @@ actor SyncEngine {
         let s = outbox.state
         let detailTotal = max(s.workoutTotal, s.detailsDone.count)
         let done = (s.recentDone.contains(workoutId) ? 1 : 0) + (s.dailyFullAt != nil ? 1 : 0) + (s.caughtUp.contains(workoutId) ? 1 : 0) + s.detailsDone.count
-        return SyncProgress(detailsDone: s.detailsDone.count, detailsTotal: detailTotal, isSyncing: running,
-                            stepsDone: done, stepsTotal: 3 + detailTotal, phase: running ? phase : 0,
-                            recentReady: s.recentDone.contains(workoutId) && s.dailyFullAt != nil)
+        var p = SyncProgress(detailsDone: s.detailsDone.count, detailsTotal: detailTotal, isSyncing: running,
+                             stepsDone: done, stepsTotal: 3 + detailTotal, phase: running ? phase : 0,
+                             recentReady: s.recentDone.contains(workoutId) && s.dailyFullAt != nil)
+        p.recentDone = s.recentDone.contains(workoutId)
+        p.dailyDone = s.dailyFullAt != nil
+        p.historyDone = s.caughtUp.contains(workoutId)
+        p.stats = stats.snapshot()
+        return p
     }
 
     /// Notifies the UI only when something visible changes (whole percent, step, flags).
     private func report(syncing: Bool) {
         var p = progress
         p.isSyncing = syncing
-        let key = [Int(p.fraction * 100), p.phase, p.isSyncing ? 1 : 0, p.recentReady ? 1 : 0, p.historyComplete ? 1 : 0, p.detailsDone]
+        let key = [Int(p.fraction * 100), p.phase, p.isSyncing ? 1 : 0, p.recentReady ? 1 : 0, p.historyComplete ? 1 : 0, p.detailsDone,
+                   p.recentDone ? 1 : 0, p.dailyDone ? 1 : 0, p.historyDone ? 1 : 0, p.stats.version]
         guard key != lastReported else { return }
         lastReported = key
         progressHandler?(p)
@@ -319,7 +349,9 @@ actor SyncEngine {
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }
         let end = now()
-        let full = outbox.state.dailyFullAt.map { end.timeIntervalSince($0) > config.dailyFullEvery } ?? true
+        // An update of an app that already synced reads the whole history once more, only to fill the totals on Home
+        // (rows whose content did not change are not sent again).
+        let full = (outbox.state.dailyFullAt.map { end.timeIntervalSince($0) > config.dailyFullEvery } ?? true) || stats.needsDailyBackfill
         if !full, let last = lastDailyAt, end.timeIntervalSince(last) < config.minRefresh { return }
         var start: Date
         if full {
@@ -341,6 +373,11 @@ actor SyncEngine {
             for batch in batches {
                 // Categories other than core send nothing when they have no rows; core always reports (it advances the covered window).
                 if batch.records.isEmpty && batch.category != "core" { continue }
+                // The totals on Home come from the core rows (activity, sleep, recovery), counted even when they are not sent again.
+                if batch.category == "core" {
+                    stats.addDays(batch.records)
+                    report(syncing: running)
+                }
                 let lines = try BatchWriter.encodeLines(batch.records)
                 var digest = SHA256()
                 for line in lines { digest.update(data: line) }
@@ -352,7 +389,10 @@ actor SyncEngine {
             }
             chunkStart = chunkEnd
         }
-        if full { try outbox.update { $0.dailyFullAt = end } }
+        if full {
+            try outbox.update { $0.dailyFullAt = end }
+            stats.markDailyBackfilled()
+        }
         lastDailyAt = end
     }
 
@@ -533,6 +573,7 @@ actor SyncEngine {
                         lines.append(contentsOf: found.lines)
                         recordCount += found.recordCount
                         withData.append(ref.id)
+                        stats.setDetail(workoutId: ref.id, heartRate: found.heartRate, gpsPoints: found.gpsPoints)
                     } else {
                         empty.append(ref.id)
                     }
@@ -620,6 +661,15 @@ actor SyncEngine {
     private struct EncodedWorkout: Sendable {
         var lines: [Data]
         var recordCount: Int
+        /// Heart rate readings and GPS points promised by the workout's closing marker.
+        var heartRate = 0
+        var gpsPoints = 0
+    }
+
+    /// Point counts per stream from a workout's closing `wd` marker.
+    private static func pointCounts(_ records: [Record]) -> (heartRate: Int, gps: Int) {
+        guard let mark = records.last(where: { $0["k"]?.statText == "wd" }), let expected = mark["expected"]?.statObject else { return (0, 0) }
+        return (Int(expected["HeartRate"]?.statNumber ?? 0), Int(expected["route"]?.statNumber ?? 0))
     }
 
     /// Reads a group of workouts (all at once, throttled by the shared gate); results keep the group's order.
@@ -642,7 +692,8 @@ actor SyncEngine {
                     tuner.completed()
                     guard let records else { return (i, nil) }
                     let lines = try SyncTiming.shared.measureSync("detail.encode") { try BatchWriter.encodeLines(records) }
-                    return (i, EncodedWorkout(lines: lines, recordCount: records.count))
+                    let counts = Self.pointCounts(records)
+                    return (i, EncodedWorkout(lines: lines, recordCount: records.count, heartRate: counts.heartRate, gpsPoints: counts.gps))
                 }
             }
             var results = [EncodedWorkout?](repeating: nil, count: group.count)
@@ -683,6 +734,11 @@ actor SyncEngine {
     // MARK: Upload
 
     private func send(_ typeId: String, header: BatchHeader, records: [Record], anchor: Data?, completes: Outbox.Completion?, readMs: Int? = nil) async throws {
+        // Totals for the big numbers on Home: workout summaries and daily rows are counted as they are read.
+        if typeId == workoutId {
+            stats.addWorkoutSummaries(records)
+        }
+        report(syncing: running)
         let lines = try SyncTiming.shared.measureSync("batch.encode") { try BatchWriter.encodeLines(records) }
         try await sendLines(typeId, header: header, lines: lines, anchor: anchor, completes: completes, readMs: readMs)
     }

@@ -1,4 +1,4 @@
-import SwiftUI
+import Foundation
 
 /// An AI assistant the user can connect. Adding a new one = one entry in `all` (plus its id in
 /// the server's PROVIDERS list).
@@ -6,47 +6,38 @@ struct AIProvider: Identifiable, Hashable {
     struct Step: Hashable {
         let title: String
         let detail: String
-        let illustration: Illustration
-    }
-
-    enum Illustration: Hashable {
-        case copyLink
-        case openSettings(site: String, path: [String])
-        case addConnector(site: String, button: String, fields: [String])
+        /// Values to type or pick on the assistant's site, shown as chips under the step.
+        let chips: [String]
     }
 
     let id: String
     let name: String
     let company: String
-    let symbol: String
-    let tint: Color
-    /// Darker variant of `tint` behind white text (step numbers), for 4.5:1 contrast.
-    let badgeTint: Color
     let setupURL: URL
     let websiteLabel: String
-    let subtitle: String?
+    /// A requirement or tip shown above the steps.
+    let notice: String?
     let steps: [Step]
-    let tip: String?
 
     static let claude = AIProvider(
-        id: "claude", name: "Claude", company: "Anthropic", symbol: "sparkle", tint: Color(red: 0.85, green: 0.47, blue: 0.34), badgeTint: Color(red: 0.70, green: 0.34, blue: 0.22),
-        setupURL: URL(string: "https://claude.ai/settings/connectors")!, websiteLabel: "claude.ai", subtitle: nil,
+        id: "claude", name: "Claude", company: "Anthropic",
+        setupURL: URL(string: "https://claude.ai/settings/connectors")!, websiteLabel: "claude.ai",
+        notice: "On Claude’s free plan you can have one custom connector. If you already have one, remove it first.",
         steps: [
-            Step(title: "Copy your private link", detail: "This link lets Claude read your Health data. Keep it private.", illustration: .copyLink),
-            Step(title: "Open Claude's connectors", detail: "Sign in if asked. If you don't land on it, go to Customize, then Connectors.", illustration: .openSettings(site: "claude.ai", path: ["Customize", "Connectors"])),
-            Step(title: "Add the connector", detail: "Tap +, then \"Add custom connector\". Name it KROK, paste your link, then tap Add.", illustration: .addConnector(site: "claude.ai", button: "+ Add custom connector", fields: ["KROK", "https://…/mcp/…"])),
-        ],
-        tip: "On Claude's free plan you can have one custom connector. If you already have one, remove it first.")
+            Step(title: "Copy your private link", detail: "This link lets Claude read your Health data. Keep it private.", chips: []),
+            Step(title: "Open Claude’s connectors", detail: "Sign in if asked. If you don’t land on it, go to Customize, then Connectors.", chips: []),
+            Step(title: "Add the connector", detail: "Tap +, then “Add custom connector”. Name it KROK, paste your link, then tap Add.", chips: ["KROK", "https://…/mcp/…"]),
+        ])
 
     static let chatgpt = AIProvider(
-        id: "chatgpt", name: "ChatGPT", company: "OpenAI", symbol: "circle.hexagongrid", tint: Color(red: 0.06, green: 0.64, blue: 0.5), badgeTint: Color(red: 0.03, green: 0.45, blue: 0.35),
-        setupURL: URL(string: "https://chatgpt.com/#settings/Connectors")!, websiteLabel: "chatgpt.com", subtitle: "Requires ChatGPT Plus",
+        id: "chatgpt", name: "ChatGPT", company: "OpenAI",
+        setupURL: URL(string: "https://chatgpt.com/#settings/Connectors")!, websiteLabel: "chatgpt.com",
+        notice: "Requires ChatGPT Plus, Pro or Business.",
         steps: [
-            Step(title: "Copy your private link", detail: "This link lets ChatGPT read your Health data. Keep it private.", illustration: .copyLink),
-            Step(title: "Open ChatGPT's settings", detail: "Sign in if asked. In Apps & Connectors, open Advanced settings and turn on Developer mode.", illustration: .openSettings(site: "chatgpt.com", path: ["Settings", "Apps & Connectors", "Developer mode"])),
-            Step(title: "Create the connector", detail: "Tap Create, name it KROK, paste your link, choose \"No authentication\", then save.", illustration: .addConnector(site: "chatgpt.com", button: "Create", fields: ["KROK", "https://…/mcp/…", "No authentication"])),
-        ],
-        tip: "Custom connectors need ChatGPT Plus, Pro or Business.")
+            Step(title: "Copy your private link", detail: "This link lets ChatGPT read your Health data. Keep it private.", chips: []),
+            Step(title: "Open ChatGPT’s settings", detail: "Sign in if asked. In Apps & Connectors, open Advanced settings and turn on Developer mode.", chips: []),
+            Step(title: "Create the connector", detail: "Tap Create, name it KROK, paste your link, choose “No authentication”, then save.", chips: ["KROK", "https://…/mcp/…", "No authentication"]),
+        ])
 
     static let all: [AIProvider] = [.claude, .chatgpt]
 }

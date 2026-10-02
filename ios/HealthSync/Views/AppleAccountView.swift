@@ -1,17 +1,36 @@
 import AuthenticationServices
 import SwiftUI
 
+/// Sign in with Apple, or the linked state. On Welcome it is just the button (it can restore an
+/// account after a reinstall); on Home it comes with a short explanation.
 struct AppleAccountView: View {
+    enum Style { case welcome, home }
+
+    var style: Style = .home
     @EnvironmentObject var model: AppModel
+    @Environment(\.colorScheme) private var colorScheme
     @State private var nonce: String?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if model.appleAccountLinked {
-                Label("Apple Account linked", systemImage: "checkmark.shield")
+                HStack(spacing: 12) {
+                    CheckBadge().accessibilityHidden(true)
+                    Text(Copy.Account.linked)
+                        .bodyText(.semibold)
+                        .foregroundStyle(Theme.ink)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             } else {
-                Text("Connect your KROK account").font(.headline)
-                Text("Sign in with Apple to access these workouts from Claude or ChatGPT. Your synced data stays in your KROK account.")
-                    .font(.footnote).foregroundStyle(Theme.mutedText)
+                if style == .home {
+                    Text(Copy.Account.title)
+                        .bodyText(.semibold)
+                        .foregroundStyle(Theme.ink)
+                    Text(Copy.Account.detail)
+                        .smallText()
+                        .foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 SignInWithAppleButton(.signIn) { request in
                     do {
                         let fresh = try AppleNonce.generate()
@@ -34,7 +53,8 @@ struct AppleAccountView: View {
                         if (error as NSError).code != ASAuthorizationError.canceled.rawValue { model.errorMessage = error.localizedDescription }
                     }
                 }
-                .frame(height: 46)
+                .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .whiteOutline)
+                .frame(height: Theme.pillHeight)
                 .disabled(model.busy)
                 .accessibilityIdentifier("appleSignIn")
             }
