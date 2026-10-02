@@ -10,6 +10,9 @@ import { KrokOAuth, DEFAULT_SCOPES, pkceChallenge } from '../../src/auth/oauth.j
 import { FirestoreOAuthStore } from '../../src/auth/oauth-store.js';
 import { generateToken } from '../../src/auth/tokens.js';
 import type { Response } from 'express';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { getAuth } from 'firebase-admin/auth';
 
 if (!getApps().length) initializeApp({ projectId: 'demo-health-sync' });
 const db = getFirestore();
@@ -37,6 +40,21 @@ async function oauthCredentials() {
 }
 
 describe('OAuth on real Firestore transactions', () => {
+  it('provisions a dedicated emulator reviewer and refuses to overwrite a non-synthetic account', async () => {
+    const run = promisify(execFile);
+    const uid = 'krok-reviewer-integration';
+    const env = { ...process.env, GCP_PROJECT_ID: 'demo-health-sync', KROK_REVIEWER_UID: uid,
+      KROK_REVIEWER_EMAIL: 'integration-reviewer@example.test', KROK_REVIEWER_PASSWORD: 'Emulator-only-reviewer-password-123' };
+    await run(process.execPath, ['scripts/prepare-reviewer.mjs', '--apply'], { env });
+    expect((await getAuth().getUser(uid)).customClaims?.krokReviewer).toBe(true);
+    expect((await db.doc(`users/${uid}`).get()).get('synthetic')).toBe(true);
+    await run(process.execPath, ['scripts/prepare-reviewer.mjs', '--apply'], { env });
+    expect((await db.doc(`users/${uid}`).get()).get('oauthEpochs.claude')).toBe(1);
+    // Never convert an ordinary/customer account into a reviewer by accident.
+    await db.doc(`users/${uid}`).update({ synthetic: false });
+    await expect(run(process.execPath, ['scripts/prepare-reviewer.mjs', '--apply'], { env })).rejects.toThrow();
+    await getAuth().deleteUser(uid);
+  });
   it('persists omitted optional fields, hashed credentials and TTL timestamps', async () => {
     const { oauth, credentials } = await oauthCredentials();
     expect((await oauth.verifyAccessToken(credentials.access_token)).extra?.uid).toBe('oauth-user');

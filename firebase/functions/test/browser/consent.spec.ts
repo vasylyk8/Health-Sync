@@ -26,9 +26,14 @@ test.beforeAll(async () => {
       builder.onResolve({ filter: /functions\/node_modules\/firebase\/auth$/ }, () => ({ path: path.resolve('test/browser/firebase-auth.ts') }));
     } }] });
   const app = express();
+  const hosting = JSON.parse(readFileSync('../firebase.json', 'utf8'));
+  const policy = hosting.hosting.headers.flatMap((entry: { headers: { key: string; value: string }[] }) => entry.headers)
+    .find((header: { key: string }) => header.key === 'Content-Security-Policy').value
+    .replace("connect-src 'self'", "connect-src 'self' http://127.0.0.1:9099")
+    .replace("frame-src 'self'", "frame-src 'self' http://127.0.0.1:9099");
   app.get('/__/firebase/init.json', (_req, res) => res.json({ apiKey: 'fake-api-key', projectId: 'demo-health-sync', authDomain: 'localhost' }));
   app.get('/connect.js', (_req, res) => res.type('js').send(bundle.outputFiles[0]!.text));
-  app.get('/connect', (_req, res) => res.type('html').send(readFileSync('../hosting/connect.html', 'utf8')));
+  app.get('/connect', (_req, res) => res.setHeader('Content-Security-Policy', policy).type('html').send(readFileSync('../hosting/connect.html', 'utf8')));
   app.get('/style.css', (_req, res) => res.type('css').send(readFileSync('../hosting/style.css', 'utf8')));
   app.use((req, res, next) => router(req, res, next));
   server = createServer(app);
@@ -98,4 +103,22 @@ test('wrong reviewer password stays signed out with a recoverable error', async 
   await page.getByRole('button', { name: 'Sign in to review account' }).click();
   await expect(page.locator('#status')).toContainText('Reviewer sign-in failed');
   await expect(page.getByRole('button', { name: 'Allow access' })).toBeDisabled();
+});
+
+test('switching accounts signs out and disables authorization', async ({ page }) => {
+  await begin(page);
+  await signIn(page);
+  await page.getByRole('button', { name: 'Use a different account' }).click();
+  await expect(page.getByRole('button', { name: 'Allow access' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Sign in with Apple', exact: true })).toBeVisible();
+});
+
+test('dark consent page stays within a small mobile viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await begin(page);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole('button', { name: 'Cancel', exact: true }).scrollIntoViewIfNeeded();
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeInViewport();
+  await page.screenshot({ path: 'test-results/consent-dark-small.png', fullPage: true });
 });
