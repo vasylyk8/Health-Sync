@@ -10,11 +10,13 @@ import { getStorage } from 'firebase-admin/storage';
 import { GcsBlobs } from '../src/store/firestore.js';
 import { dataBucketName, incomingBucketName } from '../src/config.js';
 import { purgeUserData } from '../src/account.js';
+import { FirestoreMeta } from '../src/store/firestore.js';
+import { COVERAGE } from '../src/config.js';
 
 const project = process.env.GCP_PROJECT_ID;
 if (!project) throw new Error('GCP_PROJECT_ID is required');
 const mode = process.argv[2];
-if (mode !== 'plan' && mode !== 'run') throw new Error('usage: purge-all.ts plan|run');
+if (mode !== 'plan' && mode !== 'run' && mode !== 'diag') throw new Error('usage: purge-all.ts plan|run|diag');
 
 initializeApp({ projectId: project });
 const db = getFirestore();
@@ -55,6 +57,29 @@ for (const uid of [...uids].sort()) {
   console.log(` - ${keep ? 'KEEP  ' : 'DELETE'} ${keep ? uid : short(uid)} auth[${authUsers[uid] ?? 'none'}] firestore[${snap.exists ? 'yes' : 'no'}] created ${d?.createdAt ? new Date(d.createdAt).toISOString() : '?'} links[${Object.keys(d?.links ?? {}).join(',') || 'none'}]${d?.deleting ? ' (deleting)' : ''}`);
 }
 console.log(`to delete: ${doomed.length} account(s); kept: ${uids.size - doomed.length}`);
+
+if (mode === 'diag') {
+  // Read-only: what the server holds per real account (counts and times only, no health values).
+  const meta = new FirestoreMeta(db);
+  const bucket = storage.bucket(incomingBucketName(project));
+  for (const uid of [...uids].sort()) {
+    if (uid === SYNTHETIC_UID || REVIEWER_UID.test(uid) || reviewerClaim.has(uid)) continue;
+    const snap = await db.collection('users').doc(uid).get();
+    if (!snap.exists) { console.log(`== ${short(uid)}: no user document`); continue; }
+    const d = snap.data() as { categories?: string[]; links?: Record<string, unknown>; generation?: number };
+    console.log(`== ${short(uid)} categories[${(d.categories ?? ['(defaults)']).join(',')}] links[${Object.keys(d.links ?? {}).join(',') || 'none'}]`);
+    const [pending] = await bucket.getFiles({ prefix: `incoming/${uid}/`, maxResults: 1000 });
+    console.log(`   incoming files still waiting: ${pending.length}`);
+    for (const t of COVERAGE.types) {
+      const m = await meta.getManifest(uid, t.id);
+      if (!m) continue;
+      const parts = Object.keys(m.files).filter((k) => !k.startsWith('_'));
+      const iso = (n: number | null | undefined) => (n ? new Date(n).toISOString().slice(0, 10) : '-');
+      console.log(`   ${t.id}: records ${m.records}, partitions ${parts.length} (${parts.sort()[0] ?? '-'}..${parts.sort().at(-1) ?? '-'}), earliest ${iso(m.coverage.earliest)}, latest ${iso(m.coverage.latest)}, checkedAt ${m.coverage.checkedAt ? new Date(m.coverage.checkedAt).toISOString() : '-'}`);
+    }
+  }
+  process.exit(0);
+}
 if (mode === 'plan') {
   console.log('plan only: nothing was changed.');
   process.exit(0);

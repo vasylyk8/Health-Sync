@@ -4,7 +4,7 @@
 #   scripts/tasks/purge-all.sh plan|run
 source "$(dirname "$0")/lib.sh"
 MODE="${1:-plan}"
-[[ "$MODE" == "plan" || "$MODE" == "run" ]] || fail "usage: purge-all.sh plan|run"
+[[ "$MODE" == "plan" || "$MODE" == "diag" || "$MODE" == "run" ]] || fail "usage: purge-all.sh plan|diag|run"
 step "install server dependencies"
 (cd "$ROOT/firebase/functions" && npm ci --no-audit --no-fund >/dev/null)
 step "purge-all $MODE"

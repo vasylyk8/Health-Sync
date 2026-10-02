@@ -11,7 +11,7 @@ on:
       mode:
         description: 'plan (read-only) or run (deletes the real accounts)'
         type: choice
-        options: [plan, run]
+        options: [plan, diag, run]
         default: plan
       confirm:
         description: 'For run: type DELETE MY DATA'
