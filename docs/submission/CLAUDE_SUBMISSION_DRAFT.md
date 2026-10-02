@@ -5,7 +5,7 @@ Use [directory management](https://claude.ai/directory/manage) after prerequisit
 - **Connection:** one remote URL, `https://krok-1d60a.firebaseapp.com/mcp`; public OAuth, not per-user secret links.
 - **Name:** KROK.
 - **One-liner:** Your Apple Health, explained.
-- **Description:** KROK connects the Apple Health data you choose to Claude. Explore synced workouts, kilometre splits, heart-rate series, sleep and daily activity. Sign in with Apple and authorize Claude separately. Access is read-only. Routes hide their first and last 300 metres by default; exact endpoints require additional consent and an explicit request. Sensitive events and profile details require additional permissions. Data can be incomplete or delayed. KROK describes data and trends; it does not diagnose, prescribe or provide medical advice.
+- **Description:** KROK connects the Apple Health data you choose to Claude. Explore synced workouts, kilometre splits, heart-rate series, sleep and daily activity. Sign in with Apple and authorize Claude separately. Access is read-only. Routes hide their first and last 300 metres by default; exact endpoints require additional consent and an explicit request. Timed nutrition and profile details require additional permissions. Data can be incomplete or delayed. KROK describes data and trends; it does not diagnose, prescribe or provide medical advice.
 - **Documentation:** https://krok-1d60a.firebaseapp.com/mcp-docs
 - **Terms:** https://krok-1d60a.firebaseapp.com/terms (verify after deployment).
 - **Demo:** https://drive.google.com/file/d/1bHNkx5rvJSU8aMhlTKbo36jjviG2N6l6/view?usp=sharing

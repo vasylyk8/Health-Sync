@@ -7,8 +7,7 @@ import { TOKEN_RE, hashToken, type AccessLog, type Connections, type RateLimiter
 import type { BlobStore, MetaStore } from '../store/types.js';
 import { checkPendingUploads, ToolError, type QueryDeps } from '../query/context.js';
 import type { ToolResult } from '../query/common.js';
-import { EVENT_TYPES } from '../config.js';
-import { DAILY_GROUPS, getGlucose, getHealthEvents, getHourlySeries, getNutritionLog, getProfile, getRecovery, getTrainingLoad } from '../query/health.js';
+import { DAILY_GROUPS, getHourlySeries, getNutritionLog, getProfile, getRecovery, getTrainingLoad } from '../query/health.js';
 import {
   getDailyContext, getWorkout, getWorkoutRoute, getWorkoutSeries, getWorkouts, workoutBestEfforts, workoutElevation, workoutHrDrift, workoutHrZones, workoutSplits,
 } from '../query/workouts.js';
@@ -37,8 +36,8 @@ How to use it:
 5. get_daily_context returns daily metrics for a date range. Filter with groups or metrics, or use rollup week/month for long periods.
 6. get_hourly_series gives hourly heart rate (avg/min/max), steps and HRV for any period (all-day, not only workouts).
 7. get_recovery compares last night's HRV, resting heart rate, sleep and breathing with the user's own 60-day baseline; get_training_load estimates fitness (CTL), fatigue (ATL) and form (TSB) from the workouts.
-8. Opt-in data (only when the user switched it on in the app): get_glucose (continuous glucose, also around a workout), get_health_events (cardiac alerts, symptoms, blood pressure, insulin, medications), get_nutrition_log (timed nutrient entries, e.g. what was eaten before a workout), get_profile (age, sex). A tool reports when its category is switched off.
-For glucose, insulin, blood pressure, medications, symptoms, mood and cycle data: describe data and trends only. Never diagnose, never advise on insulin or medication doses, and suggest a clinician for concerns.
+8. Opt-in data (only when the user switched it on in the app): get_nutrition_log (timed nutrient entries, e.g. what was eaten before a workout) and get_profile (age, sex). A tool reports when its category is switched off.
+Describe returned measurements and trends only. Never diagnose or recommend treatment or medication doses; suggest a clinician for medical concerns.
 Dates are local calendar dates (YYYY-MM-DD) in the user's timezone unless you pass another IANA timezone. Offsets are seconds from the workout start.
 Heart rate zones need the user's maximum heart rate or zone boundaries: ask, do not guess.
 GPS routes hide the first and last 300 m by default to protect the user's home and work locations. Only request the full route if the user explicitly asks for exact start/end points.
@@ -159,20 +158,6 @@ const TOOLS: { name: string; title: string; description: string; input: z.ZodRaw
     run: (q, a) => getTrainingLoad(q, a as never),
   },
   {
-    name: 'get_glucose',
-    title: 'Blood glucose (CGM)',
-    description: 'Only if the user switched on glucose data. With workout_id: glucose before, during and after that workout (before_minutes default 120, after_minutes default 360) with insulin entries. With start_date/end_date (max 120 days): mean, time in range, time below/above, CV, GMI per day and overall. Targets default to 70-180 mg/dL; mmol/L = mg/dL / 18. Data may lag by hours (Dexcom saves to Apple Health late). Describe patterns only; never advise on insulin or medication.',
-    input: { workout_id: workoutId.optional(), start_date: dateField.optional(), end_date: dateField.optional(), before_minutes: z.number().int().min(0).max(720).optional(), after_minutes: z.number().int().min(0).max(1440).optional(), low_mg_dl: z.number().min(40).max(120).optional(), high_mg_dl: z.number().min(120).max(300).optional(), timezone: tzField },
-    run: (q, a) => getGlucose(q, a as never),
-  },
-  {
-    name: 'get_health_events',
-    title: 'Health events and entries',
-    description: `Only for categories the user switched on. Timed events and entries: category "heart" (AFib burden, high/low heart rate and irregular rhythm alerts, low cardio fitness, hypertension notifications, lung function), "devices" (blood glucose readings, insulin delivery, blood pressure), "mind" (symptoms with severity), "nutrition" (every nutrient entry, alcohol, blood alcohol), "medications" (the user's medication list). Or pass exact types. Types: ${[...EVENT_TYPES.keys()].join(', ')}. Max 500 events. Describe only; never diagnose or advise on doses.`,
-    input: { category: z.enum(['heart', 'devices', 'mind', 'nutrition', 'medications']).optional(), types: z.array(z.string().max(60)).max(20).optional(), start_date: dateField, end_date: dateField, timezone: tzField, limit: z.number().int().min(1).max(500).optional() },
-    run: (q, a) => getHealthEvents(q, a as never),
-  },
-  {
     name: 'get_nutrition_log',
     title: 'Timed nutrition entries',
     description: 'Only if the user switched on nutrition data. Entries logged in a nutrition app with time and nutrients (default energy, protein, carbs, fat, caffeine, water, alcohol; pass nutrients for others such as iron or sodium). Pass workout_id (+ hours_before, default 6) to see what was eaten before a workout, or a date range. Many people log only some meals.',
@@ -191,8 +176,7 @@ const TOOLS: { name: string; title: string; description: string; input: z.ZodRaw
 export function toolScopes(name: string): string[] {
   if (['get_daily_context', 'get_hourly_series', 'get_recovery'].includes(name)) return ['health:daily:read'];
   if (['get_workout', 'get_training_load'].includes(name)) return ['health:workouts:read', 'health:daily:read'];
-  if (['get_glucose', 'get_nutrition_log'].includes(name)) return ['health:events:read', 'health:workouts:read'];
-  if (name === 'get_health_events') return ['health:events:read'];
+  if (name === 'get_nutrition_log') return ['health:events:read', 'health:workouts:read'];
   if (name === 'get_profile') return ['health:profile:read'];
   if (name === 'get_workout_route') return ['health:workouts:read', 'health:routes:read'];
   if (['get_workouts', 'get_workout_series', 'workout_hr_zones', 'workout_splits', 'workout_hr_drift', 'workout_best_efforts', 'workout_elevation'].includes(name)) return ['health:workouts:read'];

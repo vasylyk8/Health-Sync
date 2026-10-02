@@ -149,12 +149,28 @@ describe('Public OAuth HTTP boundary', () => {
       expect(events.isError).toBe(true);
     } finally { await client.close(); }
   });
+  it('does not expose or execute removed tools even with all OAuth permissions', async () => {
+    const credentials = await token(OAUTH_SCOPES);
+    const client = new Client({ name: 'test', version: '1' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: `Bearer ${credentials.access_token}` } } }));
+    try {
+      const { tools } = await client.listTools();
+      expect(tools).toHaveLength(16);
+      expect(client.getInstructions()).not.toMatch(/get_glucose|get_health_events/);
+      for (const name of ['get_glucose', 'get_health_events']) {
+        expect(tools.some((tool) => tool.name === name)).toBe(false);
+        const result = await client.callTool({ name, arguments: { start_date: '2024-01-01', end_date: '2024-01-07' } });
+        expect(result.isError).toBe(true);
+        expect(result.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'text', text: expect.stringContaining('not found') })]));
+      }
+    } finally { await client.close(); }
+  });
   it('separates sensitive event and profile permission from workout-only grants', () => {
     expect(TOOL_NAMES.every((name) => toolScopes(name).length > 0)).toBe(true);
     expect(() => toolScopes('undeclared_future_tool')).toThrow(/Declare OAuth permissions/);
     expect(toolScopes('get_profile')).toEqual(['health:profile:read']);
-    expect(toolScopes('get_health_events')).toEqual(['health:events:read']);
-    expect(toolScopes('get_glucose')).toContain('health:events:read');
+    expect(() => toolScopes('get_health_events')).toThrow(/Declare OAuth permissions/);
+    expect(() => toolScopes('get_glucose')).toThrow(/Declare OAuth permissions/);
     expect(toolScopes('get_nutrition_log')).toContain('health:events:read');
     expect(DEFAULT_SCOPES).not.toContain('health:events:read');
     expect(DEFAULT_SCOPES).not.toContain('health:profile:read');

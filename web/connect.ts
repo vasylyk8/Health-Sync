@@ -9,7 +9,7 @@ const request = new URL(location.href).searchParams.get('request');
 const descriptions: Record<string, string> = {
   'health:workouts:read': 'Workouts and detailed measurements, including heart rate, pace, power, and cadence.',
   'health:daily:read': 'Daily summaries, including sleep, HRV, body measurements, nutrition, mood, and cycle data you sync.',
-  'health:events:read': 'Detailed health events you opted to sync: glucose, cardiac alerts, symptoms, blood pressure, insulin, medications, and timed nutrition entries.',
+  'health:events:read': 'Timed nutrition entries you opted to sync.',
   'health:profile:read': 'Personal health profile you opted to sync: age, date of birth, biological sex, wheelchair use, and activity mode.',
   'health:routes:read': 'Workout GPS routes, with the first and last 300 metres hidden.',
   'health:routes:full': 'Exact workout start/end locations, only when you explicitly request them.',

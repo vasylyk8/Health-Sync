@@ -12,7 +12,7 @@ Native Sign in with Apple links the current Firebase anonymous UID rather than c
 
 Public assistants use dynamic public-client registration, authorization-code/PKCE S256, resource binding, explicit browser consent, opaque hashed credentials, 15-minute access tokens, rotating refresh tokens, replay revocation and a 30-day absolute authorization lifetime. Cookie binding uses `__session`, the only cookie forwarded by Firebase Hosting rewrites. Disconnect invalidates all grants for that assistant; deletion invalidates access immediately and removes credentials outside the user's subtree.
 
-All 17 health tools have explicit scope checks, structured outputs and read-only/non-destructive/closed-world annotations. The separate `get_account` tool returns only an opaque account ID, avoiding collision with the health `get_profile` tool. Sensitive events and profile permissions are excluded from default scopes. Precise route endpoints require a separate unchecked consent option and an explicit tool request. Phone category switches continue to apply independently of OAuth permission.
+All 15 health tools have explicit scope checks, structured outputs and read-only/non-destructive/closed-world annotations. The separate `get_account` tool returns only an opaque account ID, avoiding collision with the health `get_profile` tool. Sensitive events and profile permissions are excluded from default scopes. Precise route endpoints require a separate unchecked consent option and an explicit tool request. Phone category switches continue to apply independently of OAuth permission.
 
 ## Sequential approval and shipping checklist
 
@@ -52,3 +52,7 @@ The read-only preflight uses GitHub secrets within GitHub Actions, validates key
 The original dependency tree had runtime UUID and development-tool gRPC/FTP advisories. Narrow overrides now select patched UUID 11.1.1 (Gaxios uses its unchanged `v4()` API), gRPC 1.14.x and basic-ftp 6.2.1; the full server/emulator/browser suite is rerun after the change. CI requires a clean production `npm audit --omit=dev` result.
 
 Three moderate audit entries remain in the development-only Firebase CLI → Pub/Sub → OpenTelemetry Core chain, all stemming from GHSA-8988-4f7v-96qf (unbounded W3C baggage propagation). They are not in the deployed runtime or browser Auth bundle. Fixing that remaining chain requires an upstream-compatible tooling update; this PR does not force OpenTelemetry 1.x consumers onto its 2.x major or downgrade Firebase to the older version proposed by the audit tool. This is a disclosed tooling risk, not a claim of a wholly advisory-free dependency tree.
+
+## Initial public scope
+
+The publisher requested removal of `get_glucose` and `get_health_events` from MCP v1 on October 2, 2026. Neither OAuth nor legacy MCP connections list or execute these tools, including connections with older extended grants. Their server-instruction references are removed. Internal queries, synced data and iPhone features are retained. Timed nutrition still uses the events permission; profile and daily summaries remain available. This scope reduction does not establish platform approval or health-data policy eligibility.
