@@ -1,0 +1,15 @@
+name: public-mcp-live-smoke
+on:
+  push:
+    branches: [codex/public-mcp-live-smoke]
+    paths: ['scripts/tasks/public-mcp-release-smoke.py', '.github/workflows/public-mcp-live-smoke.yml']
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify deployed public OAuth without accessing an account
+        run: python3 scripts/tasks/public-mcp-release-smoke.py
