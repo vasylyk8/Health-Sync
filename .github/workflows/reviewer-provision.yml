@@ -9,6 +9,10 @@ on:
         description: 'Apply the project-wide provider change only after explicit owner approval'
         type: boolean
         default: false
+  workflow_run:
+    workflows: [deploy]
+    types: [completed]
+    branches: [main]
 permissions:
   contents: read
   id-token: write
@@ -17,12 +21,15 @@ concurrency:
   cancel-in-progress: false
 jobs:
   prepare-and-verify:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
@@ -43,7 +50,9 @@ jobs:
         if: (github.event_name == 'workflow_dispatch' && inputs.enable_password_provider) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[approved-reviewer-provider]'))
         run: python3 scripts/tasks/enable-reviewer-password-provider.py --apply
       - name: Validate synthetic production dataset and reviewer access without exposing credentials
-        run: python3 scripts/tasks/provision-directory-reviewer.py --apply
+        env:
+          REVIEWER_VERIFY_MODE: ${{ github.event_name == 'workflow_run' && '--verify-only' || '--apply' }}
+        run: python3 scripts/tasks/provision-directory-reviewer.py "$REVIEWER_VERIFY_MODE"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

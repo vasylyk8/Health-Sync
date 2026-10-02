@@ -15,11 +15,14 @@ import urllib.request
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--apply', action='store_true')
+parser.add_argument('--verify-only', action='store_true')
 args = parser.parse_args()
 project = os.environ.get('GCP_PROJECT_ID')
 if project != 'krok-1d60a':
     raise SystemExit('Refusing to operate outside the confirmed KROK project.')
-if not args.apply:
+if args.apply and args.verify_only:
+    parser.error('Choose provisioning or verification, not both.')
+if not (args.apply or args.verify_only):
     print('Dry-run: dedicated synthetic reviewer, Secret Manager credentials, provider and production checks. No writes.')
     raise SystemExit(0)
 root = Path(__file__).resolve().parents[2]
@@ -46,9 +49,13 @@ secret_base = f'https://secretmanager.googleapis.com/v1/projects/{project}/secre
 secret_name = 'krok-directory-reviewer-credentials'
 metadata = api(secret_base + '/' + secret_name, allow_missing=True)
 if metadata is None:
+    if args.verify_only:
+        raise SystemExit('Reviewer secret missing; verification does not provision credentials.')
     api(secret_base + '?secretId=' + secret_name, 'POST', {'replication': {'automatic': {}}})
 saved = api(secret_base + '/' + secret_name + '/versions/latest:access', allow_missing=True)
 if saved is None:
+    if args.verify_only:
+        raise SystemExit('Reviewer credential version missing; verification does not create it.')
     credentials = {'uid': 'krok-reviewer-directory', 'email': 'directory-reviewer@krok.invalid',
                    'password': secrets.token_urlsafe(36)}
     for value in credentials.values():
@@ -71,7 +78,8 @@ provider_enabled = bool(email_config.get('enabled') and email_config.get('passwo
 
 env = {**os.environ, 'KROK_REVIEWER_UID': credentials['uid'], 'KROK_REVIEWER_EMAIL': credentials['email'],
        'KROK_REVIEWER_PASSWORD': credentials['password']}
-subprocess.run(['node', 'firebase/functions/scripts/prepare-reviewer.mjs', '--apply', '--reuse', '--reseed'], cwd=root, env=env, check=True)
+if args.apply:
+    subprocess.run(['node', 'firebase/functions/scripts/prepare-reviewer.mjs', '--apply', '--reuse', '--reseed'], cwd=root, env=env, check=True)
 subprocess.run(['node', 'firebase/functions/scripts/verify-reviewer-dataset.mjs'], cwd=root, env=env, check=True)
 if not provider_enabled:
     Path('/tmp/krok-reviewer-verification.json').write_text(json.dumps({'syntheticOnly': True,
