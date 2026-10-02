@@ -108,6 +108,8 @@ export interface LoadOptions {
   what?: 'raw';
   /** Shared byte budget across all loads of one tool call. */
   budget: { bytes: number };
+  /** Keep every upload of a row instead of only the latest (daily rows are merged metric by metric by the caller). */
+  keepVersions?: boolean;
 }
 
 const EMPTY_ROWS =
@@ -153,9 +155,10 @@ export async function loadType(
   const list = (ps: string[]) => `[${ps.map(lit).join(',')}]`;
   const src = dataFiles.length ? `SELECT * FROM read_parquet(${list(dataFiles)}, union_by_name=true)` : EMPTY_ROWS;
   const tombSql = tombFiles.length ? `SELECT id FROM read_parquet(${list(tombFiles)})` : 'SELECT NULL::VARCHAR id WHERE false';
+  const latest = opts.keepVersions ? '' : `QUALIFY row_number() OVER (PARTITION BY ${ROW_KEY} ORDER BY seq DESC, batch DESC) = 1`;
   await c.run(`CREATE OR REPLACE TEMP TABLE ${alias} AS
     SELECT * FROM (${src}) r WHERE (id IS NULL OR id NOT IN (${tombSql}))
-    QUALIFY row_number() OVER (PARTITION BY ${ROW_KEY} ORDER BY seq DESC, batch DESC) = 1`);
+    ${latest}`);
   return man;
 }
 

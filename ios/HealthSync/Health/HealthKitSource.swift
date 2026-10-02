@@ -622,6 +622,10 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
         var predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
         if appleOnly, let sources = await appleSourcesPredicate(type) { predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [predicate, sources]) }
+        // Same read gate as every other HealthKit read: dozens of year-long statistics queries at once, next to thousands of
+        // workout reads, left the daily queries failing (and their metrics out of the rows).
+        await queryGate.acquire()
+        defer { queryGate.release() }
         let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
             let q = HKStatisticsCollectionQuery(quantityType: type, quantitySamplePredicate: predicate, options: options, anchorDate: from, intervalComponents: DateComponents(day: 1))
             q.initialResultsHandler = { _, collection, error in
