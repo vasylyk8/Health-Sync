@@ -88,6 +88,15 @@ async function call(name, args) {
   const data = result.structuredContent ?? JSON.parse(result.content.find((c) => c.type === 'text').text);
   assert(data && typeof data === 'object');
   if (name !== 'get_account') assert.equal(typeof data.complete, 'boolean');
+  if (name === 'get_recovery') {
+    assert(Object.values(data.metrics).every((metric) => metric.status !== 'within normal range'));
+    assert(data.notes.some((note) => note.includes('personal baseline, not clinical reference ranges')));
+  }
+  if (name === 'get_training_load') {
+    assert(data.inputs.resting_hr_source);
+    assert.equal(typeof data.inputs.trimp_coefficient, 'number');
+    assert(data.inputs.trimp_coefficient_source);
+  }
   return data;
 }
 try {

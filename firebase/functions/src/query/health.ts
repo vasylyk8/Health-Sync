@@ -488,12 +488,12 @@ export async function getRecovery(deps: QueryDeps, args: RecoveryArgs): Promise<
       metrics[k] = {
         value: tidyMetric(v), baseline_mean: tidyMetric(m), baseline_sd: tidyMetric(sdv), baseline_days: base.length,
         change_pct: v !== null && m ? round(((v - m) / m) * 100, 1) : null, z_score: round(z, 2),
-        status: z === null || base.length < 14 ? 'not enough baseline' : z <= -1 ? 'below baseline' : z >= 1 ? 'above baseline' : 'within normal range',
+        status: z === null || base.length < 14 ? 'not enough baseline' : z <= -1 ? 'below baseline' : z >= 1 ? 'above baseline' : 'within baseline range',
       };
     }
     return {
       ...envelope(deps, [...mans, ['_hourly', hourlyMan]], true, [
-        `Each value is compared with this user's own average and spread over the previous ${windowDays} days (needs about 14+ days). For HRV and resting heart rate, a drop in HRV or a rise in resting heart rate relative to baseline usually signals more strain or less recovery; use it as context, not a diagnosis.`,
+        `Each value is compared with this user's own average and spread over the previous ${windowDays} days (needs about 14+ days). The labels and z-scores describe statistical differences from a personal baseline, not clinical reference ranges, a recovery score or readiness to exercise. Differences alone do not establish their cause.`,
         'sleepHrAvg, sleepHrMin and hrvOvernight are derived from hourly values between bedtime and wake time (accurate to about an hour).',
       ]),
       date: target, window_days: windowDays, metrics,
@@ -518,7 +518,8 @@ export async function getTrainingLoad(deps: QueryDeps, args: LoadArgs): Promise<
     const man = await loadType(c, dir, deps, WORKOUT_TYPE, [a - DAY_MS * 2, b], 'w', { what: 'raw', budget: { bytes: 0 } });
     const ws = await rows(c, `SELECT strftime(${localTs('s', tz)}, '%Y-%m-%d') AS d, extra FROM w WHERE k = 'w' AND s >= ${a} AND s < ${b} ORDER BY s`);
     const { byDay } = await dailyMaps(c, dir, deps, cats, a - DAY_MS, b, first, end);
-    const rest = args.resting_hr ?? mean([...byDay.values()].map((m) => m.restingHr).filter((x): x is number => typeof x === 'number')) ?? 60;
+    const observedRest = mean([...byDay.values()].map((m) => m.restingHr).filter((x): x is number => typeof x === 'number'));
+    const rest = args.resting_hr ?? observedRest ?? 60;
     const observedMax = Math.max(0, ...ws.map((x) => Number(parseExtra(x.extra).hrMax) || 0));
     const maxHr = args.max_hr ?? (observedMax >= 120 ? observedMax : 190);
     const k = args.sex === 'female' ? 1.67 : 1.92;
@@ -556,10 +557,11 @@ export async function getTrainingLoad(deps: QueryDeps, args: LoadArgs): Promise<
     const weekAgo = series.at(-8);
     return {
       ...envelope(deps, [[WORKOUT_TYPE, man]], isComplete(man, a, b, deps.now()), [
-        'Load per workout is a heart-rate based training impulse (TRIMP) using resting and maximum heart rate; workouts without heart rate fall back to Apple\'s effort score x duration. These are estimates: CTL = 42-day fitness, ATL = 7-day fatigue, TSB = CTL - ATL (form). Positive TSB = fresher, strongly negative = heavy recent load.',
+        'Load per workout is a heart-rate based training impulse (TRIMP) using resting and maximum heart rate; workouts without heart rate fall back to Apple\'s effort score x duration. CTL and ATL are 42-day and 7-day smoothed load estimates; TSB = CTL - ATL. They are not measurements of actual fitness, fatigue, injury risk or readiness to exercise. No training or treatment recommendation is supplied.',
         'Apple\'s own Training Load number is not readable by apps, so this is an independent estimate.',
+        'Days without recorded workouts and workouts without usable heart rate or effort are assigned zero load in this model; this does not prove inactivity. Observed workout maximum heart rate is not necessarily physiological maximum heart rate. Without supplied or observed parameters, defaults are 190 bpm maximum and 60 bpm resting heart rate. The default TRIMP coefficient is 1.92; the explicit female formula uses 1.67. Sex is not inferred.',
       ]),
-      inputs: { resting_hr: round(rest, 0), max_hr: round(maxHr, 0), max_hr_source: args.max_hr ? 'given' : observedMax >= 120 ? 'highest workout max heart rate seen' : 'default 190 (ask the user)', workouts_by_basis: basis },
+      inputs: { resting_hr: round(rest, 0), resting_hr_source: args.resting_hr !== undefined ? 'given' : observedRest !== null ? 'mean recorded resting heart rate' : 'default 60 (ask the user)', trimp_coefficient: k, trimp_coefficient_source: args.sex ? 'sex-specific formula selected by user' : 'default formula coefficient (sex not inferred)', max_hr: round(maxHr, 0), max_hr_source: args.max_hr ? 'given' : observedMax >= 120 ? 'highest workout max heart rate seen' : 'default 190 (ask the user)', workouts_by_basis: basis },
       current: { ...last, ramp_rate_ctl_per_week: weekAgo ? round(last.ctl - weekAgo.ctl, 1) : null },
       weekly_load: weeklyTotals(series.slice(-56)),
       series_columns: ['date', 'load', 'ctl', 'atl', 'tsb'],

@@ -87,7 +87,7 @@ describe('recovery vs baseline', () => {
     const dates = Array.from({ length: 70 }, (_, i) => iso(end - (69 - i) * DAY));
     await upload(env, stats(env), dates.map((d, i) => {
       const last = i === 69;
-      return { k: 'day', day: d, m: { hrv: last ? 40 : 60 + (i % 3), restingHr: last ? 58 : 52 + (i % 2), sleepAsleepMin: 420 + (i % 5), sleepBedtime: '23:00', sleepWakeTime: '07:00' } };
+      return { k: 'day', day: d, m: { hrv: last ? 40 : 60 + (i % 3), restingHr: last ? 58 : 52 + (i % 2), walkingHrAvg: last ? 65 : 64 + (i % 3), sleepAsleepMin: 420 + (i % 5), sleepBedtime: '23:00', sleepWakeTime: '07:00' } };
     }));
     // Hourly data for the last night: 23:00 (27 June) to 06:00 (28 June).
     const nightStart = Date.UTC(2024, 5, 27, 23);
@@ -102,6 +102,7 @@ describe('recovery vs baseline', () => {
     expect(m.hrv!.status).toBe('below baseline');
     expect(m.hrv!.change_pct).toBeLessThan(-25);
     expect(m.restingHr!.status).toBe('above baseline');
+    expect(m.walkingHrAvg!.status).toBe('within baseline range');
     expect(m.sleepHrAvg!.value).toBe(50);
     expect(m.sleepHrMin!.value).toBe(46);
     expect(m.hrvOvernight!.value).toBe(70);
@@ -109,6 +110,16 @@ describe('recovery vs baseline', () => {
 });
 
 describe('training load', () => {
+  it('discloses fallback parameters and honors explicitly selected inputs', async () => {
+    const env = makeEnv(Date.UTC(2024, 5, 30, 12));
+    await seedWorkout(env, 'fallback-aaaaaaaa', Date.UTC(2024, 5, 29, 7), 60, { hrAvg: 150 });
+    const fallback = await getTrainingLoad(deps(env), { end_date: '2024-06-29', days: 7 });
+    expect(fallback.inputs).toMatchObject({ resting_hr: 60, resting_hr_source: 'default 60 (ask the user)', max_hr: 190, max_hr_source: 'default 190 (ask the user)', trimp_coefficient: 1.92, trimp_coefficient_source: 'default formula coefficient (sex not inferred)' });
+    const explicit = await getTrainingLoad(deps(env), { end_date: '2024-06-29', days: 7, resting_hr: 60, max_hr: 190, sex: 'female' });
+    expect(explicit.inputs).toMatchObject({ resting_hr_source: 'given', max_hr_source: 'given', trimp_coefficient: 1.67, trimp_coefficient_source: 'sex-specific formula selected by user' });
+    expect((fallback.current as { load: number }).load).toBeGreaterThan(0);
+    expect((explicit.current as { load: number }).load).toBeLessThan((fallback.current as { load: number }).load);
+  });
   it('builds load, fitness and fatigue from heart rate and effort scores', async () => {
     const env = makeEnv(Date.UTC(2024, 5, 30, 12));
     for (let i = 0; i < 20; i++) await seedWorkout(env, `run-${String(i).padStart(2, '0')}-aaaaaaaa`, Date.UTC(2024, 5, 10 + i, 7), 60, { hrAvg: 150, hrMax: 180 });
