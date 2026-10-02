@@ -60,7 +60,7 @@ final class WorkoutRecordsTests: XCTestCase {
         XCTAssertNil(r["crs"], "course is not sent")
     }
 
-    func testRouteIsRoundedToAboutAMetreAndKeepsEveryPoint() {
+    func testRouteIsRoundedToAboutAMetre() {
         var pts: [RoutePoint] = []
         for i in 0..<2000 {
             let step = Double(i)
@@ -71,12 +71,13 @@ final class WorkoutRecordsTests: XCTestCase {
             let crs: Double = 87.654 + Double(i % 9)
             pts.append(RoutePoint(t: Int64(i) * 1000, lat: lat, lon: lon, alt: alt, spd: spd, crs: crs, ha: 3.79, va: 2.1))
         }
+        let kept = WorkoutRecords.thinned(WorkoutRecords.dedupe(pts))
         let built = WorkoutRecords.route(wid: "W", gen: 1, points: pts)
-        XCTAssertEqual(built.count, 2000, "no point is dropped")
+        XCTAssertEqual(built.count, kept.count)
         var back: [Double?] = []
         for r in built.records { back += doubles(r["lat"], of: r) }
-        XCTAssertEqual(back.count, 2000)
-        for (original, decoded) in zip(pts, back) {
+        XCTAssertEqual(back.count, kept.count)
+        for (original, decoded) in zip(kept, back) {
             XCTAssertEqual(decoded!, original.lat, accuracy: 0.5e-5 + 1e-12, "within half of 0.00001 degrees (about 0.6 m)")
         }
         // Much smaller than the older form.
@@ -90,6 +91,26 @@ final class WorkoutRecordsTests: XCTestCase {
         }
         let plain = WorkoutRecords.route(wid: "W", gen: 1, points: pts, format: .plain).records
         XCTAssertLessThan(size(built.records), size(plain) / 3)
+    }
+
+    func testRouteKeepsOnePointPerFiveSecondsAndTheEnds() {
+        // One point per second for 100 seconds (t = 0...99 s).
+        let pts = (0..<100).map { RoutePoint(t: Int64($0) * 1000, lat: 50 + Double($0) * 0.00003, lon: 30, alt: 100, spd: 3, crs: nil, ha: 4, va: nil) }
+        let built = WorkoutRecords.route(wid: "W", gen: 1, points: pts)
+        let ts = built.records.flatMap { ints($0["t"], of: $0) }
+        XCTAssertEqual(built.count, ts.count, "the count promised in the marker is what is sent")
+        XCTAssertEqual(ts.first, 0)
+        XCTAssertEqual(ts.last, 99_000, "the last point is always kept")
+        XCTAssertEqual(ts.count, 21, "t = 0, 5, 10 ... 95 s, plus the last point at 99 s")
+        for (a, b) in zip(ts.dropLast(), ts.dropFirst().dropLast()) { XCTAssertEqual(b - a, 5000) }
+    }
+
+    func testThinningNeverDropsShortOrSparseRoutes() {
+        XCTAssertEqual(WorkoutRecords.thinned([]).count, 0)
+        let two = [RoutePoint(t: 0, lat: 1, lon: 1, alt: nil, spd: nil, crs: nil, ha: nil, va: nil), RoutePoint(t: 1000, lat: 1, lon: 1, alt: nil, spd: nil, crs: nil, ha: nil, va: nil)]
+        XCTAssertEqual(WorkoutRecords.thinned(two), two)
+        let sparse = (0..<10).map { RoutePoint(t: Int64($0) * 10_000, lat: 1, lon: 1, alt: nil, spd: nil, crs: nil, ha: nil, va: nil) }
+        XCTAssertEqual(WorkoutRecords.thinned(sparse), sparse, "points already further apart than 5 s are all kept")
     }
 
     func testQuantityValuesAreRoundedToThreeDecimalsAndNeverPlainNumbers() {
@@ -127,7 +148,7 @@ final class WorkoutRecordsTests: XCTestCase {
 
     /// The records must be valid for the server's parser: parallel arrays of equal length.
     func testEveryChunkHasEqualLengthArrays() {
-        let pts = (0..<(WorkoutRecords.chunkPoints + 3)).map { RoutePoint(t: Int64($0), lat: 50, lon: 30, alt: Double($0), spd: nil, crs: nil, ha: 5, va: nil) }
+        let pts = (0..<(WorkoutRecords.chunkPoints + 3)).map { RoutePoint(t: Int64($0) * 5000, lat: 50, lon: 30, alt: Double($0), spd: nil, crs: nil, ha: 5, va: nil) }
         for r in WorkoutRecords.route(wid: "W", gen: 1, points: pts).records {
             let n = count(r)
             XCTAssertEqual(ints(r["t"], of: r).count, n)

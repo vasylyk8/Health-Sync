@@ -19,6 +19,8 @@ The scaled-integer storage is the large saving: before it, the server stored eve
 
 Real measurements from the owner's phone (3,337 workouts, upload size per the in-app speed test): 554 MB with the old format, 44 MB with compact chunks, and the planned further rounding, dropping of course/vertical accuracy and of the summary-only streams (active/basal energy, physical effort, exercise time, audio exposure) is estimated to bring this to about 22–28 MB. Re-run the speed test on the phone to confirm.
 
+Routes are sent at one point per 5 s (about 35% of the previous route size, estimated 7–8 MB less over 3,337 workouts; confirm with the speed test row K).
+
 ## Other data (measured with the synthetic user, `bench/small-types.ts`)
 | Data | Stored |
 |---|---|

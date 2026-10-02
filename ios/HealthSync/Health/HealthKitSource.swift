@@ -1116,7 +1116,7 @@ extension HealthKitSource {
                     let offset = seen[name, default: 0]
                     seen[name] = offset + Int(n)
                     if name == "route" {
-                        let pts = WorkoutRecords.dedupe(parts.route)
+                        let pts = WorkoutRecords.thinned(WorkoutRecords.dedupe(parts.route))
                         let slice = Array(pts[offset ..< offset + Int(n)])
                         let fields: [(String, [Double?], Double)] = [
                             ("lat", slice.map { Optional($0.lat) }, 111_195), ("lon", slice.map { Optional($0.lon) }, 111_195 * cos(slice[0].lat * .pi / 180)),

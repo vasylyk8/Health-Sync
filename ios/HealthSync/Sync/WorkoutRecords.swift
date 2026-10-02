@@ -41,7 +41,7 @@ enum WorkoutRecords {
 
     /// GPS route precision: about a metre in position (GPS itself is good to 3-5 m), 0.1 m altitude (what the
     /// elevation tools report), 0.1 m/s speed; course and the two accuracy figures to a whole unit (no tool reads them).
-    /// Every point is kept. Quantity streams are always exact.
+    /// The route is thinned to one point per `routeSpacingMs` (see `thinned`). Quantity streams are always exact.
     static let routePlans: [String: CompactColumns.Plan] = [
         "lat": .step(100_000), "lon": .step(100_000), "alt": .step(10), "spd": .step(10), "ha": .step(1),
     ]
@@ -49,6 +49,24 @@ enum WorkoutRecords {
     static let fineRoutePlans: [String: CompactColumns.Plan] = [
         "lat": .step(100_000), "lon": .step(100_000), "alt": .step(10), "spd": .step(100), "ha": .step(10),
     ]
+    /// One GPS point is kept per this many milliseconds (the watch records about one per second). Maps, splits and pace
+    /// do not need more; the first and last point of a route are always kept.
+    static let routeSpacingMs: Int64 = 5_000
+
+    /// Keeps the first point, then each point at least `routeSpacingMs` after the previous kept one, and the last point.
+    /// Expects points sorted by time (as `dedupe` returns them).
+    static func thinned(_ points: [RoutePoint], spacingMs: Int64 = routeSpacingMs) -> [RoutePoint] {
+        guard points.count > 2, let first = points.first, let last = points.last else { return points }
+        var out = [first]
+        var lastKept = first.t
+        for p in points.dropFirst().dropLast() where p.t - lastKept >= spacingMs {
+            out.append(p)
+            lastKept = p.t
+        }
+        out.append(last)
+        return out
+    }
+
     /// Quantity streams (heart rate, distance, power, ...) are rounded to 3 decimals (0.001 bpm, 1 mm, 0.001 m/s):
     /// far below sensor precision, and it removes float noise so the values compress as short integers.
     static let quantityPlan: CompactColumns.Plan = .rounded(3)
@@ -62,7 +80,7 @@ enum WorkoutRecords {
 
     /// Chunks of the GPS route with columns lat, lon, alt, spd and ha (course and vertical accuracy are not sent: no tool reads them).
     static func route(wid: String, gen: Int64, points: [RoutePoint], format: Format = .compact, plans: [String: CompactColumns.Plan] = routePlans) -> (records: [Record], count: Int) {
-        let pts = dedupe(points)
+        let pts = thinned(dedupe(points))
         let columns: [String: [Double?]] = [
             "lat": pts.map { Optional($0.lat) }, "lon": pts.map { Optional($0.lon) },
             "alt": pts.map(\.alt), "spd": pts.map(\.spd), "ha": pts.map(\.ha),
