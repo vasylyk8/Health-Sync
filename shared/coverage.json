@@ -965,31 +965,38 @@
   },
   {
    "id": "nutrition",
-   "label": "Nutrition and alcohol"
+   "label": "Nutrition and alcohol",
+   "default": true
   },
   {
    "id": "heart",
-   "label": "Heart alerts and lung function"
+   "label": "Heart alerts and lung function",
+   "default": true
   },
   {
    "id": "devices",
-   "label": "Glucose, insulin and blood pressure"
+   "label": "Glucose, insulin and blood pressure",
+   "default": true
   },
   {
    "id": "mind",
-   "label": "Mood and symptoms"
+   "label": "Mood and symptoms",
+   "default": true
   },
   {
    "id": "cycle",
-   "label": "Menstrual cycle"
+   "label": "Menstrual cycle",
+   "default": true
   },
   {
    "id": "medications",
-   "label": "Medications"
+   "label": "Medications",
+   "default": true
   },
   {
    "id": "profile",
-   "label": "Profile (date of birth, sex, wheelchair use)"
+   "label": "Profile (date of birth, sex, wheelchair use)",
+   "default": true
   }
  ],
  "hourlyMetrics": [

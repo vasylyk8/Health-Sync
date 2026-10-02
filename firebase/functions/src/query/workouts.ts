@@ -226,11 +226,13 @@ export async function getWorkout(deps: QueryDeps, args: { workout_id: string; ti
         sub_activities: Array.isArray(x.acts) ? x.acts : null,
         // The plan it was run from (scheduled in Apple's Workout app by any app): kind and a short description of its steps.
         planned_workout: x.plan ?? null,
+        // Apple's own zones for this workout (boundaries Apple used and time in each zone, per quantity such as HeartRate), iOS 27+.
+        apple_zones: x.zones ?? null,
       },
       apple_summary: {
         statistics: x.stats ?? null,
         metadata: tidyMetadata(x.md),
-        extra: Object.fromEntries(Object.entries(x).filter(([k]) => !['actName', 'dur', 'en', 'dist', 'hrAvg', 'hrMax', 'ev', 'acts', 'md', 'stats', 'act', 'plan'].includes(k))),
+        extra: Object.fromEntries(Object.entries(x).filter(([k]) => !['actName', 'dur', 'en', 'dist', 'hrAvg', 'hrMax', 'ev', 'acts', 'md', 'stats', 'act', 'plan', 'zones'].includes(k))),
       },
       events: {
         counts: eventCounts,

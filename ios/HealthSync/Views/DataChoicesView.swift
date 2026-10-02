@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Settings: which groups of Apple Health data KROK reads and shares with the connected assistants.
-/// Workouts, activity, sleep and recovery are always on; every other group is off until switched on here.
+/// Workouts, activity, sleep and recovery are always on; the other groups start on and can be switched off here.
 struct DataChoicesView: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -16,9 +16,9 @@ struct DataChoicesView: View {
                             .accessibilityIdentifier("category.\(category.id)")
                     }
                 } header: {
-                    Text("Share more with your assistant")
+                    Text("Data your assistant can see")
                 } footer: {
-                    Text("Each group is off until you switch it on, and Apple Health asks you separately. Switching a group off deletes its data from KROK's servers. Assistants describe your data and trends; they don't give medical advice.")
+                    Text("Apple Health asks for each group separately, and you can also change it in Apple Health. Switching a group off here deletes its data from KROK's servers. Assistants describe your data and trends; they don't give medical advice.")
                 }
             }
             .navigationTitle("Your data")

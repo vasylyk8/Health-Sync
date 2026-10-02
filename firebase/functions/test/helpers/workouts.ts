@@ -20,6 +20,7 @@ export async function seedRun(env: Env, opts: { wid?: string; withRaw?: boolean;
       src: 'Apple Watch', bid: 'com.apple.health', dev: 'Watch7,1',
       ev: [{ t: T0 + 900_000, type: 1, dur: 60 }, { t: T0 + 960_000, type: 2, dur: 0 }, { t: T0, type: 7, dur: 300 }, { t: T0 + 300_000, type: 7, dur: 300 }, { t: T0 + 600_000, type: 3, dur: 100, md: { HKSwimmingStrokeStyle: 3 } }],
       plan: { id: 'P1', kind: 'custom', desc: 'CustomWorkout(blocks: 3)' },
+      zones: { HeartRate: { src: 'system', u: 'count/min', z: [{ i: 0, sec: 600, min: 100, max: 120 }, { i: 1, sec: 1200, min: 120, max: 140 }] } },
       stats: { HeartRate: { avg: 145, min: 110, max: 162, u: 'count/min' }, ActiveEnergyBurned: { sum: 310.5, u: 'kcal' } },
       md: { HKIndoorWorkout: false, HKAverageMETs: 9.8, HKWeatherHumidity: '8100 %', HKSwimmingLocationType: true },
     },

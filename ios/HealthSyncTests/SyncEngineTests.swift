@@ -482,6 +482,24 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertFalse(box2.state.caughtUp.contains("ev:BloodGlucose"))
     }
 
+    func testAWakeForNewReadingsAlsoSendsEventsAndHourlyData() async throws {
+        var scope = hourlyScope
+        scope.events = [glucose]
+        let source = ScriptedSource()
+        source.earliestDaily = Date(timeIntervalSinceNow: -3 * 86_400)
+        let up = RecordingUploader()
+        let box = Outbox(root: root)
+        let engine = SyncEngine(source: source, uploader: up, outbox: box, scope: scope, categories: { ["core", "devices"] })
+        _ = try await engine.run()
+        XCTAssertTrue(box.state.caughtUp.contains(workoutType.id))
+        // A new glucose reading arrives and iOS wakes the app.
+        source.eventPages = [AnchoredPage(records: SeriesRecords.eventChunks(type: "BloodGlucose", unit: "mg/dL", source: "Dexcom", bundle: "com.dexcom", points: [EventPoint(start: 9_000, end: 9_000, v: 110)]), newAnchor: Data("G2".utf8), objectCount: 1)]
+        let before = up.uploaded.filter { $0.type == "ev:BloodGlucose" }.count
+        try await engine.runWorkoutChanges(deadline: Date().addingTimeInterval(5))
+        XCTAssertEqual(up.uploaded.filter { $0.type == "ev:BloodGlucose" }.count, before + 1, "the reading is sent without opening the app")
+        XCTAssertEqual(box.state.anchors["ev:BloodGlucose"], Data("G2".utf8))
+    }
+
     func testEmptyRecentPassSkipsTheUpload() async throws {
         let up = RecordingUploader()
         let (engine, box) = makeEngine(ScriptedSource(), up)

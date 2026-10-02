@@ -46,7 +46,8 @@ final class AppModel: ObservableObject {
         self.scope = scope
         self.telemetry = telemetry
         self.defaults = defaults
-        let consent = ConsentStore(defaults: defaults)
+        let defaultCategories = Set(scope.categories.filter { $0.default == true }.map(\.id))
+        let consent = ConsentStore(defaults: defaults, fallback: defaultCategories)
         self.consent = consent
         enabledCategories = consent.enabled
         var config = SyncEngine.Config()
@@ -80,6 +81,10 @@ final class AppModel: ObservableObject {
             }
             // HealthKit never reveals which read permissions were granted; we proceed either way
             // and show "No readable Health data found" later if nothing arrives.
+            // First connection: the default data groups are on (changeable in ••• → Your data).
+            let firstChoice = !consent.hasChoice
+            consent.persist()
+            enabledCategories = consent.enabled
             stage = "health-permission"
             connectStage = "Waiting for Apple Health…"
             // If Apple Health neither shows its permission screen nor answers, say what to do instead of
@@ -99,6 +104,10 @@ final class AppModel: ObservableObject {
             connectStage = "Registering this iPhone…"
             let tz = TimeZone.current.identifier
             try await Self.withTimeout(seconds: 25) { try await backend.registerDevice(timeZone: tz) }
+            if firstChoice {
+                let chosen = consent.enabled.sorted()
+                try await Self.withTimeout(seconds: 25) { try await backend.setCategories(chosen) }
+            }
             defaults.set(true, forKey: "healthConnected")
             telemetry.event("health_connected")
             busy = false
@@ -181,6 +190,35 @@ final class AppModel: ObservableObject {
                 done()
             }
         }
+        observeOtherData()
+    }
+
+    /// Background wake-ups for heart rate, steps and the extra data groups that are switched on (also after one is switched on).
+    private func observeOtherData() {
+        let engine = self.engine
+        source.observeOtherData(categories: consent.enabled) { done in
+            Task {
+                try? await engine.runWorkoutChanges(deadline: Date().addingTimeInterval(20))
+                done()
+            }
+        }
+    }
+
+    /// An existing install that never made a choice gets the default data groups the first time it runs this version.
+    private func applyDefaultCategoriesIfNeeded() async {
+        guard !consent.hasChoice else { return }
+        consent.persist()
+        enabledCategories = consent.enabled
+        let chosen = consent.enabled
+        do {
+            try await source.requestAuthorization(scope: scope, categories: chosen)
+            try await backend.setCategories(chosen.sorted())
+            for id in chosen where id != "core" { try await engine.categoryEnabled(id) }
+            observeOtherData()
+        } catch {
+            // Try again next time: forget the stored choice so the defaults are applied again.
+            defaults.removeObject(forKey: ConsentStore.key)
+        }
     }
 
     func syncNow() async {
@@ -191,6 +229,7 @@ final class AppModel: ObservableObject {
                 try await backend.registerDevice(timeZone: TimeZone.current.identifier)
             }
             await refreshStatus()
+            await applyDefaultCategoriesIfNeeded()
             // A background wake-up may be using the engine for a moment; wait for it instead of skipping the sync.
             var outcome = try await engine.run()
             var waits = 0
@@ -215,7 +254,24 @@ final class AppModel: ObservableObject {
 
     /// While workout details are still uploading, ask iOS for background time to continue. (HealthKit
     /// data is only readable while the phone is unlocked, so this helps only when iOS runs it then.)
+    /// Asks iOS for an occasional background refresh even when everything is in (it decides when; roughly every few hours at best).
+    func scheduleBackgroundRefresh() {
+        guard phase == .home else { return }
+        let request = BGAppRefreshTaskRequest(identifier: AppModel.refreshTaskId)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60)
+        try? BGTaskScheduler.shared.submit(request)
+    }
+
+    static let refreshTaskId = "app.healthsync.refresh"
+
+    /// What a background refresh does: the same quick catch-up as a wake for new data.
+    func runBackgroundRefresh() async {
+        scheduleBackgroundRefresh()
+        try? await engine.runWorkoutChanges(deadline: Date().addingTimeInterval(25))
+    }
+
     func scheduleBackgroundSyncIfNeeded() {
+        scheduleBackgroundRefresh()
         guard phase == .home, !progress.historyComplete else { return }
         let request = BGProcessingTaskRequest(identifier: AppModel.backgroundTaskId)
         request.requiresNetworkConnectivity = true
@@ -263,6 +319,7 @@ final class AppModel: ObservableObject {
             telemetry.event(on ? "category_on" : "category_off", ["category": id])
             await refreshStatus()
             if on {
+                observeOtherData()
                 syncTask?.cancel()
                 syncTask = Task { await syncNow() }
             }

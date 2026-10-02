@@ -65,6 +65,17 @@ final class SeriesRecordsTests: XCTestCase {
 final class ConsentStoreTests: XCTestCase {
     private func defaults() -> UserDefaults { UserDefaults(suiteName: "consent-\(UUID().uuidString)")! }
 
+    func testDefaultCategoriesAreOnUntilTheUserChooses() {
+        let d = defaults()
+        let store = ConsentStore(defaults: d, fallback: ["devices", "nutrition"])
+        XCTAssertEqual(store.enabled, ["core", "devices", "nutrition"])
+        XCTAssertFalse(store.hasChoice, "the defaults are not yet the user's choice")
+        store.persist()
+        XCTAssertTrue(store.hasChoice)
+        store.set(["devices"])
+        XCTAssertEqual(ConsentStore(defaults: d, fallback: ["devices", "nutrition"]).enabled, ["core", "devices"], "a stored choice wins over the defaults")
+    }
+
     func testCoreIsAlwaysOnAndChoicesPersist() {
         let d = defaults()
         let store = ConsentStore(defaults: d)

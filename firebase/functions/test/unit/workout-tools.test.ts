@@ -56,6 +56,7 @@ describe('get_workouts / get_workout', () => {
     expect(events.find((e) => e.type === 'lap')?.details).toEqual({ HKSwimmingStrokeStyle: 3 });
     expect(w.planned_workout).toEqual({ id: 'P1', kind: 'custom', desc: 'CustomWorkout(blocks: 3)' });
     expect((r.apple_summary as { extra: Record<string, unknown> }).extra).not.toHaveProperty('plan');
+    expect((w.apple_zones as { HeartRate: { z: unknown[] } }).HeartRate.z).toHaveLength(2);
     expect((r.apple_summary as { statistics: Record<string, unknown> }).statistics).toHaveProperty('HeartRate');
     expect((r.apple_summary as { metadata: Record<string, unknown> }).metadata.HKWeatherHumidity).toBe('81 %');
     expect((r.apple_summary as { metadata: Record<string, unknown> }).metadata.HKSwimmingLocationType).toBe('pool');
