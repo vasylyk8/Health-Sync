@@ -70,6 +70,15 @@ if (mode === 'diag') {
     console.log(`== ${short(uid)} categories[${(d.categories ?? ['(defaults)']).join(',')}] links[${Object.keys(d.links ?? {}).join(',') || 'none'}]`);
     const [pending] = await bucket.getFiles({ prefix: `incoming/${uid}/`, maxResults: 1000 });
     console.log(`   incoming files still waiting: ${pending.length}`);
+    const states: Record<string, number> = {};
+    const reasons: Record<string, number> = {};
+    for (const b of (await db.collection('users').doc(uid).collection('batches').get()).docs) {
+      const x = b.data() as { state?: string; detail?: string | null };
+      states[x.state ?? '?'] = (states[x.state ?? '?'] ?? 0) + 1;
+      if (x.state === 'rejected' || x.state === 'discarded') { const k = `${x.state}: ${(x.detail ?? '').slice(0, 160)}`; reasons[k] = (reasons[k] ?? 0) + 1; }
+    }
+    console.log(`   batch states: ${JSON.stringify(states)}`);
+    for (const [k, n] of Object.entries(reasons).sort((a, b) => b[1] - a[1]).slice(0, 15)) console.log(`   ${n} x ${k}`);
     for (const t of COVERAGE.types) {
       const m = await meta.getManifest(uid, t.id);
       if (!m) continue;
