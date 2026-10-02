@@ -12,10 +12,10 @@ struct PillButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .bodyText(.semibold)
-            .foregroundStyle(kind == .primary ? Theme.onInk : Theme.ink)
+            .foregroundStyle(kind == .primary ? Theme.buttonText : Theme.ink)
             .padding(.horizontal, Theme.margin)
             .frame(maxWidth: .infinity, minHeight: height)
-            .background(kind == .primary ? Theme.ink : Theme.surface, in: RoundedRectangle(cornerRadius: Theme.buttonRadius, style: .continuous))
+            .background(kind == .primary ? Theme.buttonFill : Theme.surface, in: RoundedRectangle(cornerRadius: Theme.buttonRadius, style: .continuous))
             .opacity(isEnabled ? 1 : 0.5)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.easeOut(duration: 0.14), value: configuration.isPressed)
@@ -30,10 +30,10 @@ struct StepActionStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .smallText(.semibold)
-            .foregroundStyle(filled ? Theme.onInk : Theme.ink)
+            .foregroundStyle(filled ? Theme.buttonText : Theme.ink)
             .padding(.horizontal, 20)
             .frame(minHeight: 44)
-            .background(filled ? Theme.ink : Theme.surface, in: Capsule())
+            .background(filled ? Theme.buttonFill : Theme.surface, in: Capsule())
             .opacity(isEnabled ? 1 : 0.5)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.easeOut(duration: 0.14), value: configuration.isPressed)

@@ -494,30 +494,40 @@ final class AppModel: ObservableObject {
         busy = true
         defer { busy = false }
         let onboarding = phase == .account
+        // Whether the sync was stopped (only when the account changes); otherwise it keeps running during sign-in.
+        var stopped = false
         do {
             let allowExisting = phase == .welcome && outbox.pending().isEmpty
             // On the account page the sync is already running on a fresh anonymous account; only that one may be replaced.
             let freshUid = onboarding ? defaults.string(forKey: Self.onboardingUidKey) : nil
-            // Finish in-flight uploads before account restoration can change identity.
-            syncTask?.cancel()
-            await syncTask?.value
-            syncTask = nil
+            // Linking keeps the same account, so the sync does not wait for it (a running sync can take a minute
+            // to stop). Only a restore, which switches to another account, stops the sync first.
             try await backend.linkAppleAccount(result, allowExistingAccount: allowExisting, replacingFreshAccount: freshUid)
             appleAccountLinked = await backend.hasAppleAccount()
             if let freshUid, let current = try? await backend.signIn(), current != freshUid {
+                stopped = true
+                await stopSync(waitingAtMost: 20)
                 try await startOverOnRestoredAccount()
             }
-            await refreshStatus()
             if onboarding {
                 defaults.set(false, forKey: Self.pendingAccountKey)
                 defaults.removeObject(forKey: Self.onboardingUidKey)
                 withAnimation { phase = .home }
             }
-            if phase != .welcome { start() }
+            Task { await refreshStatus() }
+            if stopped { start() }
         } catch {
             errorMessage = friendly(error)
-            if phase != .welcome { start() }
+            if stopped, phase != .welcome { start() }
         }
+    }
+
+    /// Cancels the running sync and waits for it to stop, but never longer than `seconds`.
+    private func stopSync(waitingAtMost seconds: Double) async {
+        guard let task = syncTask else { return }
+        task.cancel()
+        syncTask = nil
+        await Self.finishWithin(seconds: seconds) { await task.value }
     }
 
     /// An existing KROK account was restored during onboarding: what this phone had queued belongs to the account that

@@ -249,6 +249,20 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.busy)
     }
 
+    func testSigningInDoesNotWaitForARunningSyncToStop() async throws {
+        let source = StubbornSource()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let model = AppModel(backend: StubBackend(), source: source, outbox: Outbox(root: root), scope: .empty, telemetry: NoTelemetry(), defaults: UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!)
+        await model.connectHealth()
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertTrue(source.reading, "the sync is busy reading Health, and ignores cancellation for a few seconds")
+        let started = Date()
+        await model.linkAppleAccount(AppleSignInResult(idToken: "t", nonce: "n", authorizationCode: "c"))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2.0, "sign-in must not wait for the sync")
+        XCTAssertEqual(model.phase, .home)
+        XCTAssertFalse(model.busy)
+    }
+
     func testMedicationsStartOffSoFirstRunHasOnePermissionSheet() {
         let scope = HealthTypes.scope(HealthTypes.loadCoverage())
         XCTAssertNotEqual(scope.categories.first { $0.id == "medications" }?.default, true)
@@ -344,6 +358,30 @@ final class MedicationSource: HealthSource, @unchecked Sendable {
     func workoutIndex() async throws -> [WorkoutRef] { [] }
     func workoutDetail(id: String, gen: Int64) async throws -> [Record]? { nil }
     func dailyContext(from: Date, to: Date) async throws -> [Record] { [] }
+    func earliestDailyDate() async throws -> Date? { nil }
+    func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {}
+}
+
+/// Source whose reads ignore cancellation for a few seconds (a sync that is slow to stop).
+final class StubbornSource: HealthSource, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _reading = false
+    var reading: Bool { lock.withLock { _reading } }
+    var isAvailable: Bool { true }
+    func requestAuthorization(scope: SyncScope) async throws {}
+    private func block() {
+        lock.withLock { _reading = true }
+        let end = Date().addingTimeInterval(4)
+        while Date() < end { Thread.sleep(forTimeInterval: 0.05) }
+    }
+    func workouts(from: Date, to: Date) async throws -> [Record] { block(); return [] }
+    func anchoredPage(_ type: SyncType, anchor: Data?, limit: Int) async throws -> AnchoredPage {
+        block()
+        return AnchoredPage(records: [], newAnchor: nil, objectCount: 0)
+    }
+    func workoutIndex() async throws -> [WorkoutRef] { block(); return [] }
+    func workoutDetail(id: String, gen: Int64) async throws -> [Record]? { nil }
+    func dailyContext(from: Date, to: Date) async throws -> [Record] { block(); return [] }
     func earliestDailyDate() async throws -> Date? { nil }
     func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {}
 }

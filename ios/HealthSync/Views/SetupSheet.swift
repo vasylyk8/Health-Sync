@@ -95,7 +95,7 @@ struct SetupSheet: View {
                     }
                 } label: {
                     HStack(spacing: 10) {
-                        if model.busy { ProgressView().tint(Theme.onInk) }
+                        if model.busy { ProgressView().tint(Theme.buttonText) }
                         Text(Copy.Sheet.continueButton)
                     }
                 }
