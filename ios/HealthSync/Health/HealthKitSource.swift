@@ -498,6 +498,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         // results are merged in the metrics' order so the output does not depend on which finished first.
         var perMetric = [[DailyCell]?](repeating: nil, count: metrics.count)
         var errors: [Int: Error] = [:]
+        var received = 0
         let limit = max(1, Self.dailyConcurrency)
         await withTaskGroup(of: (Int, Result<[DailyCell], Error>).self) { group in
             var next = 0
@@ -516,6 +517,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             }
             for _ in 0 ..< min(limit, metrics.count) { startNext() }
             for await (i, result) in group {
+                received += 1
                 switch result {
                 case .success(let cells): perMetric[i] = cells
                 case .failure(let error): errors[i] = error
@@ -544,7 +546,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             let ns = errors[i]! as NSError
             return "\(metrics[i].key) \(ns.domain.replacingOccurrences(of: "com.apple.", with: "")) \(ns.code)"
         }
-        sourceLock.withLock { lastDailyReport = "\(withData)/\(metrics.count) metrics with data (\(dataKeys.joined(separator: ", "))), \(lost.count) did not report at first (retried). Empty: \(empty.isEmpty ? "none" : empty.joined(separator: ", ")). Failed: \(failed.isEmpty ? "none" : failed.joined(separator: "; "))" }
+        sourceLock.withLock { lastDailyReport = "\(withData)/\(metrics.count) metrics with data (\(dataKeys.joined(separator: ", "))), \(received) of \(metrics.count) reported, \(lost.count) retried. Empty: \(empty.isEmpty ? "none" : empty.joined(separator: ", ")). Failed: \(failed.isEmpty ? "none" : failed.joined(separator: "; "))" }
         if let transient = errors.values.first(where: { !Self.isPermanentFailure($0) }) {
             // Give up on a metric that keeps failing (three chunks in a row), so one stubborn query cannot block the rest forever.
             let tries = sourceLock.withLock { () -> Int in dailyTransientFailures += 1; return dailyTransientFailures }
