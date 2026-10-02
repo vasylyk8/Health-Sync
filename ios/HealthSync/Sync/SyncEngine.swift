@@ -47,6 +47,9 @@ struct SyncProgress: Equatable, Sendable {
     }
     var fraction: Double { stepsTotal > 0 ? min(1, Double(stepsDone) / Double(stepsTotal)) : 0 }
     var historyComplete: Bool { stepsTotal > 0 && stepsDone >= stepsTotal }
+    /// What the progress bar shows. The number of workouts is only known once the workout list is read, so until
+    /// then the share is not real yet: it stays in the first quarter instead of jumping ahead.
+    var uploadFraction: Double { historyDone || historyComplete ? fraction : min(fraction, 0.24) }
 }
 
 /// Orchestrates reading Apple Health and uploading batches. Order is chosen so the AI becomes

@@ -8,15 +8,21 @@ final class StubBackend: Backend, @unchecked Sendable {
     var appleLinked = false
     var appleLinkError: Error?
     var appleRestoreChoices: [Bool] = []
+    var freshAccountChoices: [String?] = []
+    /// The account the person ends up in after Sign in with Apple (a restore changes it).
+    var uid = "stub-user"
+    var restoredUid: String?
     func hasAppleAccount() async -> Bool { appleLinked }
-    func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool) async throws {
+    func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool, replacingFreshAccount freshUid: String?) async throws {
         appleRestoreChoices.append(allowExistingAccount)
+        freshAccountChoices.append(freshUid)
+        if let restoredUid, freshUid != nil { uid = restoredUid }
         if let appleLinkError { throw appleLinkError }
         appleLinked = true
     }
     func signIn() async throws -> String {
         if let signInError { throw signInError }
-        return "stub-user"
+        return uid
     }
     func registerDevice(timeZone: String) async throws { if let registerError { throw registerError } }
     func createLink(provider: String) async throws -> String { "https://example.test/mcp/\(provider)" }
@@ -126,12 +132,12 @@ final class AppModelTests: XCTestCase {
     func testCanConnectAgainAfterDeletingAllData() async {
         let model = makeModel(StubBackend())
         await model.connectHealth()
-        XCTAssertEqual(model.phase, .home)
+        XCTAssertEqual(model.phase, .account)
         await model.deleteAllData()
         XCTAssertEqual(model.phase, .welcome)
         XCTAssertFalse(model.busy, "the welcome button must not stay disabled after deletion")
         await model.connectHealth()
-        XCTAssertEqual(model.phase, .home)
+        XCTAssertEqual(model.phase, .account)
         XCTAssertFalse(model.busy)
     }
 
@@ -156,7 +162,7 @@ final class AppModelTests: XCTestCase {
             done.fulfill()
         }
         await fulfillment(of: [done], timeout: 15)
-        XCTAssertEqual(model.phase, .home)
+        XCTAssertEqual(model.phase, .account)
         XCTAssertFalse(model.busy)
     }
 
@@ -186,6 +192,78 @@ final class AppModelTests: XCTestCase {
         let calls = backend.categoryCalls.count
         await model.syncNow()
         XCTAssertEqual(backend.categoryCalls.count, calls, "the defaults are applied once")
+    }
+
+    func testConnectGoesToTheAccountPageAndSyncStartsRightAway() async throws {
+        let backend = StubBackend()
+        let defaults = UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let model = AppModel(backend: backend, source: ScriptedSource(), outbox: Outbox(root: root), scope: .empty, telemetry: NoTelemetry(), defaults: defaults)
+        await model.connectHealth()
+        XCTAssertEqual(model.phase, .account)
+        XCTAssertEqual(model.connectStage, "")
+        XCTAssertTrue(defaults.bool(forKey: AppModel.pendingAccountKey))
+        XCTAssertEqual(defaults.string(forKey: AppModel.onboardingUidKey), "stub-user")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertGreaterThan(backend.categoryCalls.count, 0)
+        // Reopening before signing in lands on the account page again.
+        let reopened = AppModel(backend: backend, source: ScriptedSource(), outbox: Outbox(root: root), scope: .empty, telemetry: NoTelemetry(), defaults: defaults)
+        XCTAssertEqual(reopened.phase, .account)
+    }
+
+    func testSigningInOnTheAccountPageFinishesOnboarding() async {
+        let backend = StubBackend()
+        let defaults = UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let model = AppModel(backend: backend, source: ScriptedSource(), outbox: Outbox(root: root), scope: .empty, telemetry: NoTelemetry(), defaults: defaults)
+        await model.connectHealth()
+        await model.linkAppleAccount(AppleSignInResult(idToken: "t", nonce: "n", authorizationCode: "c"))
+        XCTAssertEqual(model.phase, .home)
+        XCTAssertTrue(model.appleAccountLinked)
+        XCTAssertEqual(backend.freshAccountChoices, ["stub-user"], "only the account created by this onboarding may be replaced")
+        XCTAssertFalse(defaults.bool(forKey: AppModel.pendingAccountKey))
+        XCTAssertNil(defaults.string(forKey: AppModel.onboardingUidKey))
+        let reopened = AppModel(backend: backend, source: ScriptedSource(), outbox: Outbox(root: root), scope: .empty, telemetry: NoTelemetry(), defaults: defaults)
+        XCTAssertEqual(reopened.phase, .home)
+    }
+
+    func testAccountPageFailureStaysOnTheAccountPage() async {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        await model.connectHealth()
+        backend.appleLinkError = AppleSignInError.accountConflict
+        await model.linkAppleAccount(AppleSignInResult(idToken: "t", nonce: "n", authorizationCode: "c"))
+        XCTAssertEqual(model.phase, .account, "sign-in is required")
+        XCTAssertNotNil(model.errorMessage)
+    }
+
+    func testRestoringAnExistingAccountStartsTheSyncOverAndFinishesOnboarding() async {
+        let backend = StubBackend()
+        backend.restoredUid = "restored-user"
+        let model = makeModel(backend)
+        await model.connectHealth()
+        let callsBefore = backend.categoryCalls.count
+        await model.linkAppleAccount(AppleSignInResult(idToken: "t", nonce: "n", authorizationCode: "c"))
+        XCTAssertEqual(model.phase, .home)
+        XCTAssertGreaterThan(backend.categoryCalls.count, callsBefore, "the restored account is told which data groups are on")
+        XCTAssertFalse(model.busy)
+    }
+
+    func testMedicationsStartOffSoFirstRunHasOnePermissionSheet() {
+        let scope = HealthTypes.scope(HealthTypes.loadCoverage())
+        XCTAssertNotEqual(scope.categories.first { $0.id == "medications" }?.default, true)
+        XCTAssertEqual(scope.categories.first { $0.id == "cycle" }?.default, true, "other groups keep their defaults")
+    }
+
+    func testMedicationSheetIsNotPartOfTheMainPermissionRequest() async throws {
+        let source = MedicationSource()
+        var scope = SyncScope.empty
+        scope.categories = [CoverageCategory(id: "core", label: "Core", default: true), CoverageCategory(id: "medications", label: "Medications", default: true)]
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let model = AppModel(backend: StubBackend(), source: source, outbox: Outbox(root: root), scope: scope, telemetry: NoTelemetry(), defaults: UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!)
+        await model.connectHealth()
+        XCTAssertEqual(model.phase, .account, "onboarding moves on once the main permission sheet is answered")
+        XCTAssertTrue(source.mainRequested)
     }
 
     func testErrorMessagesAreActionable() {
@@ -245,10 +323,27 @@ final class ConnectPermissionTests: XCTestCase {
         model.permissionHintDelay = .milliseconds(100)
         let connecting = Task { await model.connectHealth() }
         try await Task.sleep(for: .milliseconds(50))
-        XCTAssertEqual(model.connectStage, "Waiting for Apple Health…")
+        XCTAssertEqual(model.connectStage, "", "progress is silent; only a stall is shown")
         try await Task.sleep(for: .milliseconds(400))
         XCTAssertEqual(model.connectStage, AppModel.permissionStallHint)
         XCTAssertTrue(model.busy)
         connecting.cancel()
     }
+}
+
+/// Source that records the medication sheet separately from the main request, and never answers the former.
+final class MedicationSource: HealthSource, @unchecked Sendable {
+    private(set) var mainRequested = false
+    var isAvailable: Bool { true }
+    func requestAuthorization(scope: SyncScope) async throws { mainRequested = true }
+    func requestMedicationAuthorization() async { try? await Task.sleep(for: .seconds(3600)) }
+    func workouts(from: Date, to: Date) async throws -> [Record] { [] }
+    func anchoredPage(_ type: SyncType, anchor: Data?, limit: Int) async throws -> AnchoredPage {
+        AnchoredPage(records: [], newAnchor: nil, objectCount: 0)
+    }
+    func workoutIndex() async throws -> [WorkoutRef] { [] }
+    func workoutDetail(id: String, gen: Int64) async throws -> [Record]? { nil }
+    func dailyContext(from: Date, to: Date) async throws -> [Record] { [] }
+    func earliestDailyDate() async throws -> Date? { nil }
+    func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {}
 }

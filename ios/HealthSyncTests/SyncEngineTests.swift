@@ -605,4 +605,27 @@ final class SyncEngineTests: XCTestCase {
         p.stepsDone = 13
         XCTAssertTrue(p.historyComplete)
     }
+
+    func testUploadFractionStaysInTheFirstQuarterUntilTheWorkoutListIsKnown() {
+        var p = SyncProgress(detailsDone: 0, detailsTotal: 0, isSyncing: true)
+        p.stepsDone = 2
+        p.stepsTotal = 3
+        XCTAssertEqual(p.fraction, 2.0 / 3.0, accuracy: 0.0001)
+        XCTAssertEqual(p.uploadFraction, 0.24, accuracy: 0.0001, "no workout count yet: the share is not real")
+        p.historyDone = true
+        XCTAssertEqual(p.uploadFraction, 2.0 / 3.0, accuracy: 0.0001)
+        p.stepsDone = 3
+        XCTAssertEqual(p.uploadFraction, 1)
+    }
+
+    func testStepBarSegmentsFillAtEachQuarter() {
+        func filled(_ f: Double) -> [Bool] { (0..<StepBar.segments).map { StepBar.isFilled($0, fraction: f) } }
+        XCTAssertEqual(filled(0), [false, false, false, false])
+        XCTAssertEqual(filled(0.24), [false, false, false, false])
+        XCTAssertEqual(filled(0.25), [true, false, false, false])
+        XCTAssertEqual(filled(0.49), [true, false, false, false])
+        XCTAssertEqual(filled(0.5), [true, true, false, false])
+        XCTAssertEqual(filled(0.75), [true, true, true, false])
+        XCTAssertEqual(filled(1), [true, true, true, true])
+    }
 }

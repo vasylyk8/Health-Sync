@@ -39,8 +39,19 @@ enum Theme {
     static let margin: CGFloat = 24
     /// Height of a full-width pill button.
     static let pillHeight: CGFloat = 56
+    /// Corner radius shared by the main buttons and Apple's sign-in button.
+    static let buttonRadius: CGFloat = 14
     /// Corner radius of the sheet.
     static let sheetRadius: CGFloat = 38
+
+    /// True in debug and TestFlight builds, false in the App Store release (its receipt is not a sandbox receipt).
+    static let isInternalBuild: Bool = {
+        #if DEBUG
+        return true
+        #else
+        return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+        #endif
+    }()
 
     private static func dynamic(_ light: UInt32, _ dark: UInt32) -> Color {
         Color(UIColor { traits in UIColor(hex: traits.userInterfaceStyle == .dark ? dark : light) })

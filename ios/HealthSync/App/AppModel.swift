@@ -5,7 +5,8 @@ import UIKit
 /// App state and actions. Views stay dumb; everything testable lives here.
 @MainActor
 final class AppModel: ObservableObject {
-    enum Phase { case welcome, home }
+    /// welcome → account (Apple sign-in, while the first sync already runs) → home.
+    enum Phase { case welcome, account, home }
 
     @Published var phase: Phase
     @Published var status: ServerStatus = .empty
@@ -46,6 +47,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var enabledCategories: Set<String> = ["core"]
     private var started = false
     private var observing = false
+    private var medicationTask: Task<Void, Never>?
+    static let healthConnectedKey = "healthConnected"
+    /// Set once Health is connected until Sign in with Apple is done (the app reopens on the account page).
+    static let pendingAccountKey = "pendingAccount"
+    /// The anonymous account created during onboarding; the only one Sign in with Apple may replace on a restore.
+    static let onboardingUidKey = "onboardingUid"
 
     init(backend: Backend, source: HealthSource, outbox: Outbox, scope: SyncScope, telemetry: Telemetry, defaults: UserDefaults = .standard) {
         self.backend = backend
@@ -62,7 +69,11 @@ final class AppModel: ObservableObject {
         config.device = UIDevice.current.model
         config.appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
         engine = SyncEngine(source: source, uploader: backend, outbox: outbox, scope: scope, config: config, telemetry: telemetry, categories: { consent.enabled })
-        phase = defaults.bool(forKey: "healthConnected") ? .home : .welcome
+        if !defaults.bool(forKey: Self.healthConnectedKey) {
+            phase = .welcome
+        } else {
+            phase = defaults.bool(forKey: Self.pendingAccountKey) ? .account : .home
+        }
     }
 
     /// The first sync only makes progress while the phone is unlocked (HealthKit data is unreadable
@@ -105,9 +116,9 @@ final class AppModel: ObservableObject {
             consent.persist()
             enabledCategories = consent.enabled
             stage = "health-permission"
-            connectStage = "Waiting for Apple Health…"
-            // If Apple Health neither shows its permission screen nor answers, say what to do instead of
-            // spinning silently (seen on a real iPhone after many reinstalls; a restart clears it).
+            // Only a stall is shown (progress is silent): if Apple Health neither shows its permission screen nor
+            // answers, say what to do instead of spinning silently (seen on a real iPhone after many reinstalls).
+            // This covers the main permission sheet only; the separate medications sheet comes later.
             let hint = Task { @MainActor [weak self, delay = permissionHintDelay] in
                 try await Task.sleep(for: delay)
                 self?.connectStage = Self.permissionStallHint
@@ -115,23 +126,26 @@ final class AppModel: ObservableObject {
             defer { hint.cancel() }
             try await source.requestAuthorization(scope: scope, categories: consent.enabled)
             hint.cancel()
+            connectStage = ""
             stage = "sign-in"
-            connectStage = "Signing in…"
             let backend = self.backend
-            _ = try await Self.withTimeout(seconds: 25) { try await backend.signIn() }
+            let uid = try await Self.withTimeout(seconds: 25) { try await backend.signIn() }
             stage = "register"
-            connectStage = "Registering this iPhone…"
             let tz = TimeZone.current.identifier
             try await Self.withTimeout(seconds: 25) { try await backend.registerDevice(timeZone: tz) }
             if firstChoice {
                 let chosen = consent.enabled.sorted()
                 try await Self.withTimeout(seconds: 25) { try await backend.setCategories(chosen) }
             }
-            defaults.set(true, forKey: "healthConnected")
+            defaults.set(true, forKey: Self.healthConnectedKey)
+            defaults.set(true, forKey: Self.pendingAccountKey)
+            defaults.set(uid, forKey: Self.onboardingUidKey)
             telemetry.event("health_connected")
             busy = false
-            withAnimation { phase = .home }
+            withAnimation { phase = .account }
+            // The upload starts now, while the person is on the account page.
             start()
+            requestMedicationsInBackground()
         } catch {
             let ns = error as NSError
             telemetry.nonFatal("connect.\(stage)", code: ns.code)
@@ -142,12 +156,48 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Apple's per-medication sheet comes after the main permission sheet and never blocks or fails onboarding:
+    /// it runs on its own with a timeout, and the medication list is uploaded by the next sync pass.
+    func requestMedicationsInBackground() {
+        guard consent.isOn("medications"), medicationTask == nil else { return }
+        let source = self.source
+        medicationTask = Task { [weak self] in
+            await Self.finishWithin(seconds: 90) { await source.requestMedicationAuthorization() }
+            guard let self else { return }
+            self.medicationTask = nil
+            if self.phase != .welcome, !self.progress.isSyncing { self.syncTask = Task { await self.syncNow() } }
+        }
+    }
+
     /// How long to wait for Apple Health before showing `permissionStallHint` (tests shorten it).
     var permissionHintDelay: Duration = .seconds(12)
     static let permissionStallHint = "Apple Health isn't responding. If you don't see its permission screen, restart your iPhone, then open KROK and try again."
 
     private struct StepTimeout: LocalizedError {
         var errorDescription: String? { "This is taking too long. Check your connection and try again." }
+    }
+
+    /// Returns when `work` finishes or after `seconds`, whichever comes first (an unanswered system sheet is left behind
+    /// rather than waited for; a task group would wait for it).
+    private static func finishWithin(seconds: Double, _ work: @escaping @Sendable () async -> Void) async {
+        let gate = OneShot()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let finish: @Sendable () -> Void = { if gate.take() { continuation.resume() } }
+            Task.detached {
+                await work()
+                finish()
+            }
+            Task.detached {
+                try? await Task.sleep(for: .seconds(seconds))
+                finish()
+            }
+        }
+    }
+
+    private final class OneShot: @unchecked Sendable {
+        private let lock = NSLock()
+        private var taken = false
+        func take() -> Bool { lock.withLock { defer { taken = true }; return !taken } }
     }
 
     /// Fails instead of waiting forever when a network step stalls.
@@ -167,7 +217,7 @@ final class AppModel: ObservableObject {
 
     /// Called on launch (when already onboarded) and whenever the app becomes active.
     func start() {
-        guard phase == .home, !benchmarkRunning else { return }
+        guard phase != .welcome, !benchmarkRunning else { return }
         Task { await engine.onProgress { p in Task { @MainActor in self.progress = p } } }
         startObservers()
         syncTask = Task { await syncNow() }
@@ -200,7 +250,7 @@ final class AppModel: ObservableObject {
     /// iOS relaunches the app in the background (before any screen appears), so the app calls it
     /// at launch, not only when a scene becomes active.
     func startObservers() {
-        guard phase == .home, !observing else { return }
+        guard phase != .welcome, !observing else { return }
         observing = true
         let engine = self.engine
         source.observeWorkouts { done in
@@ -231,6 +281,7 @@ final class AppModel: ObservableObject {
         let chosen = consent.enabled
         do {
             try await source.requestAuthorization(scope: scope, categories: chosen)
+            requestMedicationsInBackground()
             try await backend.setCategories(chosen.sorted())
             for id in chosen where id != "core" { try await engine.categoryEnabled(id) }
             observeOtherData()
@@ -277,7 +328,7 @@ final class AppModel: ObservableObject {
     /// Asks iOS for an occasional background refresh even when everything is in (it decides when; roughly every few hours at best).
     func scheduleBackgroundRefresh() {
         // Submitting a request for a task nobody registered a handler for crashes (UI tests, previews).
-        guard phase == .home, BackgroundTaskRegistry.shared.refreshRegistered else { return }
+        guard phase != .welcome, BackgroundTaskRegistry.shared.refreshRegistered else { return }
         let request = BGAppRefreshTaskRequest(identifier: AppModel.refreshTaskId)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60)
         try? BGTaskScheduler.shared.submit(request)
@@ -293,7 +344,7 @@ final class AppModel: ObservableObject {
 
     func scheduleBackgroundSyncIfNeeded() {
         scheduleBackgroundRefresh()
-        guard phase == .home, !progress.historyComplete else { return }
+        guard phase != .welcome, !progress.historyComplete else { return }
         let request = BGProcessingTaskRequest(identifier: AppModel.backgroundTaskId)
         request.requiresNetworkConnectivity = true
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
@@ -329,6 +380,7 @@ final class AppModel: ObservableObject {
             if on {
                 next.insert(id)
                 try await source.requestAuthorization(scope: scope, categories: next)
+                if id == "medications" { requestMedicationsInBackground() }
             } else {
                 next.remove(id)
             }
@@ -399,7 +451,7 @@ final class AppModel: ObservableObject {
         do {
             if await backend.hasAppleAccount() {
                 let identity = try await appleSignIn.authorize()
-                try await backend.linkAppleAccount(identity, allowExistingAccount: false)
+                try await backend.linkAppleAccount(identity, allowExistingAccount: false, replacingFreshAccount: nil)
                 try await backend.revokeAppleAuthorization(identity.authorizationCode)
             }
             try await backend.deleteAllData()
@@ -411,7 +463,9 @@ final class AppModel: ObservableObject {
             estimate = SyncEstimate()
             progress = SyncProgress(detailsDone: 0, detailsTotal: 0, isSyncing: false)
             await backend.signOut()
-            defaults.removeObject(forKey: "healthConnected")
+            defaults.removeObject(forKey: Self.healthConnectedKey)
+            defaults.removeObject(forKey: Self.pendingAccountKey)
+            defaults.removeObject(forKey: Self.onboardingUidKey)
             status = .empty
             appleAccountLinked = false
             started = false
@@ -424,24 +478,60 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Sign in with Apple from the ••• menu (for accounts that were created before the account page existed).
+    func signInWithAppleFromMenu() async {
+        guard !busy else { return }
+        do {
+            let identity = try await appleSignIn.authorize()
+            await linkAppleAccount(identity)
+        } catch {
+            if (error as NSError).code != 1001 { errorMessage = friendly(error) }  // 1001: the person closed Apple's sheet
+        }
+    }
+
     func linkAppleAccount(_ result: AppleSignInResult) async {
         guard !busy else { return }
         busy = true
         defer { busy = false }
+        let onboarding = phase == .account
         do {
             let allowExisting = phase == .welcome && outbox.pending().isEmpty
+            // On the account page the sync is already running on a fresh anonymous account; only that one may be replaced.
+            let freshUid = onboarding ? defaults.string(forKey: Self.onboardingUidKey) : nil
             // Finish in-flight uploads before account restoration can change identity.
             syncTask?.cancel()
             await syncTask?.value
             syncTask = nil
-            try await backend.linkAppleAccount(result, allowExistingAccount: allowExisting)
+            try await backend.linkAppleAccount(result, allowExistingAccount: allowExisting, replacingFreshAccount: freshUid)
             appleAccountLinked = await backend.hasAppleAccount()
+            if let freshUid, let current = try? await backend.signIn(), current != freshUid {
+                try await startOverOnRestoredAccount()
+            }
             await refreshStatus()
-            if phase == .home { start() }
+            if onboarding {
+                defaults.set(false, forKey: Self.pendingAccountKey)
+                defaults.removeObject(forKey: Self.onboardingUidKey)
+                withAnimation { phase = .home }
+            }
+            if phase != .welcome { start() }
         } catch {
             errorMessage = friendly(error)
-            if phase == .home { start() }
+            if phase != .welcome { start() }
         }
+    }
+
+    /// An existing KROK account was restored during onboarding: what this phone had queued belongs to the account that
+    /// was just replaced, so the first sync starts again from scratch against the restored one.
+    private func startOverOnRestoredAccount() async throws {
+        outbox.reset()
+        await engine.resetStats()
+        estimator = SyncEstimator()
+        estimate = SyncEstimate()
+        progress = SyncProgress(detailsDone: 0, detailsTotal: 0, isSyncing: false)
+        started = false
+        try await backend.registerDevice(timeZone: TimeZone.current.identifier)
+        try await backend.setCategories(consent.enabled.sorted())
+        telemetry.event("account_restored")
     }
 
     /// Turns an error into something a person can act on.

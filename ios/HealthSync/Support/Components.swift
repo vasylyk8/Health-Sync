@@ -15,7 +15,7 @@ struct PillButtonStyle: ButtonStyle {
             .foregroundStyle(kind == .primary ? Theme.onInk : Theme.ink)
             .padding(.horizontal, Theme.margin)
             .frame(maxWidth: .infinity, minHeight: height)
-            .background(kind == .primary ? Theme.ink : Theme.surface, in: Capsule())
+            .background(kind == .primary ? Theme.ink : Theme.surface, in: RoundedRectangle(cornerRadius: Theme.buttonRadius, style: .continuous))
             .opacity(isEnabled ? 1 : 0.5)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.easeOut(duration: 0.14), value: configuration.isPressed)
@@ -51,11 +51,19 @@ struct Wordmark: View {
     }
 }
 
-/// Four segments, one per sync step. Finished steps are solid; the first unfinished one shimmers.
+/// Four segments, each a quarter of the upload. Segments below the current share are solid; the one the
+/// upload is in shimmers (the first one before anything is uploaded).
 struct StepBar: View {
-    /// Finished flags for [recent workouts, daily context, workout history, workout details].
-    let done: [Bool]
+    /// How much of the upload is done, 0...1.
+    let fraction: Double
+    static let segments = 4
 
+    /// Segment `index` is full once the upload has reached its end (25%, 50%, 75%, 100%).
+    static func isFilled(_ index: Int, fraction: Double) -> Bool {
+        fraction >= Double(index + 1) / Double(segments) - 1e-9
+    }
+
+    private var done: [Bool] { (0..<Self.segments).map { Self.isFilled($0, fraction: fraction) } }
     private var currentIndex: Int? { done.firstIndex(of: false) }
 
     var body: some View {
@@ -72,8 +80,8 @@ struct StepBar: View {
         }
         .animation(.easeInOut(duration: 0.4), value: done)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Sync progress")
-        .accessibilityValue("\(done.filter { $0 }.count) of \(done.count) steps finished")
+        .accessibilityLabel("Upload progress")
+        .accessibilityValue("\(Int((min(max(fraction, 0), 1) * 100).rounded())) percent uploaded")
     }
 }
 

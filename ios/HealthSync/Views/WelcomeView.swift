@@ -43,8 +43,6 @@ struct WelcomeView: View {
                 .smallText()
                 .foregroundStyle(Theme.muted)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 16)
-            AppleAccountView(style: .welcome)
                 .padding(.bottom, 24)
         }
         .padding(.horizontal, Theme.margin)
@@ -81,6 +79,7 @@ struct WelcomeView: View {
             .buttonStyle(PillButtonStyle())
             .disabled(model.busy)
             .accessibilityIdentifier("connectHealth")
+            // Progress is silent; only a stall (Apple Health not answering) is explained here.
             if model.busy, !model.connectStage.isEmpty {
                 Text(model.connectStage)
                     .smallText()

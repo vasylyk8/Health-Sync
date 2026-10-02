@@ -991,7 +991,7 @@
   {
    "id": "medications",
    "label": "Medications",
-   "default": true
+   "default": false
   },
   {
    "id": "profile",

@@ -32,13 +32,16 @@ protocol Backend: Uploader {
     func batchExists(batchId: String) async throws -> Bool
     func signOut() async
     func hasAppleAccount() async -> Bool
-    func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool) async throws
+    /// `replacingFreshAccount`: the uid of the anonymous account created during this onboarding. When the Apple
+    /// Account already owns a KROK account, that fresh account (and what it uploaded) is deleted and the
+    /// existing account is restored; any other anonymous account is never replaced.
+    func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool, replacingFreshAccount freshUid: String?) async throws
     func revokeAppleAuthorization(_ authorizationCode: String) async throws
 }
 
 extension Backend {
     func hasAppleAccount() async -> Bool { false }
-    func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool) async throws { throw BackendError.notConfigured }
+    func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool, replacingFreshAccount freshUid: String?) async throws { throw BackendError.notConfigured }
     func revokeAppleAuthorization(_ authorizationCode: String) async throws { throw BackendError.notConfigured }
 }
 

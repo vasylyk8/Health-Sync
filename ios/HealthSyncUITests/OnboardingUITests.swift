@@ -26,6 +26,7 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["KROK"].waitForExistence(timeout: 5))
         snapshot("01-Welcome")
         app.buttons["connectHealth"].tap()
+        app.signInThroughAccountPage()
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["provider.chatgpt"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["heroMetric"].waitForExistence(timeout: 5))
@@ -39,21 +40,42 @@ final class OnboardingUITests: XCTestCase {
 
     func testAppleAccountCanUsePublicOAuthWithoutCreatingAPrivateLink() {
         let app = launch(["-onboarded", "-appleLinked"])
-        XCTAssertTrue(app.staticTexts["Apple Account linked"].waitForExistence(timeout: 10))
-        app.buttons["provider.claude"].tap()
-        XCTAssertTrue(app.buttons["copyOAuthURL"].waitForExistence(timeout: 10))
+        // Home has no "linked" row to wait for: the account state loads a moment after launch, so open the sheet
+        // until it shows the OAuth view (an unlinked account would show the consent view instead).
+        XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 10))
+        var oauth = false
+        for _ in 0..<10 where !oauth {
+            app.buttons["provider.claude"].tap()
+            oauth = app.buttons["copyOAuthURL"].waitForExistence(timeout: 3)
+            if !oauth {
+                if app.buttons["Close"].waitForExistence(timeout: 2) { app.buttons["Close"].tap() }
+                _ = app.buttons["provider.claude"].waitForExistence(timeout: 2)
+            }
+        }
+        XCTAssertTrue(oauth, "a linked account sets up through OAuth")
         XCTAssertFalse(app.buttons["consentContinue"].exists)
         app.buttons["copyOAuthURL"].tap()
         XCTAssertTrue(app.staticTexts["oauthCopied"].waitForExistence(timeout: 5))
         snapshot("05-Apple-OAuth-Setup")
     }
 
-    func testAppleSignInIsOfferedWithoutBlockingHealthOnboarding() {
+    func testAccountPageFollowsHealthAndIsRequired() {
         let app = launch()
-        XCTAssertTrue(app.buttons["appleSignIn"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["connectHealth"].isHittable)
+        XCTAssertTrue(app.buttons["connectHealth"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["appleSignIn"].exists, "Welcome no longer offers Sign in with Apple")
         app.buttons["connectHealth"].tap()
+        XCTAssertTrue(app.buttons["appleSignIn"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["connectHealth"].exists)
+        XCTAssertFalse(app.buttons["provider.claude"].exists, "no way past the account page without signing in")
+        snapshot("01b-Account")
+        app.signInThroughAccountPage()
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["appleSignIn"].exists, "Home no longer offers Sign in with Apple")
+    }
+
+    func testReopeningBeforeSigningInReturnsToTheAccountPage() {
+        let app = launch(["-accountPending"])
+        XCTAssertTrue(app.buttons["appleSignIn"].waitForExistence(timeout: 10))
     }
 
     func testConnectClaudeShowsSetUpCheckmark() {

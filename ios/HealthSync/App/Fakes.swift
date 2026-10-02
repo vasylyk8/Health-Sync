@@ -9,9 +9,12 @@ final class FakeBackend: Backend, @unchecked Sendable {
     private var categories: [String] = ["core"]
     private(set) var uploads: [String] = []
     var lastVisibleAt: Double?
-    private let appleLinked: Bool
+    private var appleLinked: Bool
     init(appleLinked: Bool = false) { self.appleLinked = appleLinked }
-    func hasAppleAccount() async -> Bool { appleLinked }
+    func hasAppleAccount() async -> Bool { lock.withLock { appleLinked } }
+    /// Accepts the UI-test stand-in for Apple's sheet without linking: UI tests that follow onboarding keep the private-link
+    /// setup (consent) path; the linked/OAuth path is covered by launching with `-appleLinked`.
+    func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool, replacingFreshAccount freshUid: String?) async throws {}
 
     func signIn() async throws -> String { "fake-user" }
     func registerDevice(timeZone: String) async throws {}

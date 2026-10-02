@@ -40,8 +40,9 @@ iPhone (workouts + raw streams + daily rows → durable outbox) → Storage inco
 ### Key design choices
 - **Mirror, not live pull.** AI services can't reach a phone, and iOS locks HealthKit while the phone is locked.
 - **Summary first, raw on request.** Tools return Apple's summary; raw streams and the route are downsampled or paged (and say so); exact calculations (zones, splits, drift, best efforts, elevation) run on the server over the full raw data.
-- **Privacy by default.** Workouts, activity, sleep and recovery are read by default; nutrition, heart alerts, glucose/insulin/blood pressure, symptoms and mood, cycle, medications and profile are separate switches that start on (Apple Health still asks per type; switching one off deletes its data). Route start/end (300 m) are hidden unless the user explicitly asks for the exact route.
+- **Privacy by default.** Workouts, activity, sleep and recovery are read by default; nutrition, heart alerts, glucose/insulin/blood pressure, symptoms and mood, cycle, medications and profile are separate switches (all start on except medications, whose per-medication Apple Health sheet is only shown once the person turns it on; Apple Health still asks per type; switching one off deletes its data). Route start/end (300 m) are hidden unless the user explicitly asks for the exact route.
 - **Nothing lost, nothing silently wrong.** A HealthKit anchor only advances after the server has the data. A workout's raw data is "complete" only when every promised point arrived; tools report coverage and completeness, and never return aggregates over truncated data.
 - **Apple's numbers.** Apple's own workout statistics are shown as recorded; sleep merges overlapping sources by picking one per night.
+- **Three-step onboarding.** Welcome (connect Apple Health; the first sync starts as soon as access is granted) → account page (Sign in with Apple, required for the public MCP connector; an Apple ID that already owns a KROK account restores it and replaces the fresh onboarding account) → upload.
 - **Read-only, private links.** Only a hash of each 256-bit link is stored. Links are revoked instantly by Disconnect or Delete.
-- **Deferred:** AI-written SQL (needs a sealed sandbox), Sign in with Apple, clinical records.
+- **Deferred:** AI-written SQL (needs a sealed sandbox), clinical records.

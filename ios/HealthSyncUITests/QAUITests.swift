@@ -54,7 +54,10 @@ final class QAUITests: XCTestCase {
         let app = launch(extra + ["-onboarded"])
         XCTAssertTrue(app.buttons["moreMenu"].waitForExistence(timeout: 5))
         app.buttons["moreMenu"].tap()
-        app.buttons["Delete All My Data"].firstMatch.tap()
+        let delete = app.buttons["Delete All My Data"].firstMatch
+        // At the largest text sizes the menu is taller than the screen: scroll it.
+        if !delete.waitForExistence(timeout: 3) { app.swipeUp() }
+        delete.tap()
         let confirm = app.sheets.buttons["Delete All My Data"].exists ? app.sheets.buttons["Delete All My Data"] : app.buttons["Delete All My Data"].firstMatch
         confirm.tap()
         XCTAssertTrue(app.buttons["connectHealth"].waitForExistence(timeout: 5))
@@ -83,6 +86,7 @@ final class QAUITests: XCTestCase {
         let app = launchFresh()
         audit(app, "welcome")
         app.buttons["connectHealth"].tap()
+        app.signInThroughAccountPage()
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))
         audit(app, "home")
         openClaudeSteps(app)
@@ -100,6 +104,7 @@ final class QAUITests: XCTestCase {
         XCTAssertTrue(connect.isHittable, "Connect button reachable at the largest text size")
         audit(app, "welcome-xxxl")
         connect.tap()
+        app.signInThroughAccountPage()
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))
         shot("qa-xxxl-02-home")
         audit(app, "home-xxxl")
@@ -119,6 +124,7 @@ final class QAUITests: XCTestCase {
         shot("qa-dark-01-welcome")
         audit(app, "welcome-dark")
         app.buttons["connectHealth"].tap()
+        app.signInThroughAccountPage()
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))
         shot("qa-dark-02-home")
         openClaudeSteps(app)
@@ -134,6 +140,7 @@ final class QAUITests: XCTestCase {
         XCTAssertTrue(app.buttons["connectHealth"].waitForExistence(timeout: 5))
         shot("qa-light-01-welcome")
         app.buttons["connectHealth"].tap()
+        app.signInThroughAccountPage()
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))
         shot("qa-light-02-home")
         app.buttons["moreMenu"].tap()
@@ -161,6 +168,7 @@ final class QAUITests: XCTestCase {
     func testReopeningSetupResumesAtSteps() {
         let app = launchFresh()
         app.buttons["connectHealth"].tap()
+        app.signInThroughAccountPage()
         openClaudeSteps(app)
         tapContinue(app)
         XCTAssertTrue(app.buttons["copyLink"].waitForExistence(timeout: 5))
@@ -176,6 +184,7 @@ final class QAUITests: XCTestCase {
     func testDisconnectReturnsRowToNotSetUp() {
         let app = launchFresh()
         app.buttons["connectHealth"].tap()
+        app.signInThroughAccountPage()
         openClaudeSteps(app)
         tapContinue(app)
         let row = app.buttons["provider.claude"]
@@ -208,6 +217,7 @@ final class QAUITests: XCTestCase {
     func testDoubleTapContinue() {
         let app = launchFresh()
         app.buttons["connectHealth"].tap()
+        app.signInThroughAccountPage()
         openClaudeSteps(app)
         let cont = app.buttons["consentContinue"]
         cont.tap()
@@ -227,6 +237,7 @@ final class QAUITests: XCTestCase {
         print("QA-FLOW after delete: connectHealth enabled within 20 s = \(result == .completed)")
         shot("qa-flow-after-delete-20s")
         connect.tap()
+        app.signInThroughAccountPage()
         let home = app.buttons["provider.claude"].waitForExistence(timeout: 10)
         print("QA-FLOW after delete: reached home without relaunch = \(home)")
         if !home {
@@ -234,6 +245,7 @@ final class QAUITests: XCTestCase {
             let again = launch()
             XCTAssertTrue(again.buttons["connectHealth"].waitForExistence(timeout: 5))
             again.buttons["connectHealth"].tap()
+            again.signInThroughAccountPage()
             print("QA-FLOW after delete: reached home after relaunch = \(again.buttons["provider.claude"].waitForExistence(timeout: 10))")
         }
         XCTAssertTrue(home, "user can reconnect after deleting data, without restarting the app")

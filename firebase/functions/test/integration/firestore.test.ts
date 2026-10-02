@@ -172,8 +172,8 @@ describe('setCategories', () => {
     await registerDevice(db, 'u8', 'UTC');
     const data = new DirBlobs();
     const deps = { meta, data };
-    // Every group starts on, so choosing two switches the others off (and deletes their data, none yet).
-    expect(await setCategories(db, deps, 'u8', ['devices', 'nutrition'])).toEqual({ categories: ['core', 'devices', 'nutrition'], removed: ['heart', 'mind', 'cycle', 'medications', 'profile'] });
+    // Every group except medications starts on, so choosing two switches the other defaults off (and deletes their data, none yet).
+    expect(await setCategories(db, deps, 'u8', ['devices', 'nutrition'])).toEqual({ categories: ['core', 'devices', 'nutrition'], removed: ['heart', 'mind', 'cycle', 'profile'] });
     await meta.publish({ uid: 'u8', type: '_events_devices', batchId: 'g1', generation: 1, mutate: (m) => add(m, 'data/u8/_events_devices/2024-06/g1.parquet') });
     await meta.publish({ uid: 'u8', type: '_events_nutrition', batchId: 'n1', generation: 1, mutate: (m) => add(m, 'data/u8/_events_nutrition/2024-06/n1.parquet') });
     await data.write('data/u8/_events_devices/2024-06/g1.parquet', Buffer.from('x'));
