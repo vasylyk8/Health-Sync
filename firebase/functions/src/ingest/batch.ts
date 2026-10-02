@@ -1,6 +1,6 @@
 import { gunzipSync } from 'node:zlib';
 import { z } from 'zod';
-import { LIMITS, TYPES_BY_ID } from '../config.js';
+import { COVERAGE, EVENT_TYPES, HOURLY_METRICS, LIMITS, TYPES_BY_ID, categoryOfType } from '../config.js';
 import { CompactColumn, CompactError, MAX_COMPACT_POINTS, decodeColumn, decodeTimes } from './compact.js';
 
 /** See docs/DATA_CONTRACT.md §1. Schema 2 adds workout raw data (`ws`, `wd`) and daily context (`day`). */
@@ -85,7 +85,41 @@ const DeleteRec = z.object({ k: z.literal('d'), id: uuid }).strict();
 /** "Checked this type at `at`, nothing new; `cu` = its full history has been delivered." */
 const StatusRec = z.object({ k: z.literal('c'), t: str(120), at: epochMs, cu: z.boolean() }).strict();
 
-export const RecordSchema = z.discriminatedUnion('k', [StreamRec, WorkoutMarkRec, DayRec, WorkoutRec, DeleteRec, StatusRec]);
+const colArr = z.union([pts, CompactColumn]);
+/**
+ * Hourly buckets of one series (heart rate, steps, HRV): `t` = start of each hour, `v` = average (sum for steps),
+ * `lo` / `hi` = minimum / maximum. Plain arrays or (`enc: 1`) compact columns, like raw streams.
+ */
+const HourRec = z.object({
+  k: z.literal('hs'),
+  st: z.string().regex(/^[A-Za-z0-9_]{1,60}$/),
+  u: str(40).nullish(),
+  enc: z.literal(1).optional(),
+  n: z.number().int().min(1).max(MAX_COMPACT_POINTS).optional(),
+  t: z.union([z.array(epochMs).min(1).max(MAX_POINTS_PER_CHUNK), CompactColumn]),
+  v: colArr.optional(), lo: colArr.optional(), hi: colArr.optional(),
+}).strict();
+/**
+ * A chunk of events of one type (glucose readings, a symptom, a nutrient...): `s` = start times, optional `e` end
+ * times, values `v` / `v2` (blood pressure pairs use two types), category value `c`, optional HealthKit `ids`
+ * (so deletions can be applied; dense series omit them) and per-event `meta`.
+ */
+const EventRec = z.object({
+  k: z.literal('ev'),
+  ty: z.string().regex(/^[A-Za-z0-9_]{1,60}$/),
+  u: str(40).nullish(),
+  src: str(200).nullish(),
+  bid: str(200).nullish(),
+  enc: z.literal(1).optional(),
+  n: z.number().int().min(1).max(MAX_COMPACT_POINTS).optional(),
+  s: z.union([z.array(epochMs).min(1).max(MAX_POINTS_PER_CHUNK), CompactColumn]),
+  e: z.union([z.array(epochMs).max(MAX_POINTS_PER_CHUNK), CompactColumn]).optional(),
+  v: colArr.optional(), v2: colArr.optional(), c: colArr.optional(),
+  ids: z.array(uuid).max(MAX_POINTS_PER_CHUNK).optional(),
+  meta: z.array(z.record(str(100), z.union([str(1000), z.number(), z.boolean()])).nullable()).max(MAX_POINTS_PER_CHUNK).optional(),
+}).strict();
+
+export const RecordSchema = z.discriminatedUnion('k', [StreamRec, WorkoutMarkRec, DayRec, WorkoutRec, DeleteRec, StatusRec, HourRec, EventRec]);
 
 /** Batch type used by `status` batches. */
 export const STATUS_TYPE = '_status';
@@ -96,11 +130,13 @@ export const WORKOUT_TYPE = 'HKWorkoutTypeIdentifier';
 export type BatchRecord = z.infer<typeof RecordSchema>;
 
 /** Record kinds each batch type may carry: nothing else is stored. */
+const KINDS_BY_KIND: Record<string, string[]> = { workout: ['w', 'd'], daily: ['day'], workoutdata: ['ws', 'wd'], hourly: ['hs'], events: ['ev', 'd'] };
 const KINDS_BY_TYPE: Record<string, ReadonlySet<string>> = {
   [WORKOUT_TYPE]: new Set(['w', 'd']),
   [DAILY_TYPE]: new Set(['day']),
   [WSTREAM_TYPE]: new Set(['ws', 'wd']),
   [STATUS_TYPE]: new Set(['c']),
+  ...Object.fromEntries(COVERAGE.types.filter((t) => KINDS_BY_KIND[t.kind] && !(t.id in { [WORKOUT_TYPE]: 1, [DAILY_TYPE]: 1, [WSTREAM_TYPE]: 1 })).map((t) => [t.id, new Set(KINDS_BY_KIND[t.kind])])),
 };
 
 /** Normalized row written to Parquet (one table shape for every type). */
@@ -110,6 +146,9 @@ export interface Row {
   s: number;
   e: number;
   v: number | null;
+  /** Second and third values (hourly minimum / maximum, blood pressure diastolic...). */
+  v2?: number | null;
+  v3?: number | null;
   c: number | null;
   u: string | null;
   agg: string | null;
@@ -161,7 +200,7 @@ export function monthKey(ms: number): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
-const KNOWN_KEYS = new Set(['k', 'id', 's', 'e', 'v', 'c', 'u', 'agg', 'src', 'bid', 'dev', 'tz', 't']);
+const KNOWN_KEYS = new Set(['k', 'id', 's', 'e', 'v', 'v2', 'v3', 'c', 'u', 'agg', 'src', 'bid', 'dev', 'tz', 't']);
 
 function extraOf(rec: Record<string, unknown>): string | null {
   const extra: Record<string, unknown> = {};
@@ -187,7 +226,7 @@ export function parseBatch(gz: Buffer): ParsedBatch {
   if (isStatus !== (header.type === STATUS_TYPE)) throw new BatchError('status batches must use type _status');
   if (isStream !== (header.type === WSTREAM_TYPE)) throw new BatchError('workoutdata batches must use type _wstream');
   if (!isStatus && !TYPES_BY_ID.has(header.type)) throw new BatchError(`unknown type ${header.type}`);
-  if ((isStream || header.type === DAILY_TYPE) && header.schema < 2) throw new BatchError('this batch type needs schema 2');
+  if ((isStream || header.type !== WORKOUT_TYPE && header.type !== STATUS_TYPE) && header.schema < 2) throw new BatchError('this batch type needs schema 2');
   const statuses: ParsedBatch['statuses'] = [];
   const streams: StreamChunk[] = [];
   const marks: ParsedBatch['marks'] = [];
@@ -246,6 +285,36 @@ export function parseBatch(gz: Buffer): ParsedBatch {
           streams.push({ wid: rec.wid, st: rec.st, gen: rec.gen, unit: rec.u ?? null, t, cols });
           continue;
         }
+        case 'hs': {
+          if (!HOURLY_METRICS.has(rec.st)) throw new BatchError(`line ${i}: unknown hourly series ${rec.st}`);
+          const { t, cols } = chunkColumns(rec as Record<string, unknown>, 't', [], ['v', 'lo', 'hi'], i);
+          if (!cols.v && !cols.lo && !cols.hi) throw new BatchError(`line ${i}: hourly chunk has no values`);
+          for (let j = 0; j < t.length; j++) {
+            const s = t[j]!;
+            push(monthKey(s), { ...base, k: 'hs', id: null, s, e: s + 3_600_000, v: cols.v?.[j] ?? null, v2: cols.lo?.[j] ?? null, v3: cols.hi?.[j] ?? null, c: null, u: rec.u ?? null, agg: rec.st, src: null, bid: null, dev: null, tz: null, extra: null });
+            min = Math.min(min, s);
+            max = Math.max(max, s + 3_600_000);
+          }
+          continue;
+        }
+        case 'ev': {
+          const def = EVENT_TYPES.get(rec.ty);
+          if (!def) throw new BatchError(`line ${i}: unknown event type ${rec.ty}`);
+          if (def.category !== categoryOfType(header.type)) throw new BatchError(`line ${i}: ${rec.ty} does not belong in a ${header.type} batch`);
+          const { t, times, cols } = chunkColumns(rec as Record<string, unknown>, 's', ['e'], ['v', 'v2', 'c'], i);
+          if (rec.ids && rec.ids.length !== t.length) throw new BatchError(`line ${i}: ids has ${rec.ids.length} entries but s has ${t.length}`);
+          if (rec.meta && rec.meta.length !== t.length) throw new BatchError(`line ${i}: meta has ${rec.meta.length} entries but s has ${t.length}`);
+          for (let j = 0; j < t.length; j++) {
+            const s = t[j]!;
+            const e = times.e?.[j] ?? s;
+            if (e < s) throw new BatchError(`line ${i}: end before start`);
+            const meta = rec.meta?.[j];
+            push(monthKey(s), { ...base, k: 'ev', id: rec.ids?.[j] ?? null, s, e, v: cols.v?.[j] ?? null, v2: cols.v2?.[j] ?? null, v3: null, c: cols.c?.[j] ?? null, u: rec.u ?? null, agg: rec.ty, src: rec.src ?? null, bid: rec.bid ?? null, dev: null, tz: null, extra: meta ? JSON.stringify(meta) : null });
+            min = Math.min(min, s);
+            max = Math.max(max, e);
+          }
+          continue;
+        }
         case 'wd':
           marks.push({ wid: rec.wid, gen: rec.gen, expected: rec.expected });
           continue;
@@ -253,7 +322,7 @@ export function parseBatch(gz: Buffer): ParsedBatch {
           const [y, m, d] = rec.day.split('-').map(Number) as [number, number, number];
           const s = Date.UTC(y, m - 1, d);
           if (new Date(s).toISOString().slice(0, 10) !== rec.day) throw new BatchError(`line ${i}: impossible date ${rec.day}`);
-          push(monthKey(s), { ...base, k: 'day', id: rec.day, s, e: s + 86_400_000, v: null, c: null, u: null, agg: null, src: null, bid: null, dev: null, tz: null, extra: JSON.stringify({ m: rec.m }) });
+          push(monthKey(s), { ...base, k: 'day', id: rec.day, s, e: s + 86_400_000, v: null, v2: null, v3: null, c: null, u: null, agg: null, src: null, bid: null, dev: null, tz: null, extra: JSON.stringify({ m: rec.m }) });
           min = Math.min(min, s);
           max = Math.max(max, s + 86_400_000);
           continue;
@@ -277,6 +346,8 @@ export function parseBatch(gz: Buffer): ParsedBatch {
             s: rec.s,
             e: rec.e,
             v: typeof r.v === 'number' ? r.v : null,
+            v2: null,
+            v3: null,
             c: typeof r.c === 'number' ? r.c : null,
             u: typeof r.u === 'string' ? r.u : null,
             agg: null,
@@ -307,6 +378,50 @@ export function parseBatch(gz: Buffer): ParsedBatch {
     streams,
     marks,
   };
+}
+
+/** Decodes the time column, optional extra time columns and value columns of an `hs` or `ev` chunk (plain or compact). */
+function chunkColumns(rec: Record<string, unknown>, timeKey: string, timeKeys: string[], valueKeys: string[], line: number): { t: number[]; times: Record<string, number[]>; cols: Record<string, (number | null)[]> } {
+  const times: Record<string, number[]> = {};
+  const cols: Record<string, (number | null)[]> = {};
+  if (rec.enc === 1) {
+    const n = rec.n as number | undefined;
+    if (n === undefined || Array.isArray(rec[timeKey])) throw new BatchError(`line ${line}: a compact chunk needs n and column objects`);
+    try {
+      const t = decodeTimes(rec[timeKey] as CompactColumn, n, MAX_EPOCH_MS);
+      for (const k of timeKeys) {
+        const c = rec[k];
+        if (!c) continue;
+        if (Array.isArray(c)) throw new BatchError(`line ${line}: ${k} must be a compact column`);
+        times[k] = decodeTimes(c as CompactColumn, n, MAX_EPOCH_MS);
+      }
+      for (const k of valueKeys) {
+        const c = rec[k];
+        if (!c) continue;
+        if (Array.isArray(c)) throw new BatchError(`line ${line}: ${k} must be a compact column`);
+        cols[k] = decodeColumn(c as CompactColumn, n);
+      }
+      return { t, times, cols };
+    } catch (err) {
+      if (err instanceof CompactError) throw new BatchError(`line ${line}: ${err.message}`);
+      throw err;
+    }
+  }
+  const t = rec[timeKey];
+  if (!Array.isArray(t) || rec.n !== undefined) throw new BatchError(`line ${line}: plain chunks need a time array and no n`);
+  for (const k of timeKeys) {
+    const a = rec[k];
+    if (!a) continue;
+    if (!Array.isArray(a) || a.length !== t.length) throw new BatchError(`line ${line}: ${k} must be an array as long as ${timeKey}`);
+    times[k] = a as number[];
+  }
+  for (const k of valueKeys) {
+    const a = rec[k];
+    if (!a) continue;
+    if (!Array.isArray(a) || a.length !== t.length) throw new BatchError(`line ${line}: ${k} must be an array as long as ${timeKey}`);
+    cols[k] = a as (number | null)[];
+  }
+  return { t: t as number[], times, cols };
 }
 
 function parseLine<T>(line: string, index: number, schema: z.ZodType<T>): T {

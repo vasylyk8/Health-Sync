@@ -6,7 +6,7 @@ import { gzipSync } from 'node:zlib';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
-import { UID, TZ, batches } from './data.mjs';
+import { UID, TZ, CATEGORIES, batches } from './data.mjs';
 
 const project = process.env.GCP_PROJECT_ID;
 const token = process.env.SYNTHETIC_TOKEN;
@@ -19,6 +19,8 @@ const user = db.doc(`users/${UID}`);
 if (!(await user.get()).exists) {
   await user.set({ generation: 1, deleting: false, createdAt: Date.now(), lastVisibleAt: null, tz: TZ, connections: {}, links: {}, synthetic: true });
 }
+// The extra data groups the synthetic data uses (the server drops batches of groups that are off).
+await user.update({ categories: CATEGORIES });
 await db.doc(`tokens/${hash}`).set({ uid: UID, provider: 'claude', createdAt: Date.now() });
 await user.update({ 'links.claude': { tokenHash: hash, createdAt: Date.now() } });
 
@@ -26,7 +28,7 @@ await user.update({ 'links.claude': { tokenHash: hash, createdAt: Date.now() } }
 const types = await user.collection('types').get();
 // Data of the previous app version (other types) is replaced too.
 const have = new Set(types.docs.map((d) => d.id));
-const missing = !(have.has('HKWorkoutTypeIdentifier') && have.has('_daily'));
+const missing = !(have.has('HKWorkoutTypeIdentifier') && have.has('_daily') && have.has('_hourly') && have.has('_events_devices') && have.has('_events_mind'));
 if (missing) console.log('workouts or daily context missing: seeding');
 if (missing || process.env.FORCE_RESEED === '1') {
   const bucket = getStorage().bucket(`${project}-incoming`);

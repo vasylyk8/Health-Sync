@@ -13,6 +13,8 @@ final class StubBackend: Backend, @unchecked Sendable {
     func createLink(provider: String) async throws -> String { "https://example.test/mcp/\(provider)" }
     func disconnect(provider: String) async throws {}
     func deleteAllData() async throws {}
+    var categoryCalls: [[String]] = []
+    func setCategories(_ ids: [String]) async throws { categoryCalls.append(ids) }
     func status() async throws -> ServerStatus { .empty }
     func batchExists(batchId: String) async throws -> Bool { true }
     func signOut() async {}
@@ -99,6 +101,19 @@ final class AppModelTests: XCTestCase {
         await fulfillment(of: [done], timeout: 15)
         XCTAssertEqual(model.phase, .home)
         XCTAssertFalse(model.busy)
+    }
+
+    func testSwitchingACategoryOnTellsTheServerFirstAndOffDeletesIt() async {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        await model.setCategory("devices", on: true)
+        XCTAssertTrue(model.isEnabled("devices"))
+        XCTAssertEqual(backend.categoryCalls.last, ["core", "devices"])
+        await model.setCategory("devices", on: false)
+        XCTAssertFalse(model.isEnabled("devices"))
+        XCTAssertEqual(backend.categoryCalls.last, ["core"])
+        await model.setCategory("core", on: false)
+        XCTAssertEqual(backend.categoryCalls.count, 2, "core is always on and never sent as a change")
     }
 
     func testErrorMessagesAreActionable() {

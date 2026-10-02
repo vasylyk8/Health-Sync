@@ -56,6 +56,10 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
         _ = try await call("deleteAllData", [:])
     }
 
+    func setCategories(_ ids: [String]) async throws {
+        _ = try await call("setCategories", ["categories": ids])
+    }
+
     func status() async throws -> ServerStatus {
         let data = try await call("getStatus", [:])
         let json = try JSONSerialization.data(withJSONObject: data ?? [:])

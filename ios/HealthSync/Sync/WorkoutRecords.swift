@@ -43,26 +43,29 @@ enum WorkoutRecords {
     /// elevation tools report), 0.1 m/s speed; course and the two accuracy figures to a whole unit (no tool reads them).
     /// Every point is kept. Quantity streams are always exact.
     static let routePlans: [String: CompactColumns.Plan] = [
-        "lat": .step(100_000), "lon": .step(100_000), "alt": .step(10), "spd": .step(10), "crs": .step(1), "ha": .step(1), "va": .step(1),
+        "lat": .step(100_000), "lon": .step(100_000), "alt": .step(10), "spd": .step(10), "ha": .step(1),
     ]
     /// Finer variant for the speed test's size comparison only.
     static let fineRoutePlans: [String: CompactColumns.Plan] = [
-        "lat": .step(100_000), "lon": .step(100_000), "alt": .step(10), "spd": .step(100), "crs": .step(10), "ha": .step(10), "va": .step(10),
+        "lat": .step(100_000), "lon": .step(100_000), "alt": .step(10), "spd": .step(100), "ha": .step(10),
     ]
+    /// Quantity streams (heart rate, distance, power, ...) are rounded to 3 decimals (0.001 bpm, 1 mm, 0.001 m/s):
+    /// far below sensor precision, and it removes float noise so the values compress as short integers.
+    static let quantityPlan: CompactColumns.Plan = .rounded(3)
 
     /// Chunks of one stream with a single value column `v`.
     static func series(wid: String, name: String, gen: Int64, unit: String?, points: [SeriesPoint], format: Format = .compact) -> (records: [Record], count: Int) {
         let pts = dedupe(points)
-        let records = chunks(wid: wid, name: name, gen: gen, unit: unit, t: pts.map(\.t), columns: ["v": pts.map { Optional($0.v) }], plans: [:], format: format)
+        let records = chunks(wid: wid, name: name, gen: gen, unit: unit, t: pts.map(\.t), columns: ["v": pts.map { Optional($0.v) }], plans: ["v": quantityPlan], format: format)
         return (records, pts.count)
     }
 
-    /// Chunks of the GPS route with columns lat, lon, alt, spd, crs, ha, va (unused ones are omitted).
+    /// Chunks of the GPS route with columns lat, lon, alt, spd and ha (course and vertical accuracy are not sent: no tool reads them).
     static func route(wid: String, gen: Int64, points: [RoutePoint], format: Format = .compact, plans: [String: CompactColumns.Plan] = routePlans) -> (records: [Record], count: Int) {
         let pts = dedupe(points)
         let columns: [String: [Double?]] = [
             "lat": pts.map { Optional($0.lat) }, "lon": pts.map { Optional($0.lon) },
-            "alt": pts.map(\.alt), "spd": pts.map(\.spd), "crs": pts.map(\.crs), "ha": pts.map(\.ha), "va": pts.map(\.va),
+            "alt": pts.map(\.alt), "spd": pts.map(\.spd), "ha": pts.map(\.ha),
         ]
         return (chunks(wid: wid, name: "route", gen: gen, unit: nil, t: pts.map(\.t), columns: columns, plans: plans, format: format), pts.count)
     }

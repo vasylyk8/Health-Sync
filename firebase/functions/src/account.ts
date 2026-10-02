@@ -1,6 +1,6 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
-import { PROVIDERS, type Provider } from './config.js';
+import { CATEGORY_IDS, COVERAGE, DEFAULT_CATEGORIES, PROVIDERS, type Provider } from './config.js';
 import { generateToken, hashToken } from './auth/tokens.js';
 import type { BlobStore, MetaStore, UserDoc } from './store/types.js';
 import { log } from './log.js';
@@ -129,13 +129,15 @@ export interface Status {
   historySyncedBackTo: number | null;
   /** Number of data types with queryable data. */
   typesWithData: number;
+  /** Consent categories switched on. */
+  categories: string[];
 }
 
 /** What the app shows on its home screen. Everything comes from server-side published state. */
 export async function getStatus(db: Firestore, uid: string): Promise<Status> {
   const ref = db.collection('users').doc(uid);
   const [snap, types] = await Promise.all([ref.get(), ref.collection('types').select('coverage').get()]);
-  if (!snap.exists) return { registered: false, deleting: false, setUp: {}, lastVisibleAt: null, historySyncedBackTo: null, typesWithData: 0 };
+  if (!snap.exists) return { registered: false, deleting: false, setUp: {}, lastVisibleAt: null, historySyncedBackTo: null, typesWithData: 0, categories: DEFAULT_CATEGORIES };
   const user = snap.data() as UserDoc;
   let earliest: number | null = null;
   let withData = 0;
@@ -151,6 +153,7 @@ export async function getStatus(db: Firestore, uid: string): Promise<Status> {
     lastVisibleAt: user.lastVisibleAt ?? null,
     historySyncedBackTo: earliest,
     typesWithData: withData,
+    categories: user.categories ?? DEFAULT_CATEGORIES,
   };
 }
 
@@ -184,4 +187,42 @@ export async function sweepDeletions(deps: PurgeDeps, limit = 20): Promise<{ pur
     }
   }
   return { purged, failed };
+}
+
+/** Validates a list of consent category ids; "core" is always on. */
+export function parseCategories(value: unknown): string[] {
+  if (!Array.isArray(value) || value.some((c) => typeof c !== 'string' || !CATEGORY_IDS.has(c))) {
+    throw new AccountError('invalid-argument', `categories must be a list of: ${[...CATEGORY_IDS].join(', ')}`);
+  }
+  return [...new Set<string>([...DEFAULT_CATEGORIES, ...(value as string[])])].sort();
+}
+
+/** Removes every stored byte and index entry of the types in one consent category. Idempotent. */
+export async function purgeCategoryData(deps: { meta: MetaStore; data: BlobStore }, uid: string, category: string): Promise<void> {
+  for (const t of COVERAGE.types) {
+    if ((t.category ?? 'core') !== category) continue;
+    await deps.data.deletePrefix(`data/${uid}/${t.id}/`);
+    await deps.meta.deleteManifest(uid, t.id);
+  }
+}
+
+/**
+ * Stores which categories the user switched on. Data of a category that was switched off is deleted now
+ * (the app re-sends it from the beginning if the category is switched on again).
+ */
+export async function setCategories(db: Firestore, deps: { meta: MetaStore; data: BlobStore }, uid: string, value: unknown): Promise<{ categories: string[]; removed: string[] }> {
+  const next = parseCategories(value);
+  const ref = db.collection('users').doc(uid);
+  const previous = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new AccountError('failed-precondition', 'Register the device first.');
+    const user = snap.data() as UserDoc;
+    if (user.deleting) throw new AccountError('failed-precondition', 'This account is being deleted.');
+    tx.update(ref, { categories: next });
+    return user.categories ?? DEFAULT_CATEGORIES;
+  });
+  const removed = previous.filter((c) => !next.includes(c));
+  for (const category of removed) await purgeCategoryData(deps, uid, category);
+  log.info('categories set', { uid, categories: next.join(','), removed: removed.join(',') });
+  return { categories: next, removed };
 }

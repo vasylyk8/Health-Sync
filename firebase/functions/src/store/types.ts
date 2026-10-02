@@ -32,6 +32,11 @@ export interface Coverage {
 export interface FileRef {
   path: string;
   bytes: number;
+  /**
+   * Raw stream files only: columns stored as integers X with the real value X / scale[col] (delta-encoded
+   * integers are several times smaller than doubles). A column not listed here is a plain DOUBLE column.
+   */
+  scale?: Record<string, number>;
 }
 
 export interface TypeManifest {
@@ -49,6 +54,8 @@ export interface TypeManifest {
 }
 
 export interface UserDoc {
+  /** Consent categories the user switched on (see CATEGORIES in config.ts); missing = the defaults. */
+  categories?: string[];
   generation: number;
   deleting: boolean;
   createdAt: number;

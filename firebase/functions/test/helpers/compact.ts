@@ -1,7 +1,7 @@
 import type { CompactColumn } from '../../src/ingest/compact.js';
 
 /** Reference encoder for compact columns (the phone has its own in Swift; both are checked against shared/compact-fixtures.json). */
-export type Plan = { m: number } | 'exact';
+export type Plan = { m: number } | { rounded: number } | 'exact';
 
 const MULTIPLIERS = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000];
 const SAFE = 9e15;
@@ -13,8 +13,16 @@ function exactMultiplier(values: (number | null)[]): number | null {
   return null;
 }
 
-export function encodeColumn(values: (number | null)[], plan: Plan): CompactColumn {
-  const m = plan === 'exact' ? exactMultiplier(values) : plan.m;
+export function encodeColumn(input: (number | null)[], plan: Plan): CompactColumn {
+  let values = input;
+  let m: number | null;
+  if (plan === 'exact') m = exactMultiplier(values);
+  else if ('rounded' in plan) {
+    // Round to this many decimals first (float noise such as 61.99999999999999 becomes 62), then keep the result exactly.
+    const scale = 10 ** Math.max(0, Math.min(plan.rounded, 6));
+    values = input.map((v) => (v !== null && Number.isFinite(v) ? Math.round(v * scale) / scale : v));
+    m = exactMultiplier(values);
+  } else m = plan.m;
   if (m === null) return { r: values.map((v) => (v !== null && Number.isFinite(v) ? v : null)) };
   const x: number[] = [];
   const nulls: number[] = [];

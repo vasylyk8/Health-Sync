@@ -46,7 +46,7 @@ struct SetupSheet: View {
                         Image(systemName: "lock.shield.fill").font(.system(size: 56)).foregroundStyle(provider.tint.gradient)
                             .accessibilityHidden(true)
                         Text("Share your workouts with \(provider.name)?").font(.title2.bold()).multilineTextAlignment(.center)
-                        Text("You'll get a private link. With it, \(provider.name) can read your workouts (including detailed measurements and GPS routes) and daily summaries whenever you ask it a question. \(provider.company) processes that data under its own terms. You can disconnect at any time.")
+                        Text("You'll get a private link. With it, \(provider.name) can read your workouts (including detailed measurements and GPS routes) and daily and hourly summaries, plus any extra data groups you switch on, whenever you ask it a question. \(provider.company) processes that data under its own terms. You can disconnect at any time.")
                             .multilineTextAlignment(.center).foregroundStyle(Theme.mutedText)
                         Spacer(minLength: 0)
                     }

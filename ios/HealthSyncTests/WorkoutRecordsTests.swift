@@ -57,7 +57,7 @@ final class WorkoutRecordsTests: XCTestCase {
         XCTAssertEqual(doubles(r["lat"], of: r), [50.0, 50.001])
         XCTAssertEqual(doubles(r["alt"], of: r), [100, nil])
         XCTAssertNil(r["v"])
-        XCTAssertNotNil(r["crs"])
+        XCTAssertNil(r["crs"], "course is not sent")
     }
 
     func testRouteIsRoundedToAboutAMetreAndKeepsEveryPoint() {
@@ -92,11 +92,22 @@ final class WorkoutRecordsTests: XCTestCase {
         XCTAssertLessThan(size(built.records), size(plain) / 3)
     }
 
-    func testQuantityValuesAreExactEvenWhenNotShortDecimals() {
-        let values: [Double] = [0, 0.1, 0.30000000000000004, 1.0 / 3.0, 117, 12.5, 98.6, 0.0234567890123]
+    func testQuantityValuesAreRoundedToThreeDecimalsAndNeverPlainNumbers() {
+        let values: [Double] = [0, 0.1, 0.30000000000000004, 1.0 / 3.0, 117, 12.5, 98.6, 0.0234567890123, 61.99999999999999]
         let points = values.enumerated().map { SeriesPoint(t: Int64($0.offset) * 1000, v: $0.element) }
         let r = WorkoutRecords.series(wid: "W", name: "X", gen: 1, unit: nil, points: points).records[0]
-        XCTAssertEqual(doubles(r["v"], of: r), values.map { Optional($0) }, "every value comes back bit for bit")
+        let back = doubles(r["v"], of: r)
+        XCTAssertEqual(back.count, values.count)
+        for (original, decoded) in zip(values, back) { XCTAssertEqual(decoded!, original, accuracy: 0.0005 + 1e-9) }
+        if case .object(let column)? = r["v"] { XCTAssertNil(column["r"], "rounded values are sent as integers, not plain numbers") }
+    }
+
+    func testRouteSendsNoCourseOrVerticalAccuracy() {
+        let pts = [RoutePoint(t: 1, lat: 50, lon: 30, alt: 100, spd: 3, crs: 90, ha: 4, va: 2), RoutePoint(t: 2, lat: 50.0001, lon: 30, alt: 101, spd: 3, crs: 91, ha: 4, va: 2)]
+        let r = WorkoutRecords.route(wid: "W", gen: 1, points: pts).records[0]
+        XCTAssertNil(r["crs"])
+        XCTAssertNil(r["va"])
+        XCTAssertNotNil(r["ha"])
     }
 
     func testEmptyColumnsAreOmittedAndEmptyInputMakesNoRecords() {

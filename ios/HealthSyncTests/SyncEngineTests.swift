@@ -10,6 +10,9 @@ final class ScriptedSource: HealthSource, @unchecked Sendable {
     /// Raw data records by workout id. A missing id means the workout no longer exists.
     var details: [String: [Record]] = [:]
     var daily: [Record] = []
+    var eventPages: [AnchoredPage] = []
+    var hourly: [Record] = []
+    private(set) var hourlyRanges: [(from: Date, to: Date)] = []
     var earliestDaily: Date?
     /// Steps that throw: "recent", "anchored", "index", "daily", "detail".
     var failing: Set<String> = []
@@ -31,6 +34,10 @@ final class ScriptedSource: HealthSource, @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         if failing.contains("anchored") { throw HealthKitFailure() }
         anchorsSeen.append(anchor)
+        if type.kind == .events {
+            guard !eventPages.isEmpty else { return AnchoredPage(records: [], newAnchor: anchor, objectCount: 0) }
+            return eventPages.removeFirst()
+        }
         guard !pages.isEmpty else { return AnchoredPage(records: [], newAnchor: anchor, objectCount: 0) }
         return pages.removeFirst()
     }
@@ -52,6 +59,12 @@ final class ScriptedSource: HealthSource, @unchecked Sendable {
         if failing.contains("daily") { throw HealthKitFailure() }
         dailyRanges.append((from, to))
         return daily
+    }
+
+    func hourlySeries(from: Date, to: Date) async throws -> [Record] {
+        lock.lock(); defer { lock.unlock() }
+        hourlyRanges.append((from, to))
+        return hourly
     }
 
     func earliestDailyDate() async throws -> Date? { earliestDaily }
@@ -370,7 +383,9 @@ final class SyncEngineTests: XCTestCase {
         source.earliestDaily = Date(timeIntervalSinceNow: -400 * 86_400)
         source.daily = [["k": "day", "day": "2024-06-20", "m": .object(["steps": 1])]]
         let up = RecordingUploader()
-        let (engine, _) = makeEngine(source, up)
+        var config = SyncEngine.Config()
+        config.minRefresh = 0
+        let (engine, _) = makeEngine(source, up, config: config)
         _ = try await engine.run()
         XCTAssertEqual(source.dailyRanges.count, 2, "400 days are read a year at a time")
         let first = try XCTUnwrap(source.dailyRanges.first)
@@ -381,6 +396,90 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertGreaterThan(last.from.timeIntervalSinceNow, -4 * 86_400 - 1, "later runs only recompute the last few days")
         let statsHeaders = up.uploaded.filter { $0.type == HealthTypes.dailyId }.map { $0.header }
         XCTAssertTrue(statsHeaders.allSatisfy { $0["mode"] as? String == "stats" && $0["window"] != nil })
+    }
+
+    func testUnchangedDailyRowsAreNotSentAgain() async throws {
+        let source = ScriptedSource()
+        source.earliestDaily = Date(timeIntervalSinceNow: -3 * 86_400)
+        source.daily = [["k": "day", "day": "2024-06-20", "m": .object(["steps": 1])]]
+        let up = RecordingUploader()
+        var config = SyncEngine.Config()
+        config.minRefresh = 0
+        let (engine, _) = makeEngine(source, up, config: config)
+        _ = try await engine.run()
+        _ = try await engine.run()
+        let sent = up.uploaded.filter { $0.type == HealthTypes.dailyId }.count
+        _ = try await engine.run()
+        XCTAssertEqual(up.uploaded.filter { $0.type == HealthTypes.dailyId }.count, sent, "the same rows are not uploaded a third time")
+        source.daily = [["k": "day", "day": "2024-06-20", "m": .object(["steps": 2])]]
+        _ = try await engine.run()
+        XCTAssertEqual(up.uploaded.filter { $0.type == HealthTypes.dailyId }.count, sent + 1, "changed rows are sent")
+    }
+
+    func testDailyRowsAreNotReadAgainWithinTheRefreshInterval() async throws {
+        let source = ScriptedSource()
+        source.earliestDaily = Date(timeIntervalSinceNow: -3 * 86_400)
+        let up = RecordingUploader()
+        let (engine, _) = makeEngine(source, up)
+        _ = try await engine.run()
+        let reads = source.dailyRanges.count
+        _ = try await engine.run()
+        XCTAssertEqual(source.dailyRanges.count, reads)
+    }
+
+    private var hourlyScope: SyncScope {
+        var s = scope
+        s.hourly = [HourlyMetric(name: "HeartRate", type: HKQuantityType(.heartRate), unit: HKUnit.count().unitDivided(by: .minute()), unitLabel: "count/min", cumulative: false, cols: ["avg", "min", "max"], appleOnly: false)]
+        return s
+    }
+
+    func testHourlySeriesUploadOnceThenAboutHourly() async throws {
+        let source = ScriptedSource()
+        source.earliestDaily = Date(timeIntervalSinceNow: -3 * 86_400)
+        source.hourly = SeriesRecords.hourlyChunks(name: "HeartRate", unit: "count/min", hours: [HourBucket(t: 3_600_000, v: 60, lo: 50, hi: 70)])
+        let up = RecordingUploader()
+        let box = Outbox(root: root)
+        let engine = SyncEngine(source: source, uploader: up, outbox: box, scope: hourlyScope)
+        _ = try await engine.run()
+        XCTAssertEqual(source.hourlyRanges.count, 1)
+        XCTAssertEqual(up.uploaded.filter { $0.type == HealthTypes.hourlyId }.count, 1)
+        XCTAssertNotNil(box.state.hourlyThrough)
+        XCTAssertNotNil(box.state.hourlyAt)
+        _ = try await engine.run()
+        XCTAssertEqual(source.hourlyRanges.count, 1, "not read again within the hour")
+    }
+
+    private var glucose: EventType {
+        EventType(name: "BloodGlucose", category: "devices", kind: .quantity, sampleType: HKQuantityType(.bloodGlucose),
+                  unit: HKUnit.gramUnit(with: .milli).unitDivided(by: .literUnit(with: .deci)), unitLabel: "mg/dL", dense: true)
+    }
+
+    func testEventsAreOnlyReadForSwitchedOnCategories() async throws {
+        var scope = self.scope
+        scope.events = [glucose]
+        let page = AnchoredPage(records: SeriesRecords.eventChunks(type: "BloodGlucose", unit: "mg/dL", source: "Dexcom", bundle: "com.dexcom", points: [EventPoint(start: 1_000, end: 1_000, v: 100)]), newAnchor: Data("G1".utf8), objectCount: 1)
+        // Off: nothing is read or uploaded.
+        let off = ScriptedSource()
+        off.eventPages = [page]
+        let up1 = RecordingUploader()
+        let box1 = Outbox(root: root)
+        _ = try await SyncEngine(source: off, uploader: up1, outbox: box1, scope: scope).run()
+        XCTAssertTrue(up1.uploaded.filter { $0.type == "_events_devices" }.isEmpty)
+        XCTAssertNil(box1.state.anchors["ev:BloodGlucose"])
+        // On: uploaded under the category's batch type and the anchor is kept.
+        let on = ScriptedSource()
+        on.eventPages = [page]
+        let up2 = RecordingUploader()
+        let box2 = Outbox(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let engine = SyncEngine(source: on, uploader: up2, outbox: box2, scope: scope, categories: { ["core", "devices"] })
+        _ = try await engine.run()
+        XCTAssertEqual(up2.uploaded.filter { $0.type == "ev:BloodGlucose" }.count, 1)
+        XCTAssertEqual(up2.uploaded.first { $0.type == "ev:BloodGlucose" }?.header["type"] as? String, "_events_devices")
+        XCTAssertEqual(box2.state.anchors["ev:BloodGlucose"], Data("G1".utf8))
+        // Switched off again: the position is forgotten so a later switch-on starts from the beginning.
+        try await engine.categoryDisabled("devices")
+        XCTAssertNil(box2.state.anchors["ev:BloodGlucose"])
+        XCTAssertFalse(box2.state.caughtUp.contains("ev:BloodGlucose"))
     }
 
     func testEmptyRecentPassSkipsTheUpload() async throws {

@@ -12,6 +12,9 @@ enum CompactColumns {
         case exact
         /// Round to a multiple of 1/m (e.g. `.step(100_000)` is 0.00001, about 1.1 m of latitude).
         case step(Int64)
+        /// Round every value to this many decimals (at most 6), then keep the result exactly with the smallest divisor.
+        /// Apple Health returns float noise such as 61.99999999999999 for 62 bpm, which would otherwise force plain numbers.
+        case rounded(Int)
     }
 
     private static let exactDivisors: [Int64] = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000]
@@ -23,11 +26,20 @@ enum CompactColumns {
         delta(t, divisor: 1, nulls: [])
     }
 
-    static func encode(_ values: [Double?], plan: Plan) -> RecordValue {
+    static func encode(_ input: [Double?], plan: Plan) -> RecordValue {
+        var values = input
         let m: Int64
         switch plan {
         case .step(let s): m = max(1, s)
         case .exact:
+            guard let found = exactDivisor(values) else { return plain(values) }
+            m = found
+        case .rounded(let decimals):
+            let scale = pow(10.0, Double(max(0, min(decimals, 6))))
+            values = input.map { value in
+                guard let value, value.isFinite else { return value }
+                return (value * scale).rounded() / scale
+            }
             guard let found = exactDivisor(values) else { return plain(values) }
             m = found
         }

@@ -9,6 +9,8 @@ struct ServerStatus: Decodable, Equatable, Sendable {
     var lastVisibleAt: Double?
     var historySyncedBackTo: Double?
     var typesWithData: Int
+    /// Data categories the server accepts (older servers do not report this).
+    var categories: [String]? = nil
 
     static let empty = ServerStatus(registered: false, deleting: false, setUp: [:], lastVisibleAt: nil, historySyncedBackTo: nil, typesWithData: 0)
 
@@ -23,6 +25,8 @@ protocol Backend: Uploader {
     func createLink(provider: String) async throws -> String
     func disconnect(provider: String) async throws
     func deleteAllData() async throws
+    /// Tells the server which data categories are switched on; data of a category switched off is deleted there.
+    func setCategories(_ ids: [String]) async throws
     func status() async throws -> ServerStatus
     /// Whether the server already has this upload batch (processed, or waiting to be processed).
     func batchExists(batchId: String) async throws -> Bool

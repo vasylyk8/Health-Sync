@@ -6,6 +6,7 @@ final class FakeBackend: Backend, @unchecked Sendable {
     private let lock = NSLock()
     private var links: [String: String] = [:]
     private var setUp: [String: Bool] = [:]
+    private var categories: [String] = ["core"]
     private(set) var uploads: [String] = []
     var lastVisibleAt: Double?
 
@@ -31,10 +32,12 @@ final class FakeBackend: Backend, @unchecked Sendable {
 
     func deleteAllData() async throws { lock.withLock { links = [:]; setUp = [:] } }
 
+    func setCategories(_ ids: [String]) async throws { lock.withLock { categories = ids } }
+
     func status() async throws -> ServerStatus {
         lock.withLock {
             ServerStatus(registered: true, deleting: false, setUp: setUp, lastVisibleAt: lastVisibleAt ?? Date().timeIntervalSince1970 * 1000 - 120_000,
-                         historySyncedBackTo: Date(timeIntervalSince1970: 1_552_000_000).timeIntervalSince1970 * 1000, typesWithData: 42)
+                         historySyncedBackTo: Date(timeIntervalSince1970: 1_552_000_000).timeIntervalSince1970 * 1000, typesWithData: 42, categories: categories)
         }
     }
 

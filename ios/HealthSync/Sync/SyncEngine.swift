@@ -68,6 +68,14 @@ actor SyncEngine {
         /// Uncompressed size of one raw-data upload part. Parts are compressed in parallel, off the sync actor,
         /// and stay under the server's compressed limit without being split again.
         var detailPartBytes = 4_000_000
+        /// Events (readings, entries) per anchored page; glucose has a reading every few minutes.
+        var eventPageLimit = 5_000
+        /// Hourly series: how many recent days are re-read on each pass, and how often a pass runs.
+        var hourlyIncrementalDays = 3
+        var hourlyEvery: TimeInterval = 3_600
+        /// Events and the incremental daily rows are not re-read more often than this.
+        var minRefresh: TimeInterval = 900
+        var profileEvery: TimeInterval = 7 * 86_400
     }
 
     private let source: HealthSource
@@ -78,6 +86,10 @@ actor SyncEngine {
     private let now: @Sendable () -> Date
     private let timeZone: @Sendable () -> String
     private let telemetry: Telemetry
+    /// Consent categories switched on right now ("core" is always on).
+    private let categories: @Sendable () -> Set<String>
+    private var lastDailyAt: Date?
+    private var lastEventsAt: Date?
     private var running = false
     private var progressHandler: (@Sendable (SyncProgress) -> Void)?
     private var phase = 0
@@ -95,7 +107,8 @@ actor SyncEngine {
 
     init(source: HealthSource, uploader: Uploader, outbox: Outbox, scope: SyncScope, config: Config = Config(),
          now: @escaping @Sendable () -> Date = Date.init, timeZone: @escaping @Sendable () -> String = { TimeZone.current.identifier },
-         telemetry: Telemetry = NoTelemetry()) {
+         telemetry: Telemetry = NoTelemetry(), categories: @escaping @Sendable () -> Set<String> = { ["core"] }) {
+        self.categories = categories
         self.source = source
         self.uploader = uploader
         self.outbox = outbox
@@ -113,6 +126,7 @@ actor SyncEngine {
     }
 
     private var workoutId: String { scope.workout?.id ?? HealthTypes.workoutId }
+    private var enabledCategories: Set<String> { categories().union(["core"]) }
 
     var progress: SyncProgress {
         let s = outbox.state
@@ -190,6 +204,16 @@ actor SyncEngine {
                 }
             }
             background.append(history)
+            background.append(Task { try await self.step { try await SyncTiming.shared.measure("phase.hourly") { try await self.hourlyHistory() } } })
+            background.append(Task {
+                try await self.step {
+                    try await SyncTiming.shared.measure("phase.events") {
+                        try await self.eventsSync()
+                        try await self.profileSync()
+                        try await self.medicationSync()
+                    }
+                }
+            })
             phase = 4
             try await step {
                 let index = try await indexTask.value
@@ -285,11 +309,13 @@ actor SyncEngine {
     }
 
     /// Daily context: the whole history the first time (and once a week, so older data added
-    /// later is included), otherwise just the last few days.
+    /// later is included), otherwise just the last few days. Rows go out per consent category, and a chunk whose
+    /// content did not change since it was last sent is not sent again.
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }
         let end = now()
         let full = outbox.state.dailyFullAt.map { end.timeIntervalSince($0) > config.dailyFullEvery } ?? true
+        if !full, let last = lastDailyAt, end.timeIntervalSince(last) < config.minRefresh { return }
         var start: Date
         if full {
             start = try await SyncTiming.shared.measure("hk.earliest") { try await source.earliestDailyDate() } ?? end.addingTimeInterval(-365 * 86_400)
@@ -298,19 +324,128 @@ actor SyncEngine {
         }
         let cal = Calendar.current
         start = cal.startOfDay(for: start)
+        let categories = enabledCategories
         // One year per batch set keeps memory and batch sizes bounded.
         var chunkStart = start
         while chunkStart < end {
             try checkTime()
             let chunkEnd = min(cal.date(byAdding: .year, value: 1, to: chunkStart) ?? end, end)
             let started = Date()
-            let records = try await SyncTiming.shared.measure("hk.dailyChunk") { try await source.dailyContext(from: chunkStart, to: chunkEnd) }
+            let batches = try await SyncTiming.shared.measure("hk.dailyChunk") { try await source.dailyContextBatches(from: chunkStart, to: chunkEnd, categories: categories) }
             let readMs = Self.ms(since: started)
-            let header = BatchHeader(type: HealthTypes.dailyId, mode: .stats, seq: try outbox.nextSeq(HealthTypes.dailyId), window: (chunkStart, chunkEnd), checkedAt: end)
-            let last = chunkEnd >= end
-            try await send(HealthTypes.dailyId, header: header, records: records, anchor: nil, completes: last && full ? .dailyFull(end) : nil, readMs: readMs)
+            for batch in batches {
+                // Categories other than core send nothing when they have no rows; core always reports (it advances the covered window).
+                if batch.records.isEmpty && batch.category != "core" { continue }
+                let lines = try BatchWriter.encodeLines(batch.records)
+                var digest = SHA256()
+                for line in lines { digest.update(data: line) }
+                let hash = digest.finalize().map { String(format: "%02x", $0) }.joined()
+                let key = full ? "full|\(batch.typeId)|\(Int64(chunkStart.timeIntervalSince1970))" : "inc|\(batch.typeId)"
+                if outbox.state.dailyHashes[key] == hash && !batch.records.isEmpty { continue }
+                let header = BatchHeader(type: batch.typeId, mode: .stats, seq: try outbox.nextSeq(batch.typeId), window: (chunkStart, chunkEnd), checkedAt: end)
+                try await sendLines(batch.typeId, header: header, lines: lines, anchor: nil, completes: .dailyHash(key: key, hash: hash), readMs: readMs)
+            }
             chunkStart = chunkEnd
         }
+        if full { try outbox.update { $0.dailyFullAt = end } }
+        lastDailyAt = end
+    }
+
+    /// Hourly heart rate, steps and HRV: the whole history the first time (a year per batch), then the last few days
+    /// about once an hour.
+    private func hourlyHistory() async throws {
+        guard !scope.hourly.isEmpty else { return }
+        let end = now()
+        var start: Date
+        if let through = outbox.state.hourlyThrough {
+            if let at = outbox.state.hourlyAt, end.timeIntervalSince(at) < config.hourlyEvery { return }
+            start = through.addingTimeInterval(-Double(config.hourlyIncrementalDays) * 86_400)
+        } else {
+            start = try await SyncTiming.shared.measure("hk.earliest") { try await source.earliestDailyDate() } ?? end.addingTimeInterval(-365 * 86_400)
+        }
+        let cal = Calendar.current
+        start = cal.startOfDay(for: start)
+        var chunkStart = start
+        while chunkStart < end {
+            try checkTime()
+            let chunkEnd = min(cal.date(byAdding: .year, value: 1, to: chunkStart) ?? end, end)
+            let started = Date()
+            let records = try await SyncTiming.shared.measure("hk.hourlyChunk") { try await source.hourlySeries(from: chunkStart, to: chunkEnd) }
+            let readMs = Self.ms(since: started)
+            let last = chunkEnd >= end
+            if records.isEmpty {
+                try outbox.update { s in
+                    s.hourlyThrough = max(s.hourlyThrough ?? chunkEnd, chunkEnd)
+                    if last { s.hourlyAt = end }
+                }
+            } else {
+                let id = HealthTypes.hourlyId
+                let header = BatchHeader(type: id, mode: .stats, seq: try outbox.nextSeq(id), window: (chunkStart, chunkEnd), checkedAt: end)
+                try await send(id, header: header, records: records, anchor: nil, completes: .hourly(through: chunkEnd, at: last ? end : nil), readMs: readMs)
+            }
+            chunkStart = chunkEnd
+        }
+    }
+
+    /// Events and timed entries of every switched-on category, each type as its own anchored pass.
+    private func eventsSync() async throws {
+        let categories = enabledCategories
+        let now = self.now()
+        if let last = lastEventsAt, now.timeIntervalSince(last) < config.minRefresh { return }
+        for event in scope.events where categories.contains(event.category) && event.sampleType != nil {
+            let type = SyncType(id: event.typeId, kind: .events, sampleType: event.sampleType, event: event)
+            while true {
+                try checkTime()
+                if try await anchoredPage(type) { break }
+            }
+        }
+        lastEventsAt = now
+    }
+
+    /// The profile entry (date of birth, sex, wheelchair use, move mode): sent once, then about weekly.
+    private func profileSync() async throws {
+        guard enabledCategories.contains("profile"), scope.events.contains(where: { $0.kind == .characteristic }) else { return }
+        let at = now()
+        if let last = outbox.state.profileAt, at.timeIntervalSince(last) < config.profileEvery { return }
+        let records = try await source.profileRecords()
+        guard !records.isEmpty else { return }
+        let type = "_events_profile"
+        let header = BatchHeader(type: type, mode: .anchored, seq: try outbox.nextSeq(type), checkedAt: at)
+        try await send(type, header: header, records: records, anchor: nil, completes: .profileAt(at))
+    }
+
+    /// The medication list (names only) the user chose to share: sent once, then about weekly.
+    private func medicationSync() async throws {
+        guard enabledCategories.contains("medications"), scope.events.contains(where: { $0.kind == .medication }) else { return }
+        let at = now()
+        if let last = outbox.state.medicationsAt, at.timeIntervalSince(last) < config.profileEvery { return }
+        let records = try await source.medicationRecords()
+        guard !records.isEmpty else { return }
+        let type = "_events_medications"
+        let header = BatchHeader(type: type, mode: .anchored, seq: try outbox.nextSeq(type), checkedAt: at)
+        try await send(type, header: header, records: records, anchor: nil, completes: .medicationsAt(at))
+    }
+
+    /// A category was switched off: forget what was synced for it, so switching it on again sends it from the beginning.
+    func categoryDisabled(_ id: String) throws {
+        let eventIds = scope.events.filter { $0.category == id }.map(\.typeId)
+        let daily = HealthTypes.dailyBatchType(id)
+        try outbox.update { s in
+            for key in eventIds {
+                s.anchors[key] = nil
+                s.caughtUp.remove(key)
+            }
+            s.dailyHashes = s.dailyHashes.filter { !$0.key.contains("|\(daily)|") && $0.key != "inc|\(daily)" }
+            if id == "profile" { s.profileAt = nil }
+            if id == "medications" { s.medicationsAt = nil }
+        }
+    }
+
+    /// A category was switched on: re-read the daily history so its rows are included.
+    func categoryEnabled(_ id: String) throws {
+        try outbox.update { $0.dailyFullAt = nil }
+        lastDailyAt = nil
+        lastEventsAt = nil
     }
 
     /// One anchored page of workout summaries. Returns true when caught up.
@@ -318,12 +453,20 @@ actor SyncEngine {
         let reconcileId = outbox.state.reconcile[t.id]
         let anchor = outbox.state.anchors[t.id]
         let checked = now()
-        let limit = config.workoutPageLimit
+        let limit = t.kind == .events ? config.eventPageLimit : config.workoutPageLimit
         let started = Date()
-        let page = try await SyncTiming.shared.measure("hk.history") { try await source.anchoredPage(t, anchor: anchor, limit: limit) }
+        let page = try await SyncTiming.shared.measure(t.kind == .events ? "hk.events" : "hk.history") { try await source.anchoredPage(t, anchor: anchor, limit: limit) }
         let readMs = Self.ms(since: started)
         let caughtUp = page.objectCount < limit
         if page.objectCount == 0 && reconcileId == nil {
+            if t.kind == .events {
+                // Nothing (new): remember the position so the next pass starts here; nothing to report to the server.
+                try outbox.update { s in
+                    if let a = page.newAnchor { s.anchors[t.id] = a }
+                    s.caughtUp.insert(t.id)
+                }
+                return true
+            }
             // Nothing new: reported in a status batch, at most once an hour once caught up.
             if outbox.state.caughtUp.contains(t.id), let last = lastEmptyCheck[t.id], checked.timeIntervalSince(last) < 3600 { return true }
             lastEmptyCheck[t.id] = checked
@@ -331,7 +474,7 @@ actor SyncEngine {
             return true
         }
         let header = BatchHeader(
-            type: t.id, mode: reconcileId == nil ? .anchored : .reconcile, seq: try outbox.nextSeq(t.id),
+            type: t.headerType, mode: reconcileId == nil ? .anchored : .reconcile, seq: try outbox.nextSeq(t.id),
             caughtUp: caughtUp, checkedAt: checked, reconcileId: reconcileId, reconcileDone: reconcileId == nil ? nil : caughtUp)
         let completes: Outbox.Completion? = caughtUp ? (reconcileId == nil ? .caughtUp : .reconcileDone) : nil
         try await send(t.id, header: header, records: page.records, anchor: page.newAnchor, completes: completes, readMs: readMs)
