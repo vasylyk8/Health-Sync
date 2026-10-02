@@ -36,6 +36,10 @@ sources = {
     'krok-website': 'https://krok-1d60a.firebaseapp.com/',
     'krok-support': 'https://krok-1d60a.firebaseapp.com/support',
     'krok-privacy': 'https://krok-1d60a.firebaseapp.com/privacy',
+    'openai-supported-countries': 'https://help.openai.com/en/articles/7947663-chatgpt-supported-countries',
+    'anthropic-supported-countries': 'https://www.anthropic.com/supported-countries',
+    'plugin-schema': 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',
+    'mcp-schema': 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',
 }
 out = pathlib.Path('policy-research')
 out.mkdir(exist_ok=True)
@@ -48,6 +52,9 @@ for name, url in sources.items():
             final_url, status = response.url, response.status
         page = Content()
         page.feed(raw)
+        if name.endswith('-schema'):
+            json.loads(raw)
+            (out / (name + '.json')).write_text(raw)
         (out / (name + '.txt')).write_text('Source: ' + url + '\nFinal URL: ' + final_url + '\nFetched: ' + datetime.datetime.now(datetime.timezone.utc).isoformat() + '\n\n' + '\n'.join(page.text) + '\n\nRelevant links:\n' + '\n'.join(sorted(set(page.links))))
         index.append({'name': name, 'url': url, 'final_url': final_url, 'status': status, 'text_characters': sum(map(len, page.text))})
     except Exception as error:
