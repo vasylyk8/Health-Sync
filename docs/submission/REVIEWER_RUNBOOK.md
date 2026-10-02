@@ -1,6 +1,6 @@
 # Dedicated synthetic reviewer — preparation runbook
 
-The dedicated production account and fixtures were created by Actions run 37005037317. Credentials are in `krok-directory-reviewer-credentials` in the KROK project's Secret Manager. Production login is blocked by the disabled password provider; no global provider setting was changed. Keep the email/password and exact login instructions only in secure reviewer fields and private secret storage, not in the public package.
+The dedicated production account and fixtures were created by Actions run 37005037317. Credentials are in `krok-directory-reviewer-credentials` in the KROK project's Secret Manager. The owner explicitly approved enabling the password provider; production reviewer sign-in and OAuth/MCP rehearsal passed in Actions run 37010507937. Keep the email/password and exact login instructions only in secure reviewer fields and private secret storage, not in the public package.
 
 ## Provision and verify
 
@@ -14,4 +14,6 @@ Owner secret access: [Google Secret Manager for KROK](https://console.cloud.goog
 
 The verifier captures its synthetic callback locally instead of sending it to an assistant. It tests production browser login, PKCE, default-scope refusals, every tool, refresh rotation and revocation, and saves only check names/status. This is a production protocol rehearsal; actual saved-version ChatGPT/Claude host cases remain separate.
 
-While login is blocked, `verify-reviewer-dataset.mjs` uses the already-authorized admin identity for read-only queries against only the dedicated synthetic account. All 17 health queries passed against production data in Actions run 37006622162. It does not create an OAuth grant or claim host execution; no authentication setting is changed. The account identity tool and complete OAuth/MCP rehearsal remain pending provider approval.
+`verify-reviewer-dataset.mjs` also uses the authorized admin identity for read-only queries against only the dedicated synthetic account. All 17 health queries passed against production data in Actions run 37006622162. It does not claim host execution. The separate production verifier subsequently passed both supported callback flows, all 18 MCP tools including account identity, default-scope refusals, refresh rotation and revocation. Actual saved-version host tests and videos are still required.
+
+After each successful `deploy` on main, the workflow checks the exact deployed commit in `--verify-only` mode: it reuses the existing account/secret and does not re-provision credentials, reseed fixtures or change provider settings. Its temporary test grants are revoked at the end.

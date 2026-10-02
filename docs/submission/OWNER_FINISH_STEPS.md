@@ -4,11 +4,11 @@ This file records real dependencies, not a submitted/approved listing. No messag
 
 ## Reviewer sign-in
 
-The production account is created and its credentials are stored in [KROK Secret Manager](https://console.cloud.google.com/security/secret-manager?project=krok-1d60a), secret `krok-directory-reviewer-credentials`. Do not paste them into chat, the repository, videos or listing text. Production login is currently blocked because Firebase password sign-in is disabled.
+The production account is created and its credentials are stored in [KROK Secret Manager](https://console.cloud.google.com/security/secret-manager?project=krok-1d60a), secret `krok-directory-reviewer-credentials`. Do not paste them into chat, the repository, videos or listing text. Production browser sign-in, OAuth/PKCE and all 18 MCP tools passed after the owner approved enabling the password provider.
 
-The proposed change is limited to `signIn.email.enabled=true` and `signIn.email.passwordRequired=true` in project `krok-1d60a`. This is a project-wide sign-in provider change. Apple login remains supported; health OAuth still requires Apple or an administrator-marked password reviewer. Unit and real Auth-emulator browser tests confirm ordinary password users are refused. Explicit approval was requested after automatic approval review rejected the global provider change. Until approved, no script/workflow changes that setting.
+The approved change set `signIn.email.enabled=true` and `signIn.email.passwordRequired=true` in project `krok-1d60a`. Apple login remains supported; health OAuth still requires Apple or an administrator-marked password reviewer. Unit and real Auth-emulator browser tests confirm ordinary password users are refused. Normal production verification never changes provider settings.
 
-After approval, apply the prepared provider helper, rerun reviewer verification and resolve every failure. Only then record the two walkthroughs using `RECORDING_GUIDE.md`. The real host cases and recording URLs remain required; synthetic protocol checks cannot replace them.
+Record the two walkthroughs using `RECORDING_GUIDE.md`. Use the email/password from the secret in “Directory reviewer access” on the OAuth page after starting connection in each host. The real host cases and recording URLs remain required; synthetic protocol checks cannot replace them.
 
 ## Terms and eligibility
 

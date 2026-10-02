@@ -19,7 +19,7 @@ Batch A: requirements, listing copy, shared branding, cases and recording guide.
 
 - OpenAI health-data eligibility needs careful review; consumer-health consent does not override the PHI prohibition.
 - `docs/legal/TERMS_OF_SERVICE.md` is proposed text, not a published agreement. No terms URL is declared complete.
-- The dedicated reviewer was provisioned in production and its credentials stored in Secret Manager. Browser login is blocked because the password provider is disabled. No global sign-in setting has been changed; explicit owner approval was requested. Never commit or include credentials in listing packages.
+- The dedicated reviewer is provisioned and its credentials stored in Secret Manager. After explicit owner approval, the password provider was enabled. Production browser sign-in, PKCE, all 18 MCP tools, scope refusals, refresh rotation and revocation passed. The callbacks were captured by the verifier; actual saved-version ChatGPT/Claude sessions and recordings remain separate. Never commit or include credentials in listing packages.
 - All eight real-host cases in `docs/PUBLIC_MCP_REVIEW_CASES.md` remain **Not run** in both hosts. Automated tests do not change this status.
 - Both real recordings are pending. The owner has agreed to record them. No demo URL is invented.
 - The OpenAI package now has an explicit ISO allowlist excluding RU/BY, subject to the host's own supported regions. Validate portal acceptance and Claude targeting controls before publication; see `COUNTRY_TARGETING.md`.
