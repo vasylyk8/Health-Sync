@@ -742,17 +742,31 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     func hourlySeries(from: Date, to: Date) async throws -> [Record] {
         var records: [Record] = []
-        var firstError: Error?
+        var errors: [Error] = []
         for metric in scope.hourly {
-            do {
-                let buckets = try await SyncTiming.shared.measure("hk.hourly") { try await self.hourlyBuckets(metric, from: from, to: to) }
-                records.append(contentsOf: SeriesRecords.hourlyChunks(name: metric.name, unit: metric.unitLabel, hours: buckets))
-            } catch {
-                // One series failing (no permission, a type this iOS lacks) must not lose the others.
-                firstError = firstError ?? error
+            var attempt = 0
+            while true {
+                do {
+                    let buckets = try await SyncTiming.shared.measure("hk.hourly") { try await self.hourlyBuckets(metric, from: from, to: to) }
+                    records.append(contentsOf: SeriesRecords.hourlyChunks(name: metric.name, unit: metric.unitLabel, hours: buckets))
+                    break
+                } catch {
+                    // No permission or a type this iOS lacks: leave that series out. Anything else (Apple Health busy or
+                    // briefly locked) is tried once more, and if it still fails the chunk fails and is retried on the
+                    // next run, rather than being recorded as complete with a series silently missing.
+                    attempt += 1
+                    if Self.isPermanentFailure(error) { break }
+                    if attempt >= 2 { errors.append(error); break }
+                }
             }
         }
-        if records.isEmpty, let firstError { throw firstError }
+        if let transient = errors.first {
+            // Give up on a series that keeps failing (three chunks in a row), so one stubborn query cannot block the rest forever.
+            let tries = sourceLock.withLock { () -> Int in hourlyTransientFailures += 1; return hourlyTransientFailures }
+            if tries <= 3 { throw transient }
+        } else {
+            sourceLock.withLock { hourlyTransientFailures = 0 }
+        }
         return records
     }
 
@@ -896,6 +910,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     private var observedTypes = Set<String>()
     private var dailyTransientFailures = 0
+    private var hourlyTransientFailures = 0
 
     /// Heart rate and steps (hourly series) and every event type of the switched-on categories wake the app in the
     /// background too, so new readings (a CGM, a logged meal) reach the server without opening the app. iOS decides

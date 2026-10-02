@@ -413,8 +413,19 @@ actor SyncEngine {
 
     /// Hourly heart rate, steps and HRV: the whole history the first time (a year per batch), then the last few days
     /// about once an hour.
+    /// Bump when hourly rows sent by an older app may be incomplete: the next run re-reads the whole history once.
+    /// 2: a failed HealthKit query used to drop its series silently and the chunk was recorded as complete.
+    static let hourlyVersion = 2
+
     private func hourlyHistory() async throws {
         guard !scope.hourly.isEmpty else { return }
+        if outbox.state.hourlyVersion < Self.hourlyVersion {
+            try outbox.update { s in
+                s.hourlyThrough = nil
+                s.hourlyAt = nil
+                s.hourlyVersion = Self.hourlyVersion
+            }
+        }
         let end = now()
         var start: Date
         if let through = outbox.state.hourlyThrough {

@@ -449,6 +449,20 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertEqual(source.hourlyRanges.count, 1, "not read again within the hour")
     }
 
+    func testHourlyHistoryIsReadAgainAfterAnAppUpdate() async throws {
+        let source = ScriptedSource()
+        source.earliestDaily = Date(timeIntervalSinceNow: -400 * 86_400)
+        source.hourly = SeriesRecords.hourlyChunks(name: "HeartRate", unit: "count/min", hours: [HourBucket(t: 3_600_000, v: 60, lo: 50, hi: 70)])
+        let box = Outbox(root: root)
+        // An older app marked the history as uploaded (possibly with series missing).
+        try box.update { $0.hourlyThrough = Date(); $0.hourlyAt = Date(); $0.hourlyVersion = 0 }
+        let engine = SyncEngine(source: source, uploader: RecordingUploader(), outbox: box, scope: hourlyScope)
+        _ = try await engine.run()
+        let first = try XCTUnwrap(source.hourlyRanges.first)
+        XCTAssertLessThan(first.from.timeIntervalSinceNow, -399 * 86_400, "the whole history is read again, not just the last days")
+        XCTAssertEqual(box.state.hourlyVersion, SyncEngine.hourlyVersion)
+    }
+
     private var glucose: EventType {
         EventType(name: "BloodGlucose", category: "devices", kind: .quantity, sampleType: HKQuantityType(.bloodGlucose),
                   unit: HKUnit.gramUnit(with: .milli).unitDivided(by: .literUnit(with: .deci)), unitLabel: "mg/dL", dense: true)
