@@ -1,5 +1,6 @@
 """Read-only checks of the deployed PR30 public pages, icon and OAuth discovery."""
 import json
+from pathlib import Path
 import struct
 import urllib.request
 
@@ -40,3 +41,11 @@ for path, expected in [('/.well-known/oauth-authorization-server', 'issuer'), ('
     metadata = json.loads(data)
     assert metadata[expected] == base + ('/' if expected == 'issuer' else '/mcp')
 print('PASS: PR30 stylesheet/icon and canonical OAuth discovery after deploy')
+
+challenge_path = Path(__file__).resolve().parents[2] / 'firebase/hosting/.well-known/openai-apps-challenge'
+if challenge_path.exists():
+    body, headers = read('/.well-known/openai-apps-challenge')
+    assert body == challenge_path.read_bytes(), 'Portal challenge response differs from approved token'
+    assert headers['content-type'].startswith('text/plain')
+    assert headers['cache-control'] == 'no-store'
+    print('PASS: exact plain-text OpenAI domain challenge on canonical MCP origin')
