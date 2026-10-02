@@ -31,12 +31,23 @@ jobs:
         run: xcodegen generate --spec project.yml
       - name: Daily check
         run: |
-          xcodebuild test -project HealthSync.xcodeproj -scheme HealthSync \
-            -destination "platform=iOS Simulator,name=$SIM_DEVICE" \
-            -only-testing:HealthSyncUITests/DailyCheckUITests \
-            -resultBundlePath daily.xcresult \
-            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= 2>&1 | tee daily.log | grep -E "DAILYLOG|DAILYUI|error:|Test Case|\*\* TEST"
-          exit ${PIPESTATUS[0]}
+          run_check() {
+            xcodebuild test -project HealthSync.xcodeproj -scheme HealthSync \
+              -destination "platform=iOS Simulator,name=$SIM_DEVICE" \
+              -only-testing:HealthSyncUITests/DailyCheckUITests \
+              -resultBundlePath "daily-$1.xcresult" \
+              CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= 2>&1 | tee daily.log | grep -E "DAILYLOG|DAILYUI|error:|Test Case|\*\* TEST"
+            return ${PIPESTATUS[0]}
+          }
+          run_check 1 && exit 0
+          # The simulator sometimes lets the HealthKit permission sheet time out before the test can tap it: that says nothing
+          # about the app, so retry once. Any other failure (a missing metric, a crash) fails the run.
+          if grep -q "Authorization session timed out" daily.log; then
+            echo "::warning::HealthKit permission sheet timed out on the simulator; retrying once"
+            run_check 2
+          else
+            exit 1
+          fi
       - name: Keep the log
         if: always()
         uses: actions/upload-artifact@v4
