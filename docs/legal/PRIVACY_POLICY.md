@@ -12,8 +12,8 @@ KROK copies your **workouts** from Apple Health, with their detailed measurement
 - **An anonymous account ID** created on your phone. We don't ask for your name, email or phone number.
 - **Technical data:** crash reports and basic, non-health usage events (for example "connected Claude"), used to keep the app working.
 
-## Optional data groups (off until you switch them on)
-In the app, **••• menu → Your data**, each of these groups is off by default. Apple Health asks for your permission separately for each group, and you can switch a group off at any time, which **deletes its data from our servers**.
+## Additional data groups (on by default, you choose)
+These groups are read when you connect Apple Health, if you track them. Apple Health shows each type and lets you allow or deny it. In the app, **••• menu → Your data**, you can switch a group off at any time, which **deletes its data from our servers**.
 - **Nutrition and alcohol:** logged food and drink with the nutrients and times, alcoholic drinks, blood alcohol content.
 - **Heart alerts and lung function:** high/low heart rate and irregular rhythm notifications, atrial fibrillation burden, lung function measurements, inhaler use.
 - **Glucose, insulin and blood pressure:** readings recorded in Apple Health (for example by a continuous glucose monitor).
@@ -27,7 +27,7 @@ We do **not** read clinical records or documents, reproductive and sexual-health
 
 ## Why we use it (legal bases)
 - To provide the service you asked for: storing your data so your connected assistants can read it (GDPR Art. 6(1)(b)).
-- Health data is special-category data. We process it only with your **explicit consent** (GDPR Art. 9(2)(a)), given when you connect Apple Health, again when you switch on each optional group, and again, per assistant, when you connect Claude or ChatGPT. You can withdraw consent at any time by switching a group off, disconnecting, or deleting your data.
+- Health data is special-category data. We process it only with your **explicit consent** (GDPR Art. 9(2)(a)), given when you connect Apple Health (including the types you allow on Apple's permission sheet), and again, per assistant, when you connect Claude or ChatGPT. You can withdraw consent at any time by switching a group off in KROK or in Apple Health, disconnecting, or deleting your data.
 - Crash and usage diagnostics: our legitimate interest in a working app (Art. 6(1)(f)). These never contain health data.
 
 ## Who receives it
@@ -36,7 +36,7 @@ We do **not** read clinical records or documents, reproductive and sexual-health
 - We never sell your data, use it for advertising, or share it with anyone else.
 
 ## How long we keep it
-Until you delete it (••• menu → Delete All My Data, completed within 24 hours), or automatically **one year after your last sync**. Data of an optional group is deleted as soon as you switch that group off. Access logs (which tool was used and when, no health values) are kept for 90 days.
+Until you delete it (••• menu → Delete All My Data, completed within 24 hours), or automatically **one year after your last sync**. Data of an additional group is deleted as soon as you switch that group off. Access logs (which tool was used and when, no health values) are kept for 90 days.
 
 ## Your rights
 You can access, correct, export or delete your data, withdraw consent, and complain to your data protection authority. Because we don't know who you are, the easiest way to delete is in the app. For anything else, email vasylyk@outlook.com.

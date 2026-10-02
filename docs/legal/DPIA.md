@@ -4,7 +4,8 @@
 
 ## Necessity and proportionality
 - Purpose: users analyze their own health data with an AI assistant of their choice. Remote MCP connectors require an internet-reachable server, so a server copy is necessary (on-device access isn't technically possible).
-- Minimization: read-only; a type is read only when a tool or feature uses it (selection rule, docs/COVERAGE_MATRIX.md). Workouts, activity, sleep and recovery are always on; **every other group is a separate switch, off by default**, with its own Apple Health permission request, and switching it off deletes its server data. Not read at all: clinical records and documents, sexual activity, contraceptive, pregnancy and lactation data, reproductive/urogenital symptoms, GAD-7/PHQ-9 questionnaires, ECG, audiograms, and medication dose history. Medications are a list the user chooses to share; no identity data (anonymous accounts); logs exclude health values and locations. Location is limited to the routes of the user's own workouts; the AI tools hide the first and last 300 m by default.
+- Minimization: read-only; a type is read only when a tool or feature uses it (selection rule, docs/COVERAGE_MATRIX.md). Workouts, activity, sleep and recovery are always on; **every other group is a separate switch, on by default (owner decision), with its own Apple Health permission request per type**, and switching it off deletes its server data.
+ Not read at all: clinical records and documents, sexual activity, contraceptive, pregnancy and lactation data, reproductive/urogenital symptoms, GAD-7/PHQ-9 questionnaires, ECG, audiograms, and medication dose history. Medications are a list the user chooses to share; no identity data (anonymous accounts); logs exclude health values and locations. Location is limited to the routes of the user's own workouts; the AI tools hide the first and last 300 m by default.
 - Retention: deleted on request, or after 1 year of inactivity. Access logs are kept 90 days. The one-off removal of the earlier data types keeps a backup for 14 days (auto-expiring) as a safety net.
 
 ## Risks and mitigations
@@ -18,7 +19,7 @@
 | Breach of cloud storage | Low | High | Google-managed encryption at rest, private buckets, least-privilege service accounts, no public access. |
 | Stale or partial data misleads users | Medium | Low | Every answer carries completeness and freshness flags, and the AI is instructed to disclose partial data. |
 | The AI gives medical advice on glucose, insulin, blood pressure, symptoms, medications or mental-health data | Medium | High | Tools for these groups return an instruction to describe data and trends only: no diagnosis, no dosing or medication advice, suggest a clinician when appropriate. The app and listing state that KROK is not a medical device. **Residual:** the assistant's own behaviour is outside our control. |
-| Sensitive categories collected without a real choice | Low | High | Per-category consent switches (default off), just-in-time Apple Health permission, server-side enforcement (batches of a disabled category are dropped and never served), deletion on switch-off, no sensitive values in logs or analytics. |
+| Sensitive categories collected without a real choice | Medium | High | Per-category switches (default on, owner decision: review before launch), Apple Health's per-type permission sheet (the user can deny any type), server-side enforcement (batches of a disabled category are dropped and never served), deletion on switch-off, no sensitive values in logs or analytics. |
 | Sensitive data breach has high impact (glucose, symptoms, cycle, medications) | Low | High | Same technical safeguards as other data; sensitive groups are opt-in so most users never store them. Review whether additional encryption or shorter retention is warranted before launch. |
 
 ## Transfers
@@ -30,6 +31,7 @@ Health and location data is stored in the EU. The anonymous ID is processed by F
 - Whether a DPO / EU representative is required at the expected scale.
 - The Apple HealthKit third-party sharing assessment (see HEALTHKIT_SHARING.md).
 - Whether the optional groups (mental health/symptoms, cycle, medications, glucose/insulin) need extra measures in launch countries (for example Washington My Health My Data Act authorization, Canadian provincial health-information rules), and whether any group should be hidden in the first App Store release (each can be hidden without removing code).
+- Whether default-on collection of sensitive groups (mood and symptoms, cycle, medications, glucose) is acceptable or whether those should be off by default at launch.
 - Retention for sensitive groups (currently the same as other data: deleted on request, on switch-off, or after 1 year of inactivity).
 
 _This document is a draft prepared by the developer and is not legal advice._

@@ -59,6 +59,7 @@ describe('event logs', () => {
 
   it('is dropped while the category is switched off and stored once it is on', async () => {
     const env = makeEnv();
+    withCategories(env, ['core']);
     const off = await upload(env, { type: '_events_devices', schema: 2, mode: 'anchored' }, [{ k: 'ev', ty: 'BloodGlucose', u: 'mg/dL', src: 'Dexcom', s, v: glucose }]);
     expect(off.result).toBe('discarded');
     expect(await env.meta.getManifest(env.uid, '_events_devices')).toBeNull();

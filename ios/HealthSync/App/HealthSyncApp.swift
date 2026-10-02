@@ -43,6 +43,19 @@ struct HealthSyncApp: App {
                 }
             }
         }
+        if !uiTesting {
+            BackgroundTaskRegistry.shared.refreshRegistered = true
+            BGTaskScheduler.shared.register(forTaskWithIdentifier: AppModel.refreshTaskId, using: nil) { task in
+                let work = Task { @MainActor in
+                    await model.runBackgroundRefresh()
+                    task.setTaskCompleted(success: true)
+                }
+                task.expirationHandler = {
+                    work.cancel()
+                    task.setTaskCompleted(success: false)
+                }
+            }
+        }
         _model = StateObject(wrappedValue: model)
     }
 

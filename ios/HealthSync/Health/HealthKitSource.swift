@@ -155,6 +155,37 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         return samples.map { WorkoutRef(id: $0.uuid.uuidString, start: $0.startDate) }
     }
 
+    /// Apple's own zones for this workout (the boundaries Apple used and the time spent in each zone), per quantity such as
+    /// heart rate. Needs the iOS 27 SDK to compile and iOS 27 to run, so it is behind the `IOS27_SDK` compilation flag:
+    /// once the build machine has Xcode 27, add `SWIFT_ACTIVE_COMPILATION_CONDITIONS: IOS27_SDK` to the app target in project.yml.
+    /// (The CI Xcode today has a new enough Swift but an older SDK, so a compiler-version check is not enough.)
+    private func appleZones(_ w: HKWorkout) -> RecordValue? {
+        #if IOS27_SDK
+        guard #available(iOS 27.0, *), let groups = w.zoneGroupsByType, !groups.isEmpty else { return nil }
+        var out: [String: RecordValue] = [:]
+        for (type, group) in groups {
+            guard let spec = quantitiesById[type.identifier] else { continue }
+            let source: String
+            switch group.configuration.source {
+            case .system: source = "system"
+            case .user: source = "user"
+            case .app: source = "app"
+            @unknown default: source = "unknown"
+            }
+            let zones: [RecordValue] = group.zoneDurations.map { d in
+                var o: [String: RecordValue] = ["i": .int(Int64(d.zone.index)), "sec": .double(d.duration)]
+                if let lo = d.zone.minimum { o["min"] = .double(lo.doubleValue(for: spec.unit)) }
+                if let hi = d.zone.maximum { o["max"] = .double(hi.doubleValue(for: spec.unit)) }
+                return .object(o)
+            }
+            out[spec.name] = .object(["src": .string(source), "u": .string(spec.unitLabel), "z": .array(zones)])
+        }
+        return out.isEmpty ? nil : .object(out)
+        #else
+        return nil
+        #endif
+    }
+
     /// Everything Apple attaches to a workout, as batch records.
     private func workout(_ w: HKWorkout) -> Record {
         var r: Record = ["k": "w", "id": .string(w.uuid.uuidString), "s": w.startDate.ms, "e": w.endDate.ms]
@@ -183,6 +214,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             if o.count > 1 { stats[spec.name] = .object(o) }
         }
         if !stats.isEmpty { r["stats"] = .object(stats) }
+        if let zones = appleZones(w) { r["zones"] = zones }
         if case .object(let hr)? = stats["HeartRate"] {
             if let v = hr["avg"] { r["hrAvg"] = v }
             if let v = hr["max"] { r["hrMax"] = v }
@@ -833,6 +865,29 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
         store.execute(q)
         store.enableBackgroundDelivery(for: type, frequency: .immediate) { _, _ in }
+    }
+
+    private var observedTypes = Set<String>()
+
+    /// Heart rate and steps (hourly series) and every event type of the switched-on categories wake the app in the
+    /// background too, so new readings (a CGM, a logged meal) reach the server without opening the app. iOS decides
+    /// when and how often (at most about hourly for most types), and only while the phone is unlocked.
+    func observeOtherData(categories: Set<String>, onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {
+        var types: [HKSampleType] = scope.hourly.map { $0.type }
+        for e in scope.events where categories.contains(e.category) { if let t = e.sampleType { types.append(t) } }
+        for type in types {
+            let fresh = sourceLock.withLock { observedTypes.insert(type.identifier).inserted }
+            guard fresh else { continue }
+            let q = HKObserverQuery(sampleType: type, predicate: nil) { _, completion, error in
+                if error != nil {
+                    completion()
+                    return
+                }
+                onChange { completion() }
+            }
+            store.execute(q)
+            store.enableBackgroundDelivery(for: type, frequency: .hourly) { _, _ in }
+        }
     }
 
     // MARK: Helpers

@@ -5,6 +5,7 @@ import { FirestoreMeta } from '../../src/store/firestore.js';
 import { emptyManifest } from '../../src/store/types.js';
 import { beginDeletion, createConnectorLink, disconnect, purgeUserData, registerDevice, setCategories, sweepDeletions } from '../../src/account.js';
 import { hashToken } from '../../src/auth/tokens.js';
+import { DEFAULT_CATEGORIES } from '../../src/config.js';
 import { DirBlobs } from '../helpers/memory.js';
 
 if (!getApps().length) initializeApp({ projectId: 'demo-health-sync' });
@@ -101,7 +102,8 @@ describe('setCategories', () => {
     await registerDevice(db, 'u8', 'UTC');
     const data = new DirBlobs();
     const deps = { meta, data };
-    expect(await setCategories(db, deps, 'u8', ['devices', 'nutrition'])).toEqual({ categories: ['core', 'devices', 'nutrition'], removed: [] });
+    // Every group starts on, so choosing two switches the others off (and deletes their data, none yet).
+    expect(await setCategories(db, deps, 'u8', ['devices', 'nutrition'])).toEqual({ categories: ['core', 'devices', 'nutrition'], removed: ['heart', 'mind', 'cycle', 'medications', 'profile'] });
     await meta.publish({ uid: 'u8', type: '_events_devices', batchId: 'g1', generation: 1, mutate: (m) => add(m, 'data/u8/_events_devices/2024-06/g1.parquet') });
     await meta.publish({ uid: 'u8', type: '_events_nutrition', batchId: 'n1', generation: 1, mutate: (m) => add(m, 'data/u8/_events_nutrition/2024-06/n1.parquet') });
     await data.write('data/u8/_events_devices/2024-06/g1.parquet', Buffer.from('x'));
@@ -161,6 +163,6 @@ describe('getStatus', () => {
     await db.doc('users/u7').update({ 'connections.claude': { setUpAt: 1, lastUsedAt: 1 }, lastVisibleAt: 5 });
     await db.doc('users/u7/types/HR').set({ coverage: { caughtUp: true, earliest: 100 } });
     await db.doc('users/u7/types/Steps').set({ coverage: { caughtUp: false, earliest: 50 } });
-    expect(await getStatus(db, 'u7')).toEqual({ registered: true, deleting: false, setUp: { claude: true, chatgpt: false }, lastVisibleAt: 5, historySyncedBackTo: 100, typesWithData: 2, categories: ['core'] });
+    expect(await getStatus(db, 'u7')).toEqual({ registered: true, deleting: false, setUp: { claude: true, chatgpt: false }, lastVisibleAt: 5, historySyncedBackTo: 100, typesWithData: 2, categories: DEFAULT_CATEGORIES });
   });
 });

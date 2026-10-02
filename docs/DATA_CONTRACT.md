@@ -148,9 +148,17 @@ The phone's upload ack only means **accepted**. "Synced" in the app and every to
 - Header `perf` accepts only `readMs` and `uploadMs` (strict schema); on-device timing lives in `sync-timing.json`, not in batches.
 
 ## 7. Data categories and consent
-Every batch type belongs to one category (`categories` and `types[].category` in `shared/coverage.json`). `core` (workouts, activity, sleep and recovery, hourly series) is always on. The others are off until the user switches them on in the app (**Your data**): `nutrition` (nutrition, alcohol), `heart` (heart alerts, lung function), `devices` (glucose, insulin, blood pressure), `mind` (state of mind, mindful minutes, symptoms), `cycle` (menstrual cycle), `medications` (medication list), `profile` (date of birth, sex, wheelchair use, move mode).
-- The phone asks HealthKit for the types of a category only when it is switched on.
+Every batch type belongs to one category (`categories` and `types[].category` in `shared/coverage.json`). `core` (workouts, activity, sleep and recovery, hourly series) is always on. The others start on (`default` in `categories`) and can be switched off in the app (**Your data**): `nutrition` (nutrition, alcohol), `heart` (heart alerts, lung function), `devices` (glucose, insulin, blood pressure), `mind` (state of mind, mindful minutes, symptoms), `cycle` (menstrual cycle), `medications` (medication list), `profile` (date of birth, sex, wheelchair use, move mode).
+- The phone asks HealthKit for the types of the categories that are on; Apple's sheet lets the user deny single types.
 - The `setCategories` callable stores the choice (`users/{uid}.categories`, `core` always included). The app calls it **before** it starts syncing a newly enabled category. Switching a category off deletes its Parquet files, manifests and coverage on the server and resets the phone's anchors for it, so switching it on again resends everything.
 - The server drops (acknowledges but does not store) batches of a category that is not enabled, and tools never serve a disabled category.
 - `getStatus` returns the enabled `categories`; a reinstalled app adopts them.
 - Sensitive categories (`devices`, `mind`, `cycle`, `medications`, `profile`) never appear in logs or analytics, and tools that return them tell the AI to describe data and trends only, with no diagnosis and no medication or dosing advice.
+
+## 8. Staying in sync after the first upload
+- **App opens or comes to the foreground:** a full catch-up (workouts, recent daily rows, hourly series, event logs, profile and medications).
+- **New workout saved** (background delivery, immediately): the workout, its raw data, and the daily rows.
+- **New heart rate, steps or event readings** (glucose, nutrition, symptoms... of the groups that are on): HealthKit background delivery wakes the app, at most about once an hour per type (iOS decides); the wake sends events, the hourly series and the daily rows.
+- **Periodic refresh:** the app asks iOS for a background refresh about hourly; iOS runs it when it sees fit (often a few times a day, less if the phone is unused or low on power).
+- Background work only runs while the phone is unlocked (HealthKit data is encrypted when it locks) and is limited to about 20-25 s per wake; unfinished work resumes next time. Daily rows are re-read at most every 15 minutes and the last 3 days are always refreshed; the whole history is re-read weekly. Hourly series refresh at most hourly (last 3 days).
+- **Workout zones:** on iOS 27 the workout summary carries Apple's own zone boundaries and time in each zone (`zones`).
