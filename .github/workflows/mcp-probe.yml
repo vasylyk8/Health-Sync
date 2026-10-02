@@ -1,0 +1,50 @@
+# Runs KROK MCP tool calls against the synthetic user through the live connector, the same path
+# an AI client uses, and prints the answers in the job log. Dispatch with `calls` set to a JSON
+# array such as [{"tool":"get_daily_context","args":{"start_date":"2024-03-01","end_date":"2024-03-07"}}].
+name: mcp-probe
+on:
+  workflow_dispatch:
+    inputs:
+      calls:
+        description: 'JSON array of {"tool": "...", "args": {...}}, or ["tools/list"]'
+        required: true
+        default: '["tools/list"]'
+      max_chars:
+        description: 'Characters printed per result'
+        default: '20000'
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: mcp-probe
+  cancel-in-progress: false
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run the calls
+        env:
+          CALLS: ${{ inputs.calls }}
+          MAX_CHARS: ${{ inputs.max_chars }}
+        run: |
+          TOKEN=$(gcloud secrets versions access latest --secret=synthetic-mcp-token --project "$GCP_PROJECT_ID")
+          echo "::add-mask::$TOKEN"
+          MCP_URL="https://$GCP_PROJECT_ID.web.app/mcp/$TOKEN" node scripts/probe/probe.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-log
+          path: probe.log
+          if-no-files-found: ignore
