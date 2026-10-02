@@ -5,6 +5,15 @@ import XCTest
 final class StubBackend: Backend, @unchecked Sendable {
     var signInError: Error?
     var registerError: Error?
+    var appleLinked = false
+    var appleLinkError: Error?
+    var appleRestoreChoices: [Bool] = []
+    func hasAppleAccount() async -> Bool { appleLinked }
+    func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool) async throws {
+        appleRestoreChoices.append(allowExistingAccount)
+        if let appleLinkError { throw appleLinkError }
+        appleLinked = true
+    }
     func signIn() async throws -> String {
         if let signInError { throw signInError }
         return "stub-user"
@@ -49,6 +58,54 @@ final class AppModelTests: XCTestCase {
         let model = makeModel(backend)
         await model.syncNow()
         XCTAssertEqual(model.syncIssue?.contains("Pull down"), true)
+    }
+
+    func testAppleLinkOnWelcomeCanRestoreAnExistingAccount() async {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        await model.linkAppleAccount(AppleSignInResult(idToken: "test", nonce: "nonce", authorizationCode: "code"))
+        XCTAssertEqual(backend.appleRestoreChoices, [true])
+        XCTAssertTrue(model.appleAccountLinked)
+        XCTAssertEqual(model.phase, .welcome, "linking does not bypass Health permission onboarding")
+        XCTAssertFalse(model.busy)
+    }
+
+    func testAppleLinkNeverRestoresOverAnOnboardedDataset() async {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        model.phase = .home
+        await model.linkAppleAccount(AppleSignInResult(idToken: "test", nonce: "nonce", authorizationCode: "code"))
+        XCTAssertEqual(backend.appleRestoreChoices, [false])
+        XCTAssertTrue(model.appleAccountLinked)
+        XCTAssertEqual(model.phase, .home)
+    }
+
+    func testAppleAccountConflictKeepsTheCurrentIdentityAndShowsRecovery() async {
+        let backend = StubBackend()
+        backend.appleLinkError = AppleSignInError.accountConflict
+        let model = makeModel(backend)
+        await model.linkAppleAccount(AppleSignInResult(idToken: "test", nonce: "nonce", authorizationCode: "code"))
+        XCTAssertFalse(model.appleAccountLinked)
+        XCTAssertEqual(model.phase, .welcome)
+        XCTAssertTrue(model.errorMessage?.contains("workouts have not changed") == true)
+        XCTAssertFalse(model.busy)
+    }
+
+    func testAppleLinkCannotStartWhileAnotherActionIsBusy() async {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        model.busy = true
+        await model.linkAppleAccount(AppleSignInResult(idToken: "test", nonce: "nonce", authorizationCode: "code"))
+        XCTAssertTrue(backend.appleRestoreChoices.isEmpty)
+        XCTAssertTrue(model.busy)
+    }
+
+    func testSyncRecoversThePersistedAppleAccountState() async {
+        let backend = StubBackend()
+        backend.appleLinked = true
+        let model = makeModel(backend)
+        await model.syncNow()
+        XCTAssertTrue(model.appleAccountLinked)
     }
 
     func testConnectFailureNamesTheStepAndCode() async {

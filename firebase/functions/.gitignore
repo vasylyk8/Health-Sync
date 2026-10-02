@@ -5,3 +5,5 @@ src/generated/
 .seed/
 *-debug.log
 /.seed/
+test-results/
+playwright-report/

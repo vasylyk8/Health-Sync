@@ -6,6 +6,10 @@ import { emptyManifest } from '../../src/store/types.js';
 import { beginDeletion, createConnectorLink, disconnect, purgeUserData, registerDevice, setCategories, sweepDeletions } from '../../src/account.js';
 import { hashToken } from '../../src/auth/tokens.js';
 import { DirBlobs } from '../helpers/memory.js';
+import { KrokOAuth, DEFAULT_SCOPES, pkceChallenge } from '../../src/auth/oauth.js';
+import { FirestoreOAuthStore } from '../../src/auth/oauth-store.js';
+import { generateToken } from '../../src/auth/tokens.js';
+import type { Response } from 'express';
 
 if (!getApps().length) initializeApp({ projectId: 'demo-health-sync' });
 const db = getFirestore();
@@ -16,6 +20,54 @@ beforeEach(async () => {
 });
 
 const add = (m: ReturnType<typeof emptyManifest>, path: string) => ({ ...m, version: m.version + 1, files: { ...m.files, '2024-06': [...(m.files['2024-06'] ?? []), { path, bytes: 1 }] } });
+
+async function oauthCredentials() {
+  await registerDevice(db, 'oauth-user', 'UTC');
+  const oauth = new KrokOAuth(new FirestoreOAuthStore(db), 'https://krok.test');
+  const callback = 'https://claude.ai/api/mcp/auth_callback';
+  const client = await oauth.clientsStore.registerClient({ redirect_uris: [callback], token_endpoint_auth_method: 'none' });
+  let cookie = '', request = '';
+  await oauth.authorize(client, { redirectUri: callback, scopes: DEFAULT_SCOPES, codeChallenge: pkceChallenge(generateToken()), resource: new URL(oauth.resource) }, {
+    cookie: (_key: string, value: string) => { cookie = value; },
+    redirect: (_status: number, location: string) => { request = new URL(location).searchParams.get('request')!; },
+  } as unknown as Response);
+  const redirect = new URL(await oauth.finishConsent(request, cookie, 'oauth-user', true, false));
+  const credentials = await oauth.exchangeAuthorizationCode(client, redirect.searchParams.get('code')!, undefined, callback, new URL(oauth.resource));
+  return { oauth, client, credentials };
+}
+
+describe('OAuth on real Firestore transactions', () => {
+  it('persists omitted optional fields, hashed credentials and TTL timestamps', async () => {
+    const { oauth, credentials } = await oauthCredentials();
+    expect((await oauth.verifyAccessToken(credentials.access_token)).extra?.uid).toBe('oauth-user');
+    const record = await db.doc(`oauthCredentials/${hashToken(credentials.access_token)}`).get();
+    expect(record.get('expireAt').toMillis()).toBe(record.get('expires'));
+    expect((await db.doc(`oauthCredentials/${credentials.access_token}`).get()).exists).toBe(false);
+    expect((await db.collection('users/oauth-user/oauthGrants').get()).size).toBe(1);
+  });
+  it('atomically rotates refresh credentials and persists grant revocation on concurrent replay', async () => {
+    const { oauth, client, credentials } = await oauthCredentials();
+    const results = await Promise.allSettled([0, 1].map(() => oauth.exchangeRefreshToken(client, credentials.refresh_token!, undefined, new URL(oauth.resource))));
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const winner = results.find((result) => result.status === 'fulfilled');
+    if (winner?.status === 'fulfilled') await expect(oauth.verifyAccessToken(winner.value.access_token)).rejects.toThrow(/disconnected/);
+  });
+  it('disconnect invalidates OAuth even when there is no legacy link', async () => {
+    const { oauth, credentials } = await oauthCredentials();
+    await disconnect(db, 'oauth-user', 'claude');
+    await expect(oauth.verifyAccessToken(credentials.access_token)).rejects.toThrow(/disconnected/);
+  });
+  it('deletion stops access immediately and removes credentials outside the user subtree', async () => {
+    const { oauth, credentials } = await oauthCredentials();
+    await db.doc('oauthCredentials/other-user-credential').set({ uid: 'other-user' });
+    await beginDeletion(db, 'oauth-user');
+    await expect(oauth.verifyAccessToken(credentials.access_token)).rejects.toThrow(/disconnected/);
+    await purgeUserData({ db, incoming: new DirBlobs(), data: new DirBlobs(), deleteAuthUser: async () => undefined }, 'oauth-user');
+    expect((await db.collection('oauthCredentials').where('uid', '==', 'oauth-user').get()).empty).toBe(true);
+    expect((await db.collection('users/oauth-user/oauthGrants').get()).empty).toBe(true);
+    expect((await db.doc('oauthCredentials/other-user-credential').get()).exists).toBe(true);
+  });
+});
 
 describe('FirestoreMeta.publish', () => {
   it('publishes, rejects duplicates and discards after a deletion started', async () => {

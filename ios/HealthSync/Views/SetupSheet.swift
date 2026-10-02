@@ -49,7 +49,7 @@ struct SetupSheet: View {
                 Button("Copy KROK server URL") {
                     UIPasteboard.general.string = Theme.mcpURL.absoluteString
                     copied = true
-                }.buttonStyle(.borderedProminent)
+                }.buttonStyle(.borderedProminent).accessibilityIdentifier("copyOAuthURL")
                 if copied { Text("Copied").font(.footnote).accessibilityIdentifier("oauthCopied") }
                 Button("Open \(provider.websiteLabel)") { openURL(provider.setupURL) }.buttonStyle(.bordered)
                 Text(provider.id == "chatgpt"

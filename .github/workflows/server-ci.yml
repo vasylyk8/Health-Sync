@@ -1,9 +1,9 @@
 name: server-ci
 on:
   push:
-    paths: ['firebase/**', 'shared/**', '.github/workflows/server-ci.yml']
+    paths: ['firebase/**', 'web/**', 'shared/**', '.github/workflows/server-ci.yml']
   pull_request:
-    paths: ['firebase/**', 'shared/**', '.github/workflows/server-ci.yml']
+    paths: ['firebase/**', 'web/**', 'shared/**', '.github/workflows/server-ci.yml']
 permissions:
   contents: read
 jobs:
@@ -30,3 +30,12 @@ jobs:
       - name: Integration tests (Firebase emulators)
         run: npm run test:emulator
       - run: npm run build
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+      - name: Browser consent and Firebase Auth tests
+        run: npm run test:browser
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-test-results
+          path: firebase/functions/test-results

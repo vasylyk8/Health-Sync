@@ -13,19 +13,26 @@ const cookie = (req: Request): string => {
 export function createOAuthRouter(provider: KrokOAuth, verifyLogin: (token: string) => Promise<LoginIdentity>, limiter: RateLimiter) {
   const app = express();
   app.disable('x-powered-by');
+  // Cloud Run appends a trusted hop. Do not trust the leftmost, client-supplied IP.
+  app.set('trust proxy', 1);
   app.use((_req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Referrer-Policy', 'no-referrer');
     next();
   });
   app.use(async (req, res, next) => {
-    const ip = req.socket.remoteAddress ?? 'unknown';
-    if (!await limiter.hit(`oauth_${ip.replace(/[^a-zA-Z0-9]/g, '_')}`, 100, 60_000)) {
-      res.setHeader('Retry-After', '60');
-      res.status(429).json({ error: 'temporarily_unavailable', error_description: 'Too many requests. Try again in a minute.' });
-      return;
-    }
-    next();
+    try {
+      // Firebase has already parsed bodies, so express's parser limit alone is insufficient.
+      if ((req as Request & { rawBody?: Buffer }).rawBody?.length && (req as Request & { rawBody: Buffer }).rawBody.length > 8192) {
+        res.status(413).json({ error: 'invalid_request', message: 'Request is too large.' }); return;
+      }
+      const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
+      if (!await limiter.hit(`oauth_${ip.replace(/[^a-zA-Z0-9]/g, '_')}`, 100, 60_000)) {
+        res.setHeader('Retry-After', '60');
+        res.status(429).json({ error: 'temporarily_unavailable', error_description: 'Too many requests. Try again in a minute.' }); return;
+      }
+      next();
+    } catch (error) { next(error); }
   });
   // Firebase Functions already parses the body. These also support standalone test servers.
   app.use(express.json({ limit: '8kb' }));
@@ -70,5 +77,9 @@ export function createOAuthRouter(provider: KrokOAuth, verifyLogin: (token: stri
     serviceDocumentationUrl: new URL(`${provider.issuer}mcp-docs`), scopesSupported: OAUTH_SCOPES,
     resourceName: 'KROK Apple Health', clientRegistrationOptions: { clientSecretExpirySeconds: 0 } }));
   app.use((_req, res) => res.status(404).json({ error: 'not_found' }));
+  app.use((error: { status?: number }, _req: Request, res: express.Response, _next: express.NextFunction) => {
+    const status = error.status === 413 ? 413 : error.status === 400 ? 400 : 503;
+    res.status(status).json({ error: status === 503 ? 'temporarily_unavailable' : 'invalid_request' });
+  });
   return app;
 }

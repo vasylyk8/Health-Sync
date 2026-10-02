@@ -38,6 +38,10 @@ describe('Firestore rules', () => {
     await assertFails(setDoc(doc(alice, 'users/alice'), { generation: 99 }));
     await assertFails(setDoc(doc(alice, 'users/alice/types/HR'), { version: 99 }));
     await assertFails(getDoc(doc(alice, 'tokens/abc')));
+    for (const path of ['oauthClients/abc', 'oauthRequests/abc', 'oauthCredentials/abc', 'users/alice/oauthGrants/abc']) {
+      await assertFails(getDoc(doc(alice, path)));
+      await assertFails(setDoc(doc(alice, path), { uid: 'alice' }));
+    }
   });
 });
 

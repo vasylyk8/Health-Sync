@@ -59,10 +59,10 @@ KROK lets users analyze their own Apple Health data with the AI assistant of the
 | Health & Fitness → Fitness | Yes | Yes | No | App Functionality |
 | Sensitive Info (health conditions, symptoms, medications, glucose, cycle data) | Yes, only if the user enables the group | Yes | No | App Functionality |
 | Location → Precise Location (GPS routes of workouts) | Yes | Yes | No | App Functionality |
-| Identifiers → User ID | Yes (anonymous Firebase ID) | Yes | No | App Functionality |
+| Identifiers → User ID | Yes (Firebase ID and linked Apple account identifier) | Yes | No | App Functionality |
 | Usage Data → Product Interaction | Yes (e.g. "connected Claude") | No | No | Analytics |
 | Diagnostics → Crash Data | Yes | No | No | App Functionality |
-| Contact info, contacts, browsing, purchases | No | | | |
+| Contact info, contacts, browsing, purchases | Not requested from Apple by KROK; review Firebase identity-token handling before attesting | | | |
 
 ## Export compliance
 The app uses only standard HTTPS encryption (exempt). `ITSAppUsesNonExemptEncryption` = NO is already set.
