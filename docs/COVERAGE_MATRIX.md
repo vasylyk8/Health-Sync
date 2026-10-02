@@ -14,7 +14,7 @@ Data is grouped in **categories**. `core` is always on; every other category is 
 | Events (pause/resume/lap/segment) with Apple's details (swim stroke style, lap length), and sub-activities (multi-sport) | `workoutEvents`, `workoutActivities` |
 | The plan the workout was run from, when it has one (from any app that schedules plans in Apple's Workout app) | `HKWorkout.workoutPlan` (WorkoutKit, iOS 17+) |
 | **Raw streams**: 33 quantity types (heart rate, distance for every sport, steps, running speed/power/stride/ground contact/vertical oscillation, cycling power/speed/cadence, swimming strokes, effort score, SpO2, respiratory rate…). Streams of BasalEnergyBurned, ActiveEnergyBurned, AppleExerciseTime, PhysicalEffort, EnvironmentalAudioExposure, HeadphoneAudioExposure (6 further types) are **not** sent as streams; Apple's summary statistics for them are. | `HKSampleQuery` for samples associated with the workout; series samples expanded with `HKQuantitySeriesSampleQuery` |
-| **GPS route** (latitude, longitude, altitude, speed, horizontal accuracy; about 1 m precision, every point) | `HKWorkoutRouteQuery` |
+| **GPS route** (latitude, longitude, altitude, speed, horizontal accuracy; about 1 m precision, one point per 5 s) | `HKWorkoutRouteQuery` |
 
 ### All-day series
 | What | How |
