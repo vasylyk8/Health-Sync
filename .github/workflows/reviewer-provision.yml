@@ -53,6 +53,9 @@ jobs:
         env:
           REVIEWER_VERIFY_MODE: ${{ github.event_name == 'workflow_run' && '--verify-only' || '--apply' }}
         run: python3 scripts/tasks/provision-directory-reviewer.py "$REVIEWER_VERIFY_MODE"
+      - name: Check deployed public pages and OAuth discovery
+        if: github.event_name == 'workflow_run'
+        run: python3 scripts/tasks/verify-public-listing-pages.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
