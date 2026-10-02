@@ -40,7 +40,16 @@ if all(os.environ.get(name) for name in ["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY
             return json.load(response)
     bundles = apple_get("bundleIds?filter%5Bidentifier%5D=com.vasylyk.krok")["data"]
     if len(bundles) != 1:
-        raise SystemExit("The confirmed KROK bundle ID was not found in the publishing Apple account.")
+        # Cross-check the registry directly: do not confuse a filter issue with missing access.
+        registry = apple_get("bundleIds?limit=200")
+        bundles = [item for item in registry["data"] if item["attributes"].get("identifier") == "com.vasylyk.krok"]
+        if len(bundles) != 1:
+            apps = apple_get("apps?filter%5BbundleId%5D=com.vasylyk.krok")["data"]
+            print("KROK App Store record visible to the configured API key: " + ("yes" if apps else "no"))
+            print("Visible App ID registry entries in this page: " + str(len(registry["data"])))
+            if registry.get("links", {}).get("next"):
+                print("Registry is paginated; App ID capability was not conclusively verified.")
+            raise SystemExit("Confirmed KROK App ID not visible to the configured App Store Connect API key. Check its publishing account and provisioning access before release.")
     capabilities = apple_get("bundleIds/" + bundles[0]["id"] + "/bundleIdCapabilities")["data"]
     if not any(item["attributes"].get("capabilityType") == "APPLE_ID_AUTH" for item in capabilities):
         raise SystemExit("Sign in with Apple capability is missing on the confirmed KROK App ID.")
