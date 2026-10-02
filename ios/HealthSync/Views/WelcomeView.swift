@@ -6,13 +6,10 @@ struct WelcomeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // The text fits without scrolling when it can; with the art on a short screen the art is dropped, and at
-            // large text sizes the text scrolls. Either way the buttons stay reachable.
-            ViewThatFits(in: .vertical) {
-                content(withArt: showChicago)
-                    .frame(maxHeight: .infinity, alignment: .top)
+            // The text scrolls (at large Dynamic Type sizes or on small screens); the buttons stay reachable.
+            GeometryReader { geo in
                 ScrollView {
-                    content(withArt: false)
+                    content.frame(minHeight: geo.size.height)
                 }
                 .scrollBounceBehavior(.basedOnSize)
             }
@@ -23,12 +20,12 @@ struct WelcomeView: View {
         .background(Theme.background.ignoresSafeArea())
     }
 
-    private func content(withArt: Bool) -> some View {
+    private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
             Wordmark()
                 .frame(height: 44)
             Spacer(minLength: 16)
-            if withArt {
+            if showChicago {
                 chicago
                     .riseIn()
                 Spacer(minLength: 16)
