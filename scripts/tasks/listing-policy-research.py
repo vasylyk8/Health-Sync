@@ -31,7 +31,11 @@ sources = {
     'openai-submission': 'https://developers.openai.com/apps-sdk/deploy/submission/',
     'anthropic-directory': 'https://claude.com/connectors',
     'anthropic-submission': 'https://claude.com/docs/connectors/building/submission',
+    'anthropic-directory-policy': 'https://support.claude.com/en/articles/13145358-anthropic-software-directory-policy',
     'anthropic-mcp': 'https://docs.claude.com/en/docs/mcp',
+    'krok-website': 'https://krok-1d60a.firebaseapp.com/',
+    'krok-support': 'https://krok-1d60a.firebaseapp.com/support',
+    'krok-privacy': 'https://krok-1d60a.firebaseapp.com/privacy',
 }
 out = pathlib.Path('policy-research')
 out.mkdir(exist_ok=True)
