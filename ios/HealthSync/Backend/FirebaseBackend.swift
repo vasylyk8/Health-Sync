@@ -79,7 +79,7 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
         Auth.auth().currentUser?.providerData.contains(where: { $0.providerID == "apple.com" }) ?? false
     }
 
-    func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool) async throws {
+    func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool, replacingFreshAccount freshUid: String?) async throws {
         _ = try await signIn()
         guard let user = Auth.auth().currentUser else { throw BackendError.notSignedIn }
         let credential = OAuthProvider.appleCredential(withIDToken: result.idToken, rawNonce: result.nonce, fullName: nil)
@@ -92,10 +92,18 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
         } catch let error as NSError where error.domain == AuthErrorDomain && error.code == AuthErrorCode.credentialAlreadyInUse.rawValue {
             // Restoring an existing account is allowed only before local onboarding,
             // with an empty outbox. Never silently switch an active user's dataset.
-            let currentStatus = try await status()
-            guard allowExistingAccount, user.isAnonymous, currentStatus.typesWithData == 0,
-                  let updated = error.userInfo[AuthErrorUserInfoUpdatedCredentialKey] as? AuthCredential else { throw AppleSignInError.accountConflict }
-            _ = try await Auth.auth().signIn(with: updated)
+            guard let updated = error.userInfo[AuthErrorUserInfoUpdatedCredentialKey] as? AuthCredential else { throw AppleSignInError.accountConflict }
+            if let freshUid, user.isAnonymous, user.uid == freshUid {
+                // Onboarding on a reinstalled phone: the account this onboarding just created holds only a
+                // copy of this phone's data, which is uploaded again to the restored account. Delete it first
+                // (if that fails nothing has changed) and restore the account the Apple ID already owns.
+                _ = try await call("deleteAllData", [:])
+                _ = try await Auth.auth().signIn(with: updated)
+            } else {
+                let currentStatus = try await status()
+                guard allowExistingAccount, user.isAnonymous, currentStatus.typesWithData == 0 else { throw AppleSignInError.accountConflict }
+                _ = try await Auth.auth().signIn(with: updated)
+            }
         }
         _ = try await Auth.auth().currentUser?.getIDToken(forcingRefresh: true)
     }

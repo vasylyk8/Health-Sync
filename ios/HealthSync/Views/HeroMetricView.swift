@@ -31,7 +31,7 @@ struct HeroMetricView: View {
     /// 0...1: how much of the metric's value is shown while it counts up.
     @State private var reveal = 0.0
     @State private var visible = true
-    @State private var ticker = Timer.publish(every: 4.3, on: .main, in: .common).autoconnect()
+    @State private var ticker = Timer.publish(every: 8.6, on: .main, in: .common).autoconnect()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var current: HeroMetric { metrics[index % max(metrics.count, 1)] }

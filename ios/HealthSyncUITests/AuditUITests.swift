@@ -50,6 +50,7 @@ final class AuditUITests: XCTestCase {
         shot("audit-largest-text-welcome")
         XCTAssertTrue(app.buttons["connectHealth"].isHittable)
         app.buttons["connectHealth"].tap()
+        app.signInThroughAccountPage()
         XCTAssertTrue(app.buttons["provider.chatgpt"].waitForExistence(timeout: 10))
         shot("audit-largest-text-home")
         app.buttons["provider.chatgpt"].tap()

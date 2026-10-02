@@ -26,6 +26,7 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["KROK"].waitForExistence(timeout: 5))
         snapshot("01-Welcome")
         app.buttons["connectHealth"].tap()
+        app.signInThroughAccountPage()
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["provider.chatgpt"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["heroMetric"].waitForExistence(timeout: 5))
@@ -48,12 +49,23 @@ final class OnboardingUITests: XCTestCase {
         snapshot("05-Apple-OAuth-Setup")
     }
 
-    func testAppleSignInIsOfferedWithoutBlockingHealthOnboarding() {
+    func testAccountPageFollowsHealthAndIsRequired() {
         let app = launch()
-        XCTAssertTrue(app.buttons["appleSignIn"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["connectHealth"].isHittable)
+        XCTAssertTrue(app.buttons["connectHealth"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["appleSignIn"].exists, "Welcome no longer offers Sign in with Apple")
         app.buttons["connectHealth"].tap()
+        XCTAssertTrue(app.buttons["appleSignIn"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["connectHealth"].exists)
+        XCTAssertFalse(app.buttons["provider.claude"].exists, "no way past the account page without signing in")
+        snapshot("01b-Account")
+        app.signInThroughAccountPage()
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["appleSignIn"].exists, "Home no longer offers Sign in with Apple")
+    }
+
+    func testReopeningBeforeSigningInReturnsToTheAccountPage() {
+        let app = launch(["-accountPending"])
+        XCTAssertTrue(app.buttons["appleSignIn"].waitForExistence(timeout: 10))
     }
 
     func testConnectClaudeShowsSetUpCheckmark() {

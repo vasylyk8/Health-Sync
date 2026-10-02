@@ -11,9 +11,14 @@ enum Copy {
     }
 
     enum Account {
-        static let title = "Connect your KROK account"
-        static let detail = "Sign in with Apple to use these workouts in Claude or ChatGPT. Your synced data stays in your KROK account."
-        static let linked = "Apple Account linked"
+        static let headline = "One last step: your KROK account."
+        static let reasons = [
+            "Claude and ChatGPT connect to KROK’s secure connector, and they need to know whose data to read. Your account is how they find yours, and only yours.",
+            "It also keeps your data tied to you, so you can restore it after reinstalling KROK or switching iPhones.",
+        ]
+        static let privacyNote = "Sign in with Apple shares no name or email with KROK. Your data stays private until you connect an assistant."
+        static let syncing = "Your Apple Health data is already syncing in the background."
+        static let signIn = "Sign in with Apple"
     }
 
     enum Choices {
@@ -44,6 +49,7 @@ enum Copy {
         static let privacy = "Privacy Policy"
         static let deleteAll = "Delete All My Data"
         static let speedTest = "Run speed test (pauses sync)"
+        static let signIn = "Sign in with Apple"
     }
 
     enum Delete {

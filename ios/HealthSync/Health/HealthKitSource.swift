@@ -49,7 +49,6 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let types = HealthTypes.readPermissions(for: scope, categories: categories.union(["core"]))
         do {
             try await store.requestAuthorization(toShare: [], read: types)
-        if categories.contains("medications") { await requestMedicationAuthorization() }
         } catch let error as NSError where error.domain == HKErrorDomain && error.code == HKError.Code.errorInvalidArgument.rawValue
                     && !error.localizedDescription.localizedCaseInsensitiveContains("source") {
             // (A "failed to look up source" error is about the app itself, not a type: nothing to skip.)
@@ -803,7 +802,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     /// Medications use per-object authorization: the user picks which ones to share on Apple's own sheet.
-    private func requestMedicationAuthorization() async {
+    func requestMedicationAuthorization() async {
         #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
             try? await store.requestPerObjectReadAuthorization(for: HKObjectType.userAnnotatedMedicationType(), predicate: nil)

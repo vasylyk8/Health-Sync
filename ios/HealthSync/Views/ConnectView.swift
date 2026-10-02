@@ -25,11 +25,9 @@ struct ConnectView: View {
         .sheet(isPresented: $showChoices) {
             DataChoicesView().environmentObject(model)
         }
-        #if DEBUG
         .sheet(isPresented: $model.showBenchmark, onDismiss: { model.finishSpeedTest() }) {
             speedTest
         }
-        #endif
         .confirmationDialog(Copy.Delete.title, isPresented: $confirmDelete, titleVisibility: .visible) {
             Button(Copy.Delete.confirm, role: .destructive) { Task { await model.deleteAllData() } }
         } message: {
@@ -48,9 +46,12 @@ struct ConnectView: View {
                 Link(destination: Theme.supportURL) { Label(Copy.Menu.help, systemImage: "questionmark.circle") }
                 Link(destination: Theme.privacyURL) { Label(Copy.Menu.privacy, systemImage: "hand.raised") }
                 Button { showChoices = true } label: { Label(Copy.Menu.yourData, systemImage: "slider.horizontal.3") }
-                #if DEBUG
-                Button { model.runSpeedTest() } label: { Label(Copy.Menu.speedTest, systemImage: "speedometer") }
-                #endif
+                if !model.appleAccountLinked {
+                    Button { Task { await model.signInWithAppleFromMenu() } } label: { Label(Copy.Menu.signIn, systemImage: "person.crop.circle") }
+                }
+                if Theme.isInternalBuild {
+                    Button { model.runSpeedTest() } label: { Label(Copy.Menu.speedTest, systemImage: "speedometer") }
+                }
                 Button { confirmDelete = true } label: { Label(Copy.Menu.deleteAll, systemImage: "trash") }
             } label: {
                 Image(systemName: "ellipsis")
@@ -80,9 +81,6 @@ struct ConnectView: View {
                 }
             }
             .padding(.bottom, 24)
-            // Below the assistants so they stay in reach; its explanation can grow at large text sizes.
-            AppleAccountView(style: .home)
-                .padding(.bottom, 16)
         }
         .padding(.horizontal, Theme.margin)
     }
@@ -96,7 +94,7 @@ struct ConnectView: View {
         let p = model.progress
         VStack(alignment: .leading, spacing: 0) {
             if p.stepsTotal > 0 && !p.historyComplete {
-                StepBar(done: p.stepFlags)
+                StepBar(fraction: p.uploadFraction)
                 Text(model.estimate.text)
                     .bodyText(.semibold)
                     .padding(.top, 16)
@@ -124,7 +122,10 @@ struct ConnectView: View {
                     .foregroundStyle(Theme.muted)
                     .padding(.top, 2)
             } else {
+                // Upload hasn't begun: the bar waits in its first segment.
+                StepBar(fraction: 0)
                 Text(Copy.Home.gettingReady).bodyText(.semibold)
+                    .padding(.top, 16)
             }
             if let issue = model.syncIssue {
                 Label(issue, systemImage: "exclamationmark.triangle.fill")
@@ -136,7 +137,6 @@ struct ConnectView: View {
         }
     }
 
-    #if DEBUG
     private var speedTest: some View {
         NavigationStack {
             ScrollView {
@@ -159,7 +159,6 @@ struct ConnectView: View {
         }
         .interactiveDismissDisabled(model.benchmarkRunning)
     }
-    #endif
 }
 
 /// One assistant as a full-width pill: "Connect Claude" until it is set up, then its name and a check mark.

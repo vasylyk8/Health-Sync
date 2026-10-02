@@ -25,7 +25,11 @@ struct HealthSyncApp: App {
             telemetry = FirebaseTelemetry()
         }
         let defaults = uiTesting ? UserDefaults(suiteName: "uitest-\(UUID().uuidString)")! : .standard
-        if uiTesting && args.contains("-onboarded") { defaults.set(true, forKey: "healthConnected") }
+        if uiTesting && args.contains("-onboarded") { defaults.set(true, forKey: AppModel.healthConnectedKey) }
+        if uiTesting && args.contains("-accountPending") {
+            defaults.set(true, forKey: AppModel.healthConnectedKey)
+            defaults.set(true, forKey: AppModel.pendingAccountKey)
+        }
         let outboxRoot = uiTesting ? FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) : Outbox.defaultRoot()
         let model = AppModel(backend: backend, source: source, outbox: Outbox(root: outboxRoot), scope: scope, telemetry: telemetry, defaults: defaults)
         // HealthKit background delivery can relaunch the app without ever showing a scene.
@@ -89,6 +93,7 @@ struct RootView: View {
         Group {
             switch model.phase {
             case .welcome: WelcomeView()
+            case .account: AccountView()
             case .home: ConnectView()
             }
         }
