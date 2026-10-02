@@ -351,7 +351,8 @@ actor SyncEngine {
     /// content did not change since it was last sent is not sent again.
     /// Bump when daily rows sent by an older app may be incomplete: the next run re-reads the whole history once.
     /// 2: a failed HealthKit query used to drop its metric silently and the pass was recorded as complete.
-    static let dailyVersion = 2
+    /// 3: the daily statistics queries now share the read gate (they failed under load and left their metrics out).
+    static let dailyVersion = 3
 
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }
