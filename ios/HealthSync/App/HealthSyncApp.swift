@@ -44,6 +44,7 @@ struct HealthSyncApp: App {
             }
         }
         if !uiTesting {
+            BackgroundTaskRegistry.shared.refreshRegistered = true
             BGTaskScheduler.shared.register(forTaskWithIdentifier: AppModel.refreshTaskId, using: nil) { task in
                 let work = Task { @MainActor in
                     await model.runBackgroundRefresh()

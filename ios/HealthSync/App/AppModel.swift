@@ -256,7 +256,8 @@ final class AppModel: ObservableObject {
     /// data is only readable while the phone is unlocked, so this helps only when iOS runs it then.)
     /// Asks iOS for an occasional background refresh even when everything is in (it decides when; roughly every few hours at best).
     func scheduleBackgroundRefresh() {
-        guard phase == .home else { return }
+        // Submitting a request for a task nobody registered a handler for crashes (UI tests, previews).
+        guard phase == .home, BackgroundTaskRegistry.shared.refreshRegistered else { return }
         let request = BGAppRefreshTaskRequest(identifier: AppModel.refreshTaskId)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60)
         try? BGTaskScheduler.shared.submit(request)
