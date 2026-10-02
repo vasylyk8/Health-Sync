@@ -35,6 +35,7 @@ test.beforeAll(async () => {
   app.get('/connect.js', (_req, res) => res.type('js').send(bundle.outputFiles[0]!.text));
   app.get('/connect', (_req, res) => res.setHeader('Content-Security-Policy', policy).type('html').send(readFileSync('../hosting/connect.html', 'utf8')));
   app.get('/style.css', (_req, res) => res.type('css').send(readFileSync('../hosting/style.css', 'utf8')));
+  app.get('/icon.png', (_req, res) => res.type('png').send(readFileSync('../hosting/icon.png')));
   app.use((req, res, next) => router(req, res, next));
   server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

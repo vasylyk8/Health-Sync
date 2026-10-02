@@ -54,3 +54,5 @@ for name, url in sources.items():
         index.append({'name': name, 'url': url, 'error': str(error)})
 (out / 'index.json').write_text(json.dumps(index, indent=2))
 print(json.dumps(index, indent=2))
+if any('error' in entry for entry in index):
+    raise SystemExit('One or more sources could not be fetched; inspect index.json before relying on this research.')

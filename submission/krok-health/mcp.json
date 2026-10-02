@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "krok-health": {
+      "type": "streamable-http",
+      "url": "https://krok-1d60a.firebaseapp.com/mcp"
+    }
+  }
+}

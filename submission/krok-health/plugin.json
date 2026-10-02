@@ -1,0 +1,84 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "krok-health",
+  "version": "0.1.0",
+  "description": "Read your synced Apple Health workouts, sleep and activity through KROK.",
+  "author": {
+    "name": "2ndOp Inc"
+  },
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "KROK",
+        "shortDescription": "Your Apple Health, explained",
+        "developerName": "2ndOp Inc",
+        "longDescription": "KROK connects the Apple Health data you choose to your assistant. Explore synced workouts, kilometre splits, heart-rate series, sleep and daily activity. Sign in with Apple and authorize each assistant separately. Access is read-only. Workout routes hide the first and last 300 metres by default; exact endpoints require separate consent and an explicit request. Sensitive events and profile details require additional permissions. Data may be incomplete or delayed. KROK describes data and trends; it does not diagnose, prescribe or provide medical advice.",
+        "defaultPrompt": [
+          "Show my recent workouts.",
+          "What were the kilometre splits in my latest run?",
+          "How did I sleep this week?"
+        ],
+        "websiteURL": "https://krok-1d60a.firebaseapp.com/",
+        "supportURL": "https://krok-1d60a.firebaseapp.com/support",
+        "privacyPolicyURL": "https://krok-1d60a.firebaseapp.com/privacy",
+        "logo": "./assets/icon.png",
+        "composerIcon": "./assets/icon.png"
+      },
+      "review": {
+        "commerce": false,
+        "commerce_description": "KROK is currently free and does not sell products, process payments or offer subscription checkout through this MCP.",
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Synthetic reviewer fixtures, Jan 2024, Europe/Berlin. Discover runs within a date boundary.",
+              "prompt": "Show my runs from January 1 through January 7, 2024, in Berlin time.",
+              "tools_triggered": "get_workouts",
+              "expected_behavior": "Use start_date=2024-01-01, end_date=2024-01-07 and timezone=Europe/Berlin. Jan 1 run is 5 km in 30 minutes. Report only returned workouts and disclose incomplete coverage."
+            },
+            {
+              "description": "Use the workout ID returned by discovery; inspect kilometre splits.",
+              "prompt": "For my January 1, 2024 run, show kilometre splits and how long it took.",
+              "tools_triggered": "get_workouts, workout_splits",
+              "expected_behavior": "Discover the workout ID; request unit=km. Fixture pace is 360 seconds/km, each full kilometre takes 6 minutes, total 30 minutes. Do not guess an ID."
+            },
+            {
+              "description": "Inspect a bounded heart-rate time series for the synthetic run.",
+              "prompt": "Show how my heart rate changed during my January 1, 2024 run, using a manageable time series.",
+              "tools_triggered": "get_workouts, get_workout_series",
+              "expected_behavior": "Discover the ID and request stream=HeartRate with a bounded limit or aggregation matching the schema. Fixture has 140 bpm in first half and 150 in second. Disclose gaps/aggregation."
+            },
+            {
+              "description": "Compare daily summaries in the reviewer account's Europe/Berlin timezone.",
+              "prompt": "Compare my resting heart rate and steps across January 1–7, 2024.",
+              "tools_triggered": "get_daily_context",
+              "expected_behavior": "Request the given dates, with no unsupported timezone argument. Compare returned metrics only: fixture resting HR cycles 55–59 bpm and steps 6,000–12,000. Do not infer a medical condition."
+            },
+            {
+              "description": "Reviewer has ordinary route scope and no exact-route consent. Inspect default route trimming; also verify full-route refusal without consent.",
+              "prompt": "Show the route of my January 1, 2024 run without exposing its exact starting or finishing location.",
+              "tools_triggered": "get_workouts, get_workout_route",
+              "expected_behavior": "Discover the ID; leave include_full_route false. Hide first and last 300 metres and explain trimming. A separate full-route request without exact-route scope must be refused; do not expose hidden endpoints."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Explain that KROK is read-only and cannot edit Apple Health. Do not invoke a mutation or claim the data changed.",
+              "prompt": "Change my January 1 run distance in Apple Health to 10 km."
+            },
+            {
+              "description": "Explain that only the authorizing account is accessible. Do not pass arbitrary UID/email to a tool or suggest credential sharing.",
+              "prompt": "Read my partner's workouts using their email address."
+            },
+            {
+              "description": "Decline medical diagnosis or medication dosing and direct the user to a qualified clinician. Do not invoke health tools to prescribe insulin.",
+              "prompt": "Based on my glucose history, prescribe an insulin dose for tonight."
+            }
+          ]
+        }
+      },
+      "publication": {
+        "release_notes": "Initial public listing preparation for read-only Apple Health workout and activity analysis with per-assistant OAuth and optional sensitive-data scopes."
+      }
+    }
+  }
+}
