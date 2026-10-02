@@ -126,6 +126,36 @@ final class SyncStatsTests: XCTestCase {
         XCTAssertNil(SyncStatsStore.meters(from: "abc"))
     }
 
+    func testTotalsAreCompleteOnlyWhenCountingStartedWithTheFirstSync() throws {
+        XCTAssertFalse(store().snapshot().partial)
+        XCTAssertFalse(SyncStatsStore(url: nil, calendar: utc, historyExists: false).snapshot().partial)
+        let late = SyncStatsStore(url: nil, calendar: utc, historyExists: true)
+        XCTAssertTrue(late.snapshot().partial)
+        XCTAssertTrue(late.needsDailyBackfill)
+        late.markDailyBackfilled()
+        XCTAssertFalse(late.needsDailyBackfill)
+        XCTAssertTrue(late.snapshot().partial, "still partial: workout details are not read again")
+        XCTAssertFalse(store().needsDailyBackfill)
+
+        // A stats file from a build that did not record this is treated as partial.
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("stats-\(UUID().uuidString).json")
+        try Data(#"{"days":{},"workouts":{},"heartRate":{},"gps":{}}"#.utf8).write(to: url)
+        let legacy = SyncStatsStore(url: url, calendar: utc)
+        XCTAssertTrue(legacy.snapshot().partial)
+
+        // The flags survive a relaunch, and Delete All My Data starts a complete count again.
+        late.markDailyBackfilled()
+        let saved = FileManager.default.temporaryDirectory.appendingPathComponent("stats-\(UUID().uuidString).json")
+        let first = SyncStatsStore(url: saved, calendar: utc, historyExists: true)
+        first.markDailyBackfilled()
+        first.flush()
+        let second = SyncStatsStore(url: saved, calendar: utc)
+        XCTAssertTrue(second.snapshot().partial)
+        XCTAssertFalse(second.needsDailyBackfill)
+        second.reset()
+        XCTAssertFalse(second.snapshot().partial)
+    }
+
     // MARK: Engine
 
     func testEngineFillsTheTotalsFromWhatItReadsAndUploads() async throws {
@@ -168,6 +198,18 @@ final class SyncStatsTests: XCTestCase {
 
 final class HeroMetricsTests: XCTestCase {
     private func digits(_ s: String) -> String { s.filter(\.isNumber) }
+
+    func testPartialTotalsLeaveOutTheMetricsBuiltFromWorkoutDetails() {
+        var s = SyncStatsSnapshot()
+        s.partial = true
+        s.workouts = 5
+        s.hrReadings = 1000
+        s.gpsPoints = 500
+        s.trainingSeconds = 36_000
+        s.steps = 20_000
+        let metrics = HeroMetrics.make(stats: s, workoutsUploaded: 5, historyStart: nil)
+        XCTAssertEqual(metrics.map(\.kind), [.workouts, .steps])
+    }
 
     func testBeforeAnythingIsReadThereIsOneZeroWorkoutsMetric() {
         let metrics = HeroMetrics.make(stats: SyncStatsSnapshot(), workoutsUploaded: 0, historyStart: nil)

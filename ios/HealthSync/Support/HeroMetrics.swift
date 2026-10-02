@@ -29,8 +29,11 @@ enum HeroMetrics {
     /// has been read it holds a single "0 workouts".
     static func make(stats s: SyncStatsSnapshot, workoutsUploaded: Int, historyStart: Date?, now: Date = Date()) -> [HeroMetric] {
         var out: [HeroMetric] = []
+        // After an update of an app that had synced before, totals built from workout details start low: leave them out.
+        let hiddenWhenPartial: Set<HeroMetric.Kind> = [.heartRate, .training, .gps, .climbed, .heartbeats, .activeDays, .types]
         func add(_ kind: HeroMetric.Kind, _ value: Double, _ label: String, whole: Bool = false, caption: String) {
             guard value.rounded() >= 1 else { return }
+            if s.partial && hiddenWhenPartial.contains(kind) { return }
             out.append(HeroMetric(kind: kind, value: value, label: label, caption: caption, wholeNumber: whole))
         }
         func count(_ n: Double) -> String { Int(n.rounded()).formatted(.number) }

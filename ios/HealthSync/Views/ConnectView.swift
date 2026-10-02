@@ -88,7 +88,7 @@ struct ConnectView: View {
     }
 
     private var heroMetrics: [HeroMetric] {
-        HeroMetrics.make(stats: model.progress.stats, workoutsUploaded: model.progress.detailsDone, historyStart: model.status.historyStart)
+        HeroMetrics.make(stats: model.progress.stats, workoutsUploaded: model.progress.detailsTotal, historyStart: model.status.historyStart)
     }
 
     /// Sync state under the number: the step bar and estimate while syncing, otherwise how things stand.

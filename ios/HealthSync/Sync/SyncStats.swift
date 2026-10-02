@@ -7,6 +7,9 @@ import Foundation
 struct SyncStatsSnapshot: Equatable, Sendable {
     /// Changes whenever any total changes (lets the UI notice updates cheaply).
     var version = 0
+    /// True when these totals started after part of the history was already uploaded (an update of an
+    /// app that had synced before). Totals built from workout details are then too low and are not shown.
+    var partial = false
     /// Workouts whose summary is known.
     var workouts = 0
     /// Heart rate readings in the raw data of workouts that are uploaded.
@@ -74,6 +77,10 @@ final class SyncStatsStore: @unchecked Sendable {
         var workouts: [String: Workout] = [:]
         var heartRate: [String: Int] = [:]
         var gps: [String: Int] = [:]
+        /// True when counting began together with the very first sync. Missing in files written by earlier builds.
+        var complete: Bool? = true
+        /// Set once a full read of the daily rows has filled `days` for an install that synced before.
+        var dailyBackfilled: Bool?
     }
 
     private let lock = NSLock()
@@ -85,13 +92,29 @@ final class SyncStatsStore: @unchecked Sendable {
     private var writeScheduled = false
     private let writeQueue = DispatchQueue(label: "app.healthsync.stats", qos: .utility)
 
-    /// `url` is where the totals are kept between launches (nil: memory only).
-    init(url: URL?, calendar: Calendar = .current) {
+    /// `url` is where the totals are kept between launches (nil: memory only). `historyExists` says that
+    /// uploads happened before there was a stats file, so a store that starts empty is only partial.
+    init(url: URL?, calendar: Calendar = .current, historyExists: Bool = false) {
         self.url = url
         self.calendar = calendar
         if let url, let data = try? Data(contentsOf: url), let decoded = try? JSONDecoder().decode(Saved.self, from: data) {
             saved = decoded
             versionValue = 1
+        } else if historyExists {
+            saved.complete = false
+        }
+    }
+
+    private var isPartial: Bool { saved.complete != true }
+
+    /// An install that synced before needs one full read of the daily rows to fill the daily totals.
+    var needsDailyBackfill: Bool { lock.withLock { isPartial && saved.dailyBackfilled != true } }
+
+    func markDailyBackfilled() {
+        mutate { s in
+            guard s.dailyBackfilled != true else { return false }
+            s.dailyBackfilled = true
+            return true
         }
     }
 
@@ -179,6 +202,7 @@ final class SyncStatsStore: @unchecked Sendable {
         lock.withLock {
             var out = SyncStatsSnapshot()
             out.version = versionValue
+            out.partial = isPartial
             out.workouts = saved.workouts.count
             out.hrReadings = saved.heartRate.values.reduce(0, +)
             out.gpsPoints = saved.gps.values.reduce(0, +)

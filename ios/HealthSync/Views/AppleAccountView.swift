@@ -55,7 +55,6 @@ struct AppleAccountView: View {
                 }
                 .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .whiteOutline)
                 .frame(height: Theme.pillHeight)
-                .clipShape(Capsule())
                 .disabled(model.busy)
                 .accessibilityIdentifier("appleSignIn")
             }

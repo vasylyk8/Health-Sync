@@ -128,7 +128,9 @@ actor SyncEngine {
         self.now = now
         self.timeZone = timeZone
         self.telemetry = telemetry
-        self.stats = stats ?? SyncStatsStore(url: outbox.root.appendingPathComponent("stats.json"))
+        let s = outbox.state
+        let hasHistory = !s.recentDone.isEmpty || !s.caughtUp.isEmpty || !s.detailsDone.isEmpty || s.dailyFullAt != nil
+        self.stats = stats ?? SyncStatsStore(url: outbox.root.appendingPathComponent("stats.json"), historyExists: hasHistory)
     }
 
     /// Forgets the totals (Delete All My Data).
@@ -347,7 +349,9 @@ actor SyncEngine {
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }
         let end = now()
-        let full = outbox.state.dailyFullAt.map { end.timeIntervalSince($0) > config.dailyFullEvery } ?? true
+        // An update of an app that already synced reads the whole history once more, only to fill the totals on Home
+        // (rows whose content did not change are not sent again).
+        let full = (outbox.state.dailyFullAt.map { end.timeIntervalSince($0) > config.dailyFullEvery } ?? true) || stats.needsDailyBackfill
         if !full, let last = lastDailyAt, end.timeIntervalSince(last) < config.minRefresh { return }
         var start: Date
         if full {
@@ -369,6 +373,11 @@ actor SyncEngine {
             for batch in batches {
                 // Categories other than core send nothing when they have no rows; core always reports (it advances the covered window).
                 if batch.records.isEmpty && batch.category != "core" { continue }
+                // The totals on Home come from the core rows (activity, sleep, recovery), counted even when they are not sent again.
+                if batch.category == "core" {
+                    stats.addDays(batch.records)
+                    report(syncing: running)
+                }
                 let lines = try BatchWriter.encodeLines(batch.records)
                 var digest = SHA256()
                 for line in lines { digest.update(data: line) }
@@ -380,7 +389,10 @@ actor SyncEngine {
             }
             chunkStart = chunkEnd
         }
-        if full { try outbox.update { $0.dailyFullAt = end } }
+        if full {
+            try outbox.update { $0.dailyFullAt = end }
+            stats.markDailyBackfilled()
+        }
         lastDailyAt = end
     }
 
@@ -725,8 +737,6 @@ actor SyncEngine {
         // Totals for the big numbers on Home: workout summaries and daily rows are counted as they are read.
         if typeId == workoutId {
             stats.addWorkoutSummaries(records)
-        } else if typeId == HealthTypes.dailyId {
-            stats.addDays(records)
         }
         report(syncing: running)
         let lines = try SyncTiming.shared.measureSync("batch.encode") { try BatchWriter.encodeLines(records) }
