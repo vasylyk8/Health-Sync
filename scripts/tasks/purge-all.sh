@@ -9,4 +9,5 @@ step "install server dependencies"
 (cd "$ROOT/firebase/functions" && npm ci --no-audit --no-fund >/dev/null)
 step "purge-all $MODE"
 cd "$ROOT/firebase/functions"
+node scripts/copy-shared.mjs
 GCP_PROJECT_ID="$P" npx --yes tsx scripts/purge-all.ts "$MODE"
