@@ -13,6 +13,8 @@ import {
   getDailyContext, getWorkout, getWorkoutRoute, getWorkoutSeries, getWorkouts, workoutBestEfforts, workoutElevation, workoutHrDrift, workoutHrZones, workoutSplits,
 } from '../query/workouts.js';
 import { log } from '../log.js';
+import type { KrokOAuth } from '../auth/oauth.js';
+import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 
 export interface McpDeps {
   tokens: TokenStore;
@@ -22,6 +24,7 @@ export interface McpDeps {
   meta: MetaStore;
   data: BlobStore;
   now?: () => number;
+  oauth?: Pick<KrokOAuth, 'verifyAccessToken' | 'resource' | 'issuer'>;
 }
 
 export const SERVER_INSTRUCTIONS = `This server gives read-only access to the user's own Apple Health workouts, mirrored from their iPhone by the KROK app, plus one row of daily context (sleep, resting heart rate, HRV, activity, body measurements...) per day.
@@ -184,23 +187,43 @@ const TOOLS: { name: string; title: string; description: string; input: z.ZodRaw
   },
 ];
 
-function buildServer(q: QueryDeps, deps: McpDeps, provider: Provider): McpServer {
+export function toolScopes(name: string): string[] {
+  if (['get_daily_context', 'get_hourly_series', 'get_recovery'].includes(name)) return ['health:daily:read'];
+  if (['get_workout', 'get_training_load'].includes(name)) return ['health:workouts:read', 'health:daily:read'];
+  if (['get_glucose', 'get_nutrition_log'].includes(name)) return ['health:events:read', 'health:workouts:read'];
+  if (name === 'get_health_events') return ['health:events:read'];
+  if (name === 'get_profile') return ['health:profile:read'];
+  if (name === 'get_workout_route') return ['health:workouts:read', 'health:routes:read'];
+  return ['health:workouts:read'];
+}
+
+function buildServer(q: QueryDeps, deps: McpDeps, provider: Provider, identity?: AuthInfo): McpServer {
   const server = new McpServer({ name: 'krok', version: '1.0.0' }, { instructions: SERVER_INSTRUCTIONS });
   for (const tool of TOOLS) {
     server.registerTool(
       tool.name,
-      { title: tool.title, description: tool.description, inputSchema: tool.input, annotations: { readOnlyHint: true, openWorldHint: false } },
+      { title: tool.title, description: tool.description, inputSchema: tool.input,
+        outputSchema: z.object({ dataAsOf: z.string().nullable(), complete: z.boolean(), coverage: z.array(z.record(z.string(), z.unknown())), notes: z.array(z.string()) }).passthrough(),
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        _meta: { securitySchemes: identity ? [{ type: 'oauth2', scopes: toolScopes(tool.name) }] : [{ type: 'noauth' }] } },
       (async (args: Record<string, unknown>) => {
         const started = Date.now();
         let ok = false;
         try {
+          if (identity) {
+            const required = [...toolScopes(tool.name), ...(tool.name === 'get_workout_route' && args?.include_full_route === true ? ['health:routes:full'] : [])];
+            if (required.some((s) => !identity.scopes.includes(s))) {
+              return { isError: true, content: [{ type: 'text' as const, text: 'This connection does not have permission for that data. Reconnect KROK and grant the required permissions.' }],
+                _meta: { 'mcp/www_authenticate': [`Bearer resource_metadata="${deps.oauth?.issuer}.well-known/oauth-protected-resource/mcp", error="insufficient_scope", scope="${required.join(' ')}"`] } };
+            }
+          }
           const result = await withDeadline(tool.run(q, args ?? {}), LIMITS.requestDeadlineMs);
           const text = JSON.stringify(result);
           if (Buffer.byteLength(text) > LIMITS.maxResponseBytes) {
             throw new ToolError('too_large', 'The result is too large to return in full. Use a shorter range or a coarser period.');
           }
           ok = true;
-          return { content: [{ type: 'text' as const, text }] };
+          return { structuredContent: result, content: [{ type: 'text' as const, text }] };
         } catch (err) {
           const message = err instanceof ToolError ? err.message : 'Something went wrong reading the data. Try a smaller request.';
           if (!(err instanceof ToolError)) log.error('tool failed', { tool: tool.name, code: (err as { code?: string }).code ?? 'internal' });
@@ -212,6 +235,15 @@ function buildServer(q: QueryDeps, deps: McpDeps, provider: Provider): McpServer
       }) as never,
     );
   }
+  if (identity) server.registerTool('get_account', {
+    title: 'Identify the connected KROK account', description: 'Identify the KROK account authorized by this connection. Returns a stable opaque ID, without email or health data.',
+    inputSchema: {}, outputSchema: { id: z.string(), nickname: z.string() },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    _meta: { 'openai/profile': true, securitySchemes: [{ type: 'oauth2', scopes: [] }] },
+  }, async () => {
+    const profile = { id: String(identity.extra?.profileId), nickname: 'KROK account' };
+    return { structuredContent: profile, content: [{ type: 'text', text: JSON.stringify(profile) }] };
+  });
   return server;
 }
 
@@ -247,10 +279,36 @@ function send(res: ServerResponse, status: number, body: object) {
   res.end(JSON.stringify(body));
 }
 
-/** HTTP entry point for /mcp/<token>. Stateless: a fresh MCP server per request. */
+/** HTTP entry point for OAuth and legacy links. Stateless: one server per request. */
 export async function handleMcp(req: IncomingMessage & { body?: unknown }, res: ServerResponse, deps: McpDeps): Promise<void> {
   const now = deps.now ?? Date.now;
   res.setHeader('Cache-Control', 'no-store');
+  if ((req.url ?? '').split('?')[0] === '/mcp' && deps.oauth) {
+    let identity: AuthInfo;
+    try {
+      const bearer = /^Bearer ([A-Za-z0-9_-]{43})$/i.exec(String(req.headers.authorization ?? ''))?.[1];
+      if (!bearer) throw new Error('missing');
+      identity = await deps.oauth.verifyAccessToken(bearer);
+    } catch {
+      res.setHeader('WWW-Authenticate', `Bearer resource_metadata="${deps.oauth.issuer}.well-known/oauth-protected-resource/mcp"`);
+      return send(res, 401, { error: 'unauthorized', message: 'Connect KROK and sign in with Apple to authorize access.' });
+    }
+    if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); return send(res, 405, { error: 'method_not_allowed' }); }
+    const uid = String(identity.extra?.uid), provider = identity.extra?.provider as Provider;
+    const user = await deps.meta.getUser(uid);
+    if (!user || user.deleting) return send(res, 401, { error: 'unauthorized' });
+    if (!await deps.limiter.hit(`oauth_mcp_${uid}_${provider}`, LIMITS.mcpRequestsPerMinute, 60_000)) {
+      res.setHeader('Retry-After', '60'); return send(res, 429, { error: 'too_many_requests' });
+    }
+    await deps.connections.touch(uid, provider, now(), user.connections[provider]).catch(() => undefined);
+    const q: QueryDeps = { uid, meta: deps.meta, data: deps.data, now, tz: user.tz ?? 'UTC' };
+    const server = buildServer(q, deps, provider, identity);
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    res.on('close', () => { void transport.close(); void server.close(); });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+    return;
+  }
   const match = /^\/mcp\/([^/?#]+)\/?(?:[?#].*)?$/.exec(req.url ?? '');
   const token = match?.[1] ?? '';
   const ip = (String(req.headers['x-forwarded-for'] ?? '').split(',')[0] || req.socket.remoteAddress || '?').trim();

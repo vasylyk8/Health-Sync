@@ -4,3 +4,4 @@ src/generated/
 *.log
 .seed/
 *-debug.log
+/.seed/

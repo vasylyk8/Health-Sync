@@ -31,6 +31,15 @@ protocol Backend: Uploader {
     /// Whether the server already has this upload batch (processed, or waiting to be processed).
     func batchExists(batchId: String) async throws -> Bool
     func signOut() async
+    func hasAppleAccount() async -> Bool
+    func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool) async throws
+    func revokeAppleAuthorization(_ authorizationCode: String) async throws
+}
+
+extension Backend {
+    func hasAppleAccount() async -> Bool { false }
+    func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool) async throws { throw BackendError.notConfigured }
+    func revokeAppleAuthorization(_ authorizationCode: String) async throws { throw BackendError.notConfigured }
 }
 
 enum BackendError: LocalizedError {

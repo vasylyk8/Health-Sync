@@ -9,6 +9,7 @@ struct ConnectView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section { AppleAccountView() }
                 Section {
                     ForEach(model.providers) { provider in
                         Button { selected = provider } label: { ProviderRow(provider: provider, setUp: model.isSetUp(provider)) }

@@ -1,0 +1,28 @@
+name: apple-auth-preflight
+on:
+  pull_request:
+    paths: ['ios/**', 'firebase/**', 'scripts/tasks/apple-auth-preflight.py', '.github/workflows/apple-auth-preflight.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  configuration:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Check Apple provider without exposing credentials
+        env:
+          APPLE_SIGN_IN_SERVICE_ID: ${{ secrets.APPLE_SIGN_IN_SERVICE_ID }}
+          APPLE_SIGN_IN_KEY_ID: ${{ secrets.APPLE_SIGN_IN_KEY_ID }}
+          APPLE_SIGN_IN_KEY_P8: ${{ secrets.APPLE_SIGN_IN_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: python3 scripts/tasks/apple-auth-preflight.py

@@ -10,6 +10,9 @@
     }
   ],
   "fieldOverrides": [
+    { "collectionGroup": "oauthRequests", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
+    { "collectionGroup": "oauthCredentials", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
+    { "collectionGroup": "oauthGrants", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
     { "collectionGroup": "types", "fieldPath": "fragmented", "indexes": [{ "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }] },
     { "collectionGroup": "types", "fieldPath": "files", "indexes": [] },
     { "collectionGroup": "types", "fieldPath": "coverage", "indexes": [] },

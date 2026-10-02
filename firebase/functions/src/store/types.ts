@@ -63,6 +63,8 @@ export interface UserDoc {
   tz: string | null;
   connections: Partial<Record<string, { setUpAt: number; lastUsedAt: number }>>;
   links: Partial<Record<string, { tokenHash: string; createdAt: number }>>;
+  oauthEpochs?: Partial<Record<string, number>>;
+  oauthProfileId?: string;
 }
 
 export type BatchState = 'published' | 'rejected' | 'discarded';

@@ -66,7 +66,8 @@ export async function disconnect(db: Firestore, uid: string, provider: Provider)
     if (!snap.exists) return;
     const old = (snap.data() as UserDoc).links?.[provider];
     if (old) tx.delete(db.collection('tokens').doc(old.tokenHash));
-    tx.update(userRef, { [`links.${provider}`]: FieldValue.delete(), [`connections.${provider}`]: FieldValue.delete() });
+    tx.update(userRef, { [`links.${provider}`]: FieldValue.delete(), [`connections.${provider}`]: FieldValue.delete(),
+      [`oauthEpochs.${provider}`]: FieldValue.increment(1) });
   });
   log.info('disconnected', { uid, provider });
 }
@@ -100,6 +101,14 @@ export async function purgeUserData(deps: PurgeDeps, uid: string): Promise<void>
   // Tokens pointing at this user, in case any were created concurrently.
   const tokens = await db.collection('tokens').where('uid', '==', uid).get();
   await Promise.all(tokens.docs.map((d) => d.ref.delete()));
+  // OAuth credentials live outside the user's subtree and must not survive deletion.
+  for (;;) {
+    const credentials = await db.collection('oauthCredentials').where('uid', '==', uid).limit(400).get();
+    if (credentials.empty) break;
+    const batch = db.batch();
+    credentials.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
   await deps.incoming.deletePrefix(`incoming/${uid}/`);
   await deps.data.deletePrefix(`data/${uid}/`);
   for (;;) {

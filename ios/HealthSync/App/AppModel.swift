@@ -14,6 +14,8 @@ final class AppModel: ObservableObject {
     }
     @Published var errorMessage: String?
     @Published var busy = false
+    @Published var appleAccountLinked = false
+    private let appleSignIn = AppleSignIn()
     /// What the connect button is waiting for right now (shown under it), so a stall can be told apart.
     @Published var connectStage = ""
     /// Shown under the sync status when the last sync attempt failed; cleared by the next success.
@@ -186,6 +188,7 @@ final class AppModel: ObservableObject {
     func syncNow() async {
         do {
             _ = try await backend.signIn()
+            appleAccountLinked = await backend.hasAppleAccount()
             if !started {
                 started = true
                 try await backend.registerDevice(timeZone: TimeZone.current.identifier)
@@ -319,6 +322,11 @@ final class AppModel: ObservableObject {
         busy = true
         defer { busy = false }
         do {
+            if await backend.hasAppleAccount() {
+                let identity = try await appleSignIn.authorize()
+                try await backend.linkAppleAccount(identity, allowExistingAccount: false)
+                try await backend.revokeAppleAuthorization(identity.authorizationCode)
+            }
             try await backend.deleteAllData()
             telemetry.event("data_deleted")
             Keychain.removeAll()
@@ -326,6 +334,7 @@ final class AppModel: ObservableObject {
             await backend.signOut()
             defaults.removeObject(forKey: "healthConnected")
             status = .empty
+            appleAccountLinked = false
             started = false
             // Clear `busy` before the screen changes: the new welcome screen must never render (or
             // miss an update to) a stale spinner with a disabled button.
@@ -333,6 +342,26 @@ final class AppModel: ObservableObject {
             withAnimation { phase = .welcome }
         } catch {
             errorMessage = friendly(error)
+        }
+    }
+
+    func linkAppleAccount(_ result: AppleSignInResult) async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            let allowExisting = phase == .welcome && outbox.pending().isEmpty
+            // Finish in-flight uploads before account restoration can change identity.
+            syncTask?.cancel()
+            await syncTask?.value
+            syncTask = nil
+            try await backend.linkAppleAccount(result, allowExistingAccount: allowExisting)
+            appleAccountLinked = await backend.hasAppleAccount()
+            await refreshStatus()
+            if phase == .home { start() }
+        } catch {
+            errorMessage = friendly(error)
+            if phase == .home { start() }
         }
     }
 
