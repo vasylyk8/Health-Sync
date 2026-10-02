@@ -40,7 +40,17 @@ final class OnboardingUITests: XCTestCase {
 
     func testAppleAccountCanUsePublicOAuthWithoutCreatingAPrivateLink() {
         let app = launch(["-onboarded", "-appleLinked"])
-        XCTAssertTrue(app.staticTexts["Apple Account linked"].waitForExistence(timeout: 10))
+        // Home has no "linked" row any more: the account state shows in the ••• menu (no Sign in with Apple item once linked).
+        XCTAssertTrue(app.buttons["moreMenu"].waitForExistence(timeout: 10))
+        var linked = false
+        for _ in 0..<20 where !linked {
+            app.buttons["moreMenu"].tap()
+            let signIn = app.buttons["Sign in with Apple"]
+            _ = signIn.waitForExistence(timeout: 0.5)
+            linked = !signIn.exists
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
+        }
+        XCTAssertTrue(linked, "linked accounts have no Sign in with Apple item in the menu")
         app.buttons["provider.claude"].tap()
         XCTAssertTrue(app.buttons["copyOAuthURL"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["consentContinue"].exists)
