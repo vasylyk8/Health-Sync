@@ -32,7 +32,7 @@ print("Private-key format and integrity validated without revealing its contents
 
 # Matching client IDs alone does not validate Apple's server-side code exchange.
 # Report only equality/presence flags; provider responses can contain private keys.
-apple = config.get("apple", {})
+apple = config.get("appleSignInConfig", {}).get("codeFlowConfig", {})
 checks = {
     "Firebase Apple team matches KROK": apple.get("teamId") == os.environ["APPLE_TEAM_ID"],
     "Firebase Apple signing key ID matches CI": apple.get("keyId") == os.environ["APPLE_SIGN_IN_KEY_ID"],
