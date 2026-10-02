@@ -56,3 +56,7 @@ Three moderate audit entries remain in the development-only Firebase CLI → Pub
 ## Initial public scope
 
 The publisher requested removal of `get_glucose` and `get_health_events` from MCP v1 on October 2, 2026. Neither OAuth nor legacy MCP connections list or execute these tools, including connections with older extended grants. Their server-instruction references are removed. Internal queries, synced data and iPhone features are retained. Timed nutrition still uses the events permission; profile and daily summaries remain available. This scope reduction does not establish platform approval or health-data policy eligibility.
+
+## Recovery and training-load interpretation
+
+Recovery labels describe comparison to the user's recorded baseline, not clinical normality or readiness to exercise. Training-load CTL/ATL/TSB values are statistical model outputs, not measured fitness or fatigue. Responses disclose resting/max-heart-rate defaults, formula coefficient selection and gaps in recorded workout data. The tool names and calculation inputs remain compatible; recovery's middle status label is now `within baseline range`. These corrections do not establish the reason for the platform's generic review notices or fix the unrelated portal credential-save operation. Rescan after deployment to obtain the platform's current findings.

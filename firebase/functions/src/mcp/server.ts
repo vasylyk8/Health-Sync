@@ -35,7 +35,7 @@ How to use it:
 4. get_workout_series and get_workout_route return individual raw data points (heart rate, power, cadence, GPS...). They are downsampled or paged to fit, and say so; use them when the user wants to see the data itself.
 5. get_daily_context returns daily metrics for a date range. Filter with groups or metrics, or use rollup week/month for long periods.
 6. get_hourly_series gives hourly heart rate (avg/min/max), steps and HRV for any period (all-day, not only workouts).
-7. get_recovery compares last night's HRV, resting heart rate, sleep and breathing with the user's own 60-day baseline; get_training_load estimates fitness (CTL), fatigue (ATL) and form (TSB) from the workouts.
+7. get_recovery compares recorded sleep and heart-rate metrics with the user's own preceding baseline; it does not assess clinical normality or exercise readiness. get_training_load estimates workout load and 42-day/7-day smoothed trends (CTL/ATL) plus their difference (TSB); these are model values, not measurements of fitness or fatigue. Disclose missing data, approximation and default calculation inputs.
 8. Opt-in data (only when the user switched it on in the app): get_nutrition_log (timed nutrient entries, e.g. what was eaten before a workout) and get_profile (age, sex). A tool reports when its category is switched off.
 Describe returned measurements and trends only. Never diagnose or recommend treatment or medication doses; suggest a clinician for medical concerns.
 Dates are local calendar dates (YYYY-MM-DD) in the user's timezone unless you pass another IANA timezone. Offsets are seconds from the workout start.
@@ -145,15 +145,15 @@ const TOOLS: { name: string; title: string; description: string; input: z.ZodRaw
   },
   {
     name: 'get_recovery',
-    title: 'Recovery vs your own baseline',
-    description: 'Compares one day (default: the latest) with the user\'s previous 60 days (window_days 14-180): HRV, resting heart rate, respiratory rate, sleep duration and stages, SpO2, wrist temperature, plus overnight (sleeping) heart rate and HRV. Returns value, baseline mean/spread, percent change, z-score and a status for each. Use it for "how recovered am I" questions.',
+    title: 'Compare sleep and heart-rate baselines',
+    description: 'Read-only statistical comparison of recorded sleep, HRV, resting heart rate, breathing rate, SpO2 and wrist temperature with the user\'s own preceding baseline (default 60 days, configurable 14-180). Returns recorded values, baseline mean and standard deviation, sample counts, percent differences and z-scores. Overnight heart rate and HRV are approximated from hourly samples. Labels describe position relative to a personal baseline; they are not clinical reference ranges, a recovery score, diagnosis or assessment of readiness to exercise. Report missing data and baseline limitations; do not prescribe training or treatment.',
     input: { date: dateField.optional(), window_days: z.number().int().min(14).max(180).optional(), timezone: tzField },
     run: (q, a) => getRecovery(q, a as never),
   },
   {
     name: 'get_training_load',
-    title: 'Training load: fitness, fatigue and form',
-    description: 'Estimated training load per day from workouts (heart-rate based TRIMP, or Apple effort score when there is no heart rate), with 42-day fitness (CTL), 7-day fatigue (ATL) and form (TSB), ramp rate and weekly totals. Optional max_hr, resting_hr and sex improve it; otherwise they are estimated from the data. Apple\'s own Training Load is not readable, so this is an independent estimate.',
+    title: 'Estimated workout load trends',
+    description: 'Read-only estimates of recorded workout load using a heart-rate TRIMP formula, with effort-score-times-duration fallback when available. Returns daily load, weekly totals, 42-day (CTL) and 7-day (ATL) smoothed load trends, their difference (TSB), and calculation inputs. These model values do not measure actual fitness, fatigue, injury risk or readiness to exercise. User-provided heart-rate parameters take precedence; otherwise observed values or disclosed defaults are used. The optional sex argument selects a formula coefficient; sex is not inferred. Missing workouts or unscored workouts limit the estimates. This is independent of Apple\'s Training Load. Describe trends without prescribing training or treatment.',
     input: { end_date: dateField.optional(), days: z.number().int().min(7).max(180).optional(), max_hr: z.number().min(120).max(250).optional(), resting_hr: z.number().min(25).max(120).optional(), sex: z.enum(['male', 'female']).optional(), timezone: tzField },
     run: (q, a) => getTrainingLoad(q, a as never),
   },
