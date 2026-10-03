@@ -19,6 +19,9 @@ private struct CountingNumber: View, Animatable {
             .lineLimit(1)
             .minimumScaleFactor(0.4)
             .foregroundStyle(Theme.ink)
+            // Negative tracking also trims the space after the last digit, so the frame ends inside a round 5 or 6
+            // and its right edge gets cut off. This gives that space back (the gap to the unit stays the same).
+            .padding(.trailing, size * 0.06)
     }
 }
 
