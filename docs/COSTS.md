@@ -37,6 +37,7 @@ Each monthly Parquet file costs about 2.7 KB of fixed overhead, which the 6-hour
 | Ingestion: a workout is ~8 object writes and ~10 Firestore operations, once | < $0.001 per workout |
 | Daily-context uploads (a small batch on each sync) | ~$0.02 / month |
 | AI queries (a few dozen a month, each 40–120 ms compute) | < $0.01 |
+| Product analytics (hourly scan and ~90 aggregate writes, at launch volume) | Pennies per month; inspect before the 90-day access log grows past ~100,000 rows |
 | **Total** | **well under $0.10 per user per month** |
 
 The previous design sent ~7,000 small uploads a month per Apple Watch user (about $0.15/user); this design sends one upload per workout plus one small daily upload per sync, so it is cheaper per user even though each workout carries far more data.
@@ -46,3 +47,4 @@ Fixed costs: ~$0–20/month (no always-on instance unless cold starts prove a pr
 ## Cost levers
 1. Done: the daily context is sent only when its content changed and at most every 15 minutes; hourly series about once an hour.
 2. Keep raw route/series data only for the last N years (a retention setting), if storage ever matters.
+3. Launch analytics deliberately recomputes a bounded 90-day window hourly. Replace the scan with incremental daily counters before event volume makes its Firestore reads material; the MCP contract and rollup documents do not need to change.

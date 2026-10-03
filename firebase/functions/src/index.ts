@@ -21,6 +21,9 @@ import { log } from './log.js';
 import { KrokOAuth } from './auth/oauth.js';
 import { FirestoreOAuthStore } from './auth/oauth-store.js';
 import { createOAuthRouter } from './auth/oauth-router.js';
+import { AnalyticsEventError, recordProductEvent as recordAnalyticsEvent } from './analytics/events.js';
+import { rebuildAnalyticsRollups } from './analytics/rollup.js';
+import { handleAnalyticsMcp } from './analytics/mcp.js';
 
 // Values written to functions/.env by the deploy workflow (see scripts/tasks/deploy.sh).
 const INCOMING_BUCKET = defineString('INCOMING_BUCKET');
@@ -90,6 +93,17 @@ export const mcp = onRequest(
   },
 );
 
+export const analyticsMcp = onRequest(
+  { memory: '512MiB', cpu: 1, timeoutSeconds: 60, concurrency: 8, maxInstances: 5, invoker: 'public' },
+  async (req, res) => {
+    try { await handleAnalyticsMcp(req, res, { db: deps().db, limiter: deps().tokens }); }
+    catch (err) {
+      log.error('analytics mcp request failed', { code: (err as { code?: string }).code ?? 'internal' });
+      if (!res.headersSent) res.status(500).set('Cache-Control', 'no-store').json({ error: 'internal' });
+    }
+  },
+);
+
 export const healthz = onRequest({ memory: '256MiB', invoker: 'public' }, (_req, res) => {
   res.set('Cache-Control', 'no-store').json({ ok: true, time: new Date().toISOString() });
 });
@@ -106,7 +120,7 @@ function wrap<T>(fn: (req: CallableRequest) => Promise<T>) {
     try {
       return await fn(req);
     } catch (err) {
-      if (err instanceof AccountError) throw new HttpsError(err.code, err.message);
+      if (err instanceof AccountError || err instanceof AnalyticsEventError) throw new HttpsError(err.code, err.message);
       throw err;
     }
   };
@@ -115,6 +129,8 @@ function wrap<T>(fn: (req: CallableRequest) => Promise<T>) {
 const callableOpts = { enforceAppCheck: ENFORCE_APP_CHECK, memory: '256MiB' as const };
 
 export const registerDevice = onCall(callableOpts, wrap((req) => account.registerDevice(deps().db, uidOf(req), (req.data as { tz?: unknown })?.tz)));
+
+export const recordProductEvent = onCall(callableOpts, wrap((req) => recordAnalyticsEvent(deps().db, uidOf(req), req.data)));
 
 export const createConnectorLink = onCall(callableOpts, wrap(async (req) => {
   const uid = uidOf(req);
@@ -196,4 +212,9 @@ export const compactFragmented = onSchedule({ schedule: 'every 6 hours', timeZon
     n += await compactType(d, uid, doc.get('type') as string).catch(() => 0);
   }
   log.info('compaction run', { job: 'compactFragmented', count: n });
+});
+
+export const rollupProductAnalytics = onSchedule({ schedule: 'every 60 minutes', timeZone: 'UTC', memory: '512MiB', timeoutSeconds: 540 }, async () => {
+  const result = await rebuildAnalyticsRollups(deps().db);
+  log.info('analytics rollup', { job: 'rollupProductAnalytics', count: result.days, records: result.access + result.events });
 });

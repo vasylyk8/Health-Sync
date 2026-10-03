@@ -221,7 +221,7 @@ function buildServer(q: QueryDeps, deps: McpDeps, provider: Provider, identity?:
           return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ error: err instanceof ToolError ? err.code : 'internal', message }) }] };
         } finally {
           log.info('tool call', { tool: tool.name, provider, ms: Date.now() - started, status: ok ? 'ok' : 'error' });
-          await deps.accessLog.record({ uid: q.uid, provider, tool: tool.name, ok }).catch(() => undefined);
+          await deps.accessLog.record({ uid: q.uid, provider, tool: tool.name, ok, ms: Date.now() - started }).catch(() => undefined);
         }
       }) as never,
     );

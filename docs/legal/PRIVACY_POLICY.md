@@ -10,7 +10,7 @@ KROK copies your **workouts** from Apple Health, with their detailed measurement
 - **Location:** the **GPS route** of outdoor workouts (latitude, longitude, altitude, speed). Routes can reveal where you live or work. By default, the tools your AI assistant uses hide the first and last 300 metres of each route; exact routes are only returned if you ask your assistant for them.
 - **Daily and hourly summaries**: sleep, resting heart rate, heart rate variability, hourly heart rate and steps, activity totals, fitness trends, body measurements, and similar. All of your available history is copied.
 - **Account identifiers:** an anonymous Firebase account ID is created on your phone. When you choose Sign in with Apple, Firebase links an Apple account identifier to that same account so you can authorize assistants and restore access. KROK does not request your name or email from Apple; Apple and Firebase may process identity-token claims under their own policies. Dedicated directory-review accounts use an email/password and synthetic data, not customer health data.
-- **Technical data:** crash reports and basic, non-health usage events (for example "connected Claude"), used to keep the app working.
+- **Technical and product-usage data:** crash reports; app version; whether onboarding steps, a sync and an assistant connection succeeded; coarse sync and tool-call duration; which assistant and KROK tool were used; and when those events occurred. These events are linked to the pseudonymous KROK account so we can measure the activation funnel and retention. They never contain Health values, workout counts or metadata, GPS routes, Health dates, tool arguments, free text, connector links, your email or your Apple identifier.
 
 ## Additional data groups (on by default, you choose)
 These groups are read when you connect Apple Health, if you track them. Apple Health shows each type and lets you allow or deny it. In the app, **••• menu → Your data**, you can switch a group off at any time, which **deletes its data from our servers**.
@@ -28,7 +28,7 @@ We do **not** read clinical records or documents, reproductive and sexual-health
 ## Why we use it (legal bases)
 - To provide the service you asked for: storing your data so your connected assistants can read it (GDPR Art. 6(1)(b)).
 - Health data is special-category data. We process it only with your **explicit consent** (GDPR Art. 9(2)(a)), given when you connect Apple Health (including the types you allow on Apple's permission sheet), and again, per assistant, when you connect Claude or ChatGPT. You can withdraw consent at any time by switching a group off in KROK or in Apple Health, disconnecting, or deleting your data.
-- Crash and usage diagnostics: our legitimate interest in a working app (Art. 6(1)(f)). These never contain health data.
+- Crash and usage diagnostics: our legitimate interest in understanding and improving whether the service works (Art. 6(1)(f)). These never contain health data and are not used for advertising or tracking across apps or websites.
 
 ## Who receives it
 - **Google Cloud / Firebase** (our processor) stores your health data **in the EU (Belgium)**. Your account identifiers are processed by Firebase Authentication, which may process them in the United States (EU Standard Contractual Clauses).
@@ -36,7 +36,7 @@ We do **not** read clinical records or documents, reproductive and sexual-health
 - We never sell your data, use it for advertising, or share it with anyone else.
 
 ## How long we keep it
-Until you delete it (••• menu → Delete All My Data, completed within 24 hours), or automatically **one year after your last sync**. Data of an additional group is deleted as soon as you switch that group off. Access logs (which tool was used and when, no health values) are kept for 90 days.
+Until you delete it (••• menu → Delete All My Data, completed within 24 hours), or automatically **one year after your last sync**. Data of an additional group is deleted as soon as you switch that group off. Product events and access logs (which tool was used and when, no health values or arguments) are kept for 90 days. One-time funnel milestones are deleted with the account. Daily analytics rollups contain aggregate counts and durations without account identifiers.
 
 ## Your rights
 You can access, correct, export or delete your data, withdraw consent, and complain to your data protection authority. The easiest way to delete your server data is in the app. For anything else, email support@2ndopinions.ai.

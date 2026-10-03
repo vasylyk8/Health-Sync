@@ -121,7 +121,8 @@ After 30+ days without a sync (deletion records expire in HealthKit): a full `re
 ### Manifest and index (Firestore, server-owned)
 - `users/{uid}/types/{type}`: manifest of Parquet files and coverage (`intervals`, `statsIntervals`, `caughtUp`, `earliest`, `latest`, `checkedAt`, `visibleAt`) for `HKWorkoutTypeIdentifier` and `_daily`.
 - `users/{uid}/workouts/{workoutId}`: raw-data index `{ streams: {name: {gen, files, points, unit, cols}}, expected, expectedGen, rawComplete, updatedAt }`.
-- `users/{uid}`: `{ generation, deleting, lastVisibleAt, connections, links, tz }`.
+- `users/{uid}`: `{ generation, deleting, lastVisibleAt, connections, links, tz, analytics }`. `analytics` contains one-time product milestones and app version only—never Health values or free text.
+- Product analytics: `productEvents/{id}` contains an allowlisted app/sync event and expires after 90 days; `accessLog/{id}` contains provider, tool name, outcome and coarse duration and expires after 90 days; `analyticsRollups/{UTC-date}` contains only aggregate counts and duration sums, with no account identifier. The private operator MCP reads rollups only.
 Publishing a batch is one Firestore transaction that checks the user's `generation` (so a deletion that started meanwhile wins).
 
 ### Visible vs accepted
@@ -137,7 +138,7 @@ The phone's upload ack only means **accepted**. "Synced" in the app and every to
 
 ## 6. Deletion ("Delete all my data")
 1. The callable sets `users/{uid}.deleting=true`, bumps `generation` and deletes all token hashes (connectors stop immediately).
-2. It enqueues a Cloud Tasks job (retried until success) that deletes `incoming/{uid}/`, `data/{uid}/` (including raw streams), all Firestore docs under `users/{uid}` (manifests, workout indexes), access-log entries, and finally the Auth user.
+2. It enqueues a Cloud Tasks job (retried until success) that deletes `incoming/{uid}/`, `data/{uid}/` (including raw streams), all Firestore docs under `users/{uid}` (manifests, workout indexes and linked analytics milestones), product events, access-log entries, and finally the Auth user.
 3. Ingestion checks `deleting`/`generation` inside its publish transaction and discards late work.
 4. Storage soft-delete is disabled on the bucket, so deleted objects are gone. The privacy policy states deletion completes within 24 h.
 5. One-off migration: `scripts/tasks/cleanup-legacy` removes the data types of the previous app version (after backing them up for 14 days).

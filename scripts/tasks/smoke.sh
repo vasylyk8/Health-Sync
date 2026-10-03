@@ -23,6 +23,15 @@ rpc '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | grep -q '"get_workouts"' 
 echo "tools/list ok"
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/mcp/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" -H 'Content-Type: application/json' -d '{}'); [[ "$code" == 404 ]] || fail "unknown link returned $code (expected 404)"
 echo "unknown link rejected"
+
+ANALYTICS_TOKEN=$(gcloud secrets versions access latest --secret=krok-analytics-mcp-token)
+ANALYTICS_MCP="$BASE_URL/analytics-mcp/$ANALYTICS_TOKEN"
+analytics_rpc() { curl -sS -X POST "$ANALYTICS_MCP" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d "$1"; }
+analytics_rpc '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' | grep -q '"krok-analytics"' || fail "Analytics MCP initialize failed"
+analytics_rpc '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | grep -q '"activation_funnel"' || fail "Analytics MCP tools/list failed"
+echo "analytics connector ok"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/analytics-mcp/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" -H 'Content-Type: application/json' -d '{}'); [[ "$code" == 404 ]] || fail "unknown analytics link returned $code (expected 404)"
+echo "unknown analytics link rejected"
 # Calls a tool and prints its (decoded) result text.
 call() { rpc "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["content"][0]["text"])' 2>/dev/null; }
 # check JSON_TEXT PYTHON_EXPRESSION_ON_d

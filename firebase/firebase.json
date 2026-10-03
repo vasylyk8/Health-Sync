@@ -48,6 +48,15 @@
         ]
       },
       {
+        "source": "/analytics-mcp/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-store"
+          }
+        ]
+      },
+      {
         "source": "/@(|support|privacy)",
         "headers": [
           {
@@ -97,6 +106,7 @@
     ],
     "rewrites": [
       { "source": "/mcp", "function": { "functionId": "mcp", "region": "europe-west1" } },
+      { "source": "/analytics-mcp/**", "function": { "functionId": "analyticsMcp", "region": "europe-west1" } },
       { "source": "/.well-known/**", "function": { "functionId": "authorization", "region": "europe-west1" } },
       { "source": "/authorize", "function": { "functionId": "authorization", "region": "europe-west1" } },
       { "source": "/token", "function": { "functionId": "authorization", "region": "europe-west1" } },

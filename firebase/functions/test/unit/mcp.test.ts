@@ -76,7 +76,8 @@ describe('MCP endpoint', () => {
     const res = await client.callTool({ name: 'get_workouts', arguments: { start_date: yesterday, end_date: day, timezone: 'UTC' } });
     const body = JSON.parse((res.content as { text: string }[])[0]!.text);
     expect(body.workouts[0]).toMatchObject({ activity: 'Running', distance_km: 5, raw_data: 'none' });
-    expect(auth.log.at(-1)).toEqual({ uid: env.uid, provider: 'claude', tool: 'get_workouts', ok: true });
+    expect(auth.log.at(-1)).toMatchObject({ uid: env.uid, provider: 'claude', tool: 'get_workouts', ok: true });
+    expect((auth.log.at(-1) as { ms?: number }).ms).toEqual(expect.any(Number));
     expect(auth.touched).toContain(`${env.uid}:claude`);
     await client.close();
   });

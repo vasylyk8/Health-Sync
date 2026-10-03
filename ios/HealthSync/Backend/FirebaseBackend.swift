@@ -42,6 +42,13 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
         _ = try await call("registerDevice", ["tz": timeZone])
     }
 
+    func recordProductEvent(name: String, appVersion: String, outcome: String?, durationMs: Int?) async throws {
+        var payload: [String: Any] = ["name": name, "appVersion": appVersion]
+        if let outcome { payload["outcome"] = outcome }
+        if let durationMs { payload["durationMs"] = durationMs }
+        _ = try await call("recordProductEvent", payload)
+    }
+
     func createLink(provider: String) async throws -> String {
         let data = try await call("createConnectorLink", ["provider": provider])
         guard let url = (data as? [String: Any])?["url"] as? String else { throw BackendError.badResponse }

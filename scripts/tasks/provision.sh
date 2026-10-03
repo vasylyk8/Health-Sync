@@ -89,7 +89,7 @@ step "App Check (App Attest; enforcement stays off until the soak test passes)"
 api PATCH "https://firebaseappcheck.googleapis.com/v1/projects/$P/apps/$APP_ID/appAttestConfig?updateMask=tokenTtl" '{"tokenTtl":"3600s"}' >/dev/null || true
 
 step "Keep secret links out of request logs"
-FILTER='resource.type="cloud_run_revision" AND httpRequest.requestUrl:"/mcp/"'
+FILTER='resource.type="cloud_run_revision" AND (httpRequest.requestUrl:"/mcp/" OR httpRequest.requestUrl:"/analytics-mcp/")'
 gcloud logging sinks update _Default --remove-exclusions=mcp-links --quiet >/dev/null 2>&1 || true
 gcloud logging sinks update _Default --add-exclusion=name=mcp-links,filter="$FILTER" --quiet >/dev/null
 
