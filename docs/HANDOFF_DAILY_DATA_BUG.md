@@ -65,7 +65,10 @@ says that too (section 9). Dates/times are UTC unless stated; the user is in Tor
 - iPhone18,1, iOS 27.0 (24A437), 6 cores, 11 GB. Account has Apple (3,042 workouts), Hevy, Strong, Strava, Fitness sources.
 - Resting HR: owner says Apple Watch writes it daily incl. today; Athlytic was a source but was disabled ~2026-10-02.
 - Health -> Privacy -> KROK: **All Recorded Data**.
-- **Unknown:** whether 2026-07-14 is the date this phone was set up/restored (see questions, section 10).
+- Owner answers (2026-10-03 13:4x): 2026-07-14 is **probably not** the phone setup date; the owner **may have restored the Apple Watch around
+  that time**. For **Resting Heart Rate**, Health -> Data Sources shows **5 Apple Watch sources**; only the newest has recent data; the
+  others stopped at various times (several in 2024, one in 2026). Every "fresh install" was combined with **Delete All My Data** (server
+  data for the account was wiped each time).
 
 ## 2. Symptoms as seen through the AI (the user-visible bug)
 
@@ -129,8 +132,8 @@ Diag after fresh install #2 (2026-10-03 11:36, build from PR #52):
 2025: 365; 17.6; 0/0/365/364/0/0/365
 2026: 276; 26.9; 122/0/276/274/80/122/276    (steps/activeKcal 122 days, hrv 276, walkingHr 80, restingHr 0)
 ```
--> **Which metrics return old data differs between uploads.** (How "fresh install" interacts with server data is not known - the
-owner may or may not have used Delete All My Data; see section 10.)
+-> **Which metrics return old data differs between uploads.** (Each fresh install was done with Delete All My Data, so the server started empty each time: the two uploads are independent reads of the same
+phone, and they returned different metrics for old years -> the nondeterminism is on the device side.)
 
 ### 3.7 Per-chunk phone notes (server log of the batch header `perf.note`)
 Build from PR #52, fresh install #2 (11:27..11:31). Per yearly chunk (starting 2013-07-14) `core: daily from=.. to=.. data=X/65 got=65
@@ -207,6 +210,13 @@ Test/CI infrastructure that came out of this (all on `main`): `mcp-probe` workfl
 1. **Plain statistics collection returns nothing for samples recorded before ~2026-07-14, but returns them when sources are
    named.** Evidence: `n=0 a=28` (steps, 2017). Consistent with: sleep/rings fine (other query types), sample queries fine, recent
    82 days fine, HRV/walking HR (Apple-only flagged) appearing in some uploads while steps/HR/kcal (not flagged) never do.
+   **New fact from the owner:** Resting HR has **5 Apple Watch sources** (old watches stopped in 2024/2026; the Watch was possibly restored
+   ~2026-07-14, creating a new source). Data from retired/unlisted watch sources is a very plausible cause: HealthKit's default (source-less)
+   statistics merge sources by the user's source priority list and may ignore sources that are not in that list/turned off, while a
+   predicate that names the sources returns their samples. This fits steps/HR/kcal being empty before the newest source started.
+   **Strong next test:** per source (`HKSourceQuery`, one `HKQuery.predicateForObjects(from: [source])` each) run the daily statistics and print
+   per-source days and first/last sample dates; then combine per day choosing the highest-priority source that has data (newest first),
+   not summing across sources (watch + iPhone overlap).
    Possible mechanism (unverified): data from older devices/sources (iCloud-synced, e.g. previous iPhone/Watch) is invisible to
    a source-less statistics query on this phone/iOS build (maybe related to "preferred source order"/source priorities in Data Sources
    & Access, or an iOS 27 behavior). **Test:** per chunk and per metric record n (plain), a (Apple sources), `all` (predicate from
@@ -284,16 +294,16 @@ Test/CI infrastructure that came out of this (all on `main`): `mcp-probe` workfl
 - Merged #44 after #45 without re-checking `main` CI (tests referenced removed tools; fixed by #46).
 - Queried via the owner's connector which sometimes pointed at the synthetic account.
 
-## 10. Open questions for the owner (answers change the diagnosis)
+## 10. Questions asked to the owner, with answers (2026-10-03)
 
-1. Is **2026-07-14** the day this iPhone was set up / restored from a backup / paired with the current Apple Watch? Which devices were used
-   before (old iPhone/Watch models)? Older data coming from other devices via iCloud is the leading explanation for hypothesis 1.
-2. When the owner did a "fresh install" (several times), did they also use **Delete All My Data** / was the server data wiped? (The merged
-   server rows lost walking HR for 2020-2025 between install #1 and #2, which should be impossible with additive merge.)
-3. Health app -> Browse -> Data Sources & Access: which sources and devices appear for **Steps**, **Resting Heart Rate**, **Heart Rate
-   Variability**? Any source order / "turned off" sources? Is there an old iPhone/Watch listed?
-4. Health -> Steps -> Show All Data: does a day in 2022 show a source name, and which (iPhone/Watch/other)?
-5. Is the owner willing to run one more speed-test build that prints, for a handful of metrics and years, the full variant matrix (section 6.1)?
+1. Is 2026-07-14 the phone setup/restore date? **Probably not.** The owner may have restored the Apple Watch around then (new Watch source).
+2. Did fresh installs include Delete All My Data? **Yes**, so each upload started from an empty server account.
+3. Data Sources for Resting Heart Rate: **5 Apple Watch sources**; only one has recent data; others ended in 2024 (several) and 2026 (one).
+4. Steps sources / single-day source names: not answered yet (worth asking: which sources appear for Steps and in what order).
+5. Should the next AI have the same GitHub Actions access? Owner: yes. **Caution:** the Actions workflows run with the repository's Google Cloud
+   deploy credentials (workload identity). Anyone who can push a branch or dispatch workflows can read production data (counts, logs with
+   user ids) and `purge-all` in mode `run` (needs the text `DELETE MY DATA`) deletes accounts. Treat as production access: use only
+   `ingest-notes` and the read-only `diag` mode; never `mode=run`; never touch the synthetic monitor/reviewer accounts.
 
 ## 11. Suggested next steps (not done; owner approval needed)
 
