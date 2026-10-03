@@ -42,6 +42,7 @@ final class AppModel: ObservableObject {
     private let scope: SyncScope
     private let telemetry: Telemetry
     private let defaults: UserDefaults
+    private let appVersion: String
     private let consent: ConsentStore
     /// Data categories switched on (core is always on).
     @Published private(set) var enabledCategories: Set<String> = ["core"]
@@ -70,6 +71,7 @@ final class AppModel: ObservableObject {
         var config = SyncEngine.Config()
         config.device = UIDevice.current.model
         config.appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+        appVersion = config.appVersion
         engine = SyncEngine(source: source, uploader: backend, outbox: outbox, scope: scope, config: config, telemetry: telemetry, categories: { consent.enabled })
         if !defaults.bool(forKey: Self.healthConnectedKey) {
             phase = .welcome
@@ -91,6 +93,12 @@ final class AppModel: ObservableObject {
         if estimator.estimate != estimate { estimate = estimator.estimate }
     }
 
+    /// Analytics is deliberately fail-open and never delays a product action.
+    private func reportProductEvent(_ name: String, outcome: String? = nil, durationMs: Int? = nil) {
+        let backend = self.backend, version = appVersion
+        Task { try? await backend.recordProductEvent(name: name, appVersion: version, outcome: outcome, durationMs: durationMs) }
+    }
+
     /// Saves the running totals (called when the app goes to the background).
     func flushStats() {
         Task { await engine.flushStats() }
@@ -107,6 +115,8 @@ final class AppModel: ObservableObject {
         // Which step failed, so a failure can be told apart (Health permission, sign-in, registration).
         var stage = "start"
         do {
+            // Best effort and intentionally before Health permission: this measures permission-flow drop-off.
+            reportProductEvent("health_connect_started")
             guard source.isAvailable else {
                 errorMessage = "Apple Health isn't available on this device."
                 return
@@ -144,6 +154,7 @@ final class AppModel: ObservableObject {
             defaults.set(uid, forKey: Self.onboardingUidKey)
             defaults.set(uid, forKey: Self.syncedUidKey)
             telemetry.event("health_connected")
+            reportProductEvent("health_connected")
             busy = false
             withAnimation { phase = .account }
             // The upload starts now, while the person is on the account page.
@@ -220,6 +231,7 @@ final class AppModel: ObservableObject {
 
     /// Called on launch (when already onboarded) and whenever the app becomes active.
     func start() {
+        reportProductEvent("app_opened")
         guard phase != .welcome, !benchmarkRunning else { return }
         Task { await engine.onProgress { p in Task { @MainActor in self.progress = p } } }
         startObservers()
@@ -318,6 +330,7 @@ final class AppModel: ObservableObject {
     }
 
     func syncNow() async {
+        let syncStarted = ProcessInfo.processInfo.systemUptime
         do {
             try await ensureCurrentAccount()
             appleAccountLinked = await backend.hasAppleAccount()
@@ -337,15 +350,20 @@ final class AppModel: ObservableObject {
             }
             await refreshStatus()
             syncIssue = nil
+            let duration = Int(max(0, (ProcessInfo.processInfo.systemUptime - syncStarted) * 1_000))
+            reportProductEvent("sync_finished", outcome: "success", durationMs: min(duration, 3_600_000))
             scheduleBackgroundSyncIfNeeded()
         } catch is CancellationError {
             return
         } catch {
             scheduleBackgroundSyncIfNeeded()
             telemetry.nonFatal("sync", code: (error as NSError).code)
-            syncIssue = (error as NSError).domain == NSURLErrorDomain
+            let offline = (error as NSError).domain == NSURLErrorDomain
+            syncIssue = offline
                 ? "You're offline. KROK will sync again when you're connected."
                 : "Sync paused. Pull down to try again."
+            let duration = Int(max(0, (ProcessInfo.processInfo.systemUptime - syncStarted) * 1_000))
+            reportProductEvent("sync_finished", outcome: offline ? "offline" : "error", durationMs: min(duration, 3_600_000))
         }
     }
 
@@ -531,6 +549,7 @@ final class AppModel: ObservableObject {
             // Linking keeps the same account, so the sync does not wait for it (a running sync can take a minute
             // to stop). Only a restore, which switches to another account, stops the sync first.
             try await backend.linkAppleAccount(result, allowExistingAccount: allowExisting, replacingFreshAccount: freshUid)
+            reportProductEvent("apple_linked")
             appleAccountLinked = await backend.hasAppleAccount()
             if let freshUid, let current = try? await backend.signIn(), current != freshUid {
                 stopped = true

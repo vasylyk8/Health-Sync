@@ -7,6 +7,7 @@ import { askOpenAI } from './openai.mjs';
 
 const url = process.env.MCP_URL;
 if (!url) throw new Error('MCP_URL required');
+const analyticsUrl = process.env.ANALYTICS_MCP_URL;
 
 /** True if the answer contains the expected number (commas/spaces ignored, decimals ±0.1). */
 export function containsNumber(text, expected) {
@@ -36,6 +37,27 @@ for (const [name, ask, enabled] of providers) {
     }
     if (!ok) failures++;
     rows.push(`${ok ? 'PASS' : 'FAIL'} [${name}] ${c.q} (expected ${c.expect.join(', ')})\n      ${detail}`);
+  }
+}
+if (analyticsUrl) {
+  const end = new Date().toISOString().slice(0, 10);
+  const start = new Date(Date.now() - 6 * 86_400_000).toISOString().slice(0, 10);
+  const analyticsCases = [
+    { q: 'Define KROK activation precisely and state its main observability limitation.', tool: 'metric_definition' },
+    { q: `Summarize KROK product usage from ${start} through ${end} UTC. State the period, denominator caveat and data freshness.`, tool: 'usage_overview' },
+  ];
+  for (const [name, ask, enabled] of providers) {
+    if (!enabled) continue;
+    for (const c of analyticsCases) {
+      let ok = false, detail = '';
+      try {
+        const r = await ask(c.q, analyticsUrl, { name: 'krok-analytics', system: 'Use only the aggregate KROK Analytics tools. State periods, UTC timezone, denominators, freshness and small-sample limitations. Never claim access to a user or Health data.' });
+        ok = (r.toolCalls ?? []).includes(c.tool) && r.text.length > 20;
+        detail = `${(r.toolCalls ?? []).join(',')} → ${r.text.replace(/\s+/g, ' ').slice(0, 160)}`;
+      } catch (err) { detail = `error: ${err.message}`; }
+      if (!ok) failures++;
+      rows.push(`${ok ? 'PASS' : 'FAIL'} [${name} analytics] ${c.q} (expected tool ${c.tool})\n      ${detail}`);
+    }
   }
 }
 console.log(rows.join('\n'));

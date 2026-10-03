@@ -39,6 +39,18 @@ SEED_DIR="$ROOT/firebase/functions/.seed"
 mkdir -p "$SEED_DIR" && cp "$ROOT"/scripts/synthetic/*.mjs "$SEED_DIR"/
 node "$SEED_DIR/seed.mjs"; rm -rf "$SEED_DIR"
 
+step "Private KROK Analytics connector"
+if ! gcloud secrets describe krok-analytics-mcp-token >/dev/null 2>&1; then
+  python3 -c "import secrets; print(secrets.token_urlsafe(32)[:43], end='')" | gcloud secrets create krok-analytics-mcp-token --data-file=- --replication-policy=user-managed --locations="$REGION" >/dev/null
+fi
+ANALYTICS_TOKEN=$(gcloud secrets versions access latest --secret=krok-analytics-mcp-token)
+export ANALYTICS_TOKEN GCP_PROJECT_ID
+cd "$ROOT/firebase/functions"
+node scripts/provision-analytics-token.mjs
+npm run build >/dev/null
+node scripts/bootstrap-analytics.mjs
+unset ANALYTICS_TOKEN
+
 step "Live smoke test"
 "$ROOT/scripts/tasks/smoke.sh"
 

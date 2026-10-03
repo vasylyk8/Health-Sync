@@ -20,6 +20,7 @@
     { "collectionGroup": "workouts", "fieldPath": "expected", "indexes": [] },
     { "collectionGroup": "rateLimits", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
     { "collectionGroup": "accessLog", "fieldPath": "expireAt", "ttl": true, "indexes": [{ "order": "ASCENDING", "queryScope": "COLLECTION" }] },
+    { "collectionGroup": "productEvents", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
     { "collectionGroup": "batches", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
     { "collectionGroup": "orphanBatches", "fieldPath": "expireAt", "ttl": true, "indexes": [] }
   ]

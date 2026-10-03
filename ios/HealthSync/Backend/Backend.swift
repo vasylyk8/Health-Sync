@@ -37,12 +37,15 @@ protocol Backend: Uploader {
     /// existing account is restored; any other anonymous account is never replaced.
     func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool, replacingFreshAccount freshUid: String?) async throws
     func revokeAppleAuthorization(_ authorizationCode: String) async throws
+    /// Product telemetry only. The server accepts a strict event/property allowlist and no Health values.
+    func recordProductEvent(name: String, appVersion: String, outcome: String?, durationMs: Int?) async throws
 }
 
 extension Backend {
     func hasAppleAccount() async -> Bool { false }
     func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool, replacingFreshAccount freshUid: String?) async throws { throw BackendError.notConfigured }
     func revokeAppleAuthorization(_ authorizationCode: String) async throws { throw BackendError.notConfigured }
+    func recordProductEvent(name: String, appVersion: String, outcome: String? = nil, durationMs: Int? = nil) async throws {}
 }
 
 enum BackendError: LocalizedError {

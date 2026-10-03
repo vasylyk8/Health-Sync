@@ -16,6 +16,7 @@ iPhone (workouts + raw streams + daily rows → durable outbox) → Storage inco
 | [docs/RELEASE_SOAK.md](docs/RELEASE_SOAK.md) | The 3–5 day real-phone test before submitting |
 | [docs/APP_STORE.md](docs/APP_STORE.md) | Listing text, review notes, privacy answers |
 | [docs/COSTS.md](docs/COSTS.md) | Measured running costs and cost levers |
+| [docs/ANALYTICS.md](docs/ANALYTICS.md) | Private aggregate product metrics through Claude |
 | [docs/legal/](docs/legal) | Privacy policy, DPIA and HealthKit-sharing drafts (need legal review) |
 
 ## For engineers

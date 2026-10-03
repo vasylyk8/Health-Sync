@@ -67,6 +67,18 @@ export interface UserDoc {
   links: Partial<Record<string, { tokenHash: string; createdAt: number }>>;
   oauthEpochs?: Partial<Record<string, number>>;
   oauthProfileId?: string;
+  /** Product milestones only. Never contains Health values, free text, or external identity data. */
+  analytics?: {
+    firstOpenedAt?: number;
+    healthConnectStartedAt?: number;
+    healthConnectedAt?: number;
+    appleLinkedAt?: number;
+    firstSyncReadyAt?: number;
+    assistantConnectedAt?: number;
+    activatedAt?: number;
+    activationProvider?: string;
+    appVersion?: string;
+  };
 }
 
 export type BatchState = 'published' | 'rejected' | 'discarded';

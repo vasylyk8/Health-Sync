@@ -4,6 +4,7 @@ import { CATEGORY_IDS, COVERAGE, DEFAULT_CATEGORIES, PROVIDERS, type Provider } 
 import { generateToken, hashToken } from './auth/tokens.js';
 import type { BlobStore, MetaStore, UserDoc } from './store/types.js';
 import { log } from './log.js';
+import { deleteProductEvents } from './analytics/events.js';
 
 export class AccountError extends Error {
   constructor(readonly code: 'invalid-argument' | 'failed-precondition' | 'not-found', message: string) {
@@ -112,6 +113,7 @@ export async function purgeUserData(deps: PurgeDeps, uid: string): Promise<void>
     credentials.docs.forEach((d) => batch.delete(d.ref));
     await batch.commit();
   }
+  await deleteProductEvents(db, uid);
   await deps.incoming.deletePrefix(`incoming/${uid}/`);
   await deps.data.deletePrefix(`data/${uid}/`);
   for (;;) {

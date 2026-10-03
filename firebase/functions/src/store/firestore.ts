@@ -71,6 +71,9 @@ export class FirestoreMeta implements MetaStore {
       tx.set(manRef, toDoc(mutate(current)));
       tx.set(batchRef, { state: 'published', at: Date.now(), expireAt: new Date(Date.now() + 30 * 86_400_000) });
       const patch = effectiveUserPatch(user, userPatch);
+      if (patch.lastVisibleAt != null && user.analytics?.firstSyncReadyAt == null) {
+        (patch as Record<string, unknown>)['analytics.firstSyncReadyAt'] = patch.lastVisibleAt;
+      }
       if (Object.keys(patch).length) tx.update(userRef, patch);
       return 'published';
     });
@@ -108,6 +111,9 @@ export class FirestoreMeta implements MetaStore {
       tx.set(docRef, mutate(current));
       tx.set(batchRef, { state: 'published', at: Date.now(), expireAt: new Date(Date.now() + 30 * 86_400_000) });
       const patch = effectiveUserPatch(user, userPatch);
+      if (patch.lastVisibleAt != null && user.analytics?.firstSyncReadyAt == null) {
+        (patch as Record<string, unknown>)['analytics.firstSyncReadyAt'] = patch.lastVisibleAt;
+      }
       if (Object.keys(patch).length) tx.update(userRef, patch);
       return 'published';
     });

@@ -3,6 +3,15 @@ import XCTest
 
 /// Backend whose sign-in can be made to fail (offline, server error).
 final class StubBackend: Backend, @unchecked Sendable {
+    struct ProductEvent: Equatable { let name: String; let outcome: String?; let durationMs: Int? }
+    private let productEventsQueue = DispatchQueue(label: "StubBackend.productEvents")
+    private var productEventStorage: [ProductEvent] = []
+    var productEvents: [ProductEvent] { productEventsQueue.sync { productEventStorage } }
+    func recordProductEvent(name: String, appVersion: String, outcome: String?, durationMs: Int?) async throws {
+        productEventsQueue.sync {
+            productEventStorage.append(ProductEvent(name: name, outcome: outcome, durationMs: durationMs))
+        }
+    }
     var signInError: Error?
     var registerError: Error?
     var appleLinked = false
@@ -228,6 +237,23 @@ final class AppModelTests: XCTestCase {
         // Reopening before signing in lands on the account page again.
         let reopened = AppModel(backend: backend, source: ScriptedSource(), outbox: Outbox(root: root), scope: .empty, telemetry: NoTelemetry(), defaults: defaults)
         XCTAssertEqual(reopened.phase, .account)
+    }
+
+    func testProductMilestonesAndSyncOutcomeAreReportedWithoutHealthValues() async throws {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        await model.connectHealth()
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(backend.productEvents.contains { $0.name == "health_connect_started" })
+        XCTAssertTrue(backend.productEvents.contains { $0.name == "health_connected" })
+        await model.linkAppleAccount(AppleSignInResult(idToken: "t", nonce: "n", authorizationCode: "c"))
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(backend.productEvents.contains { $0.name == "apple_linked" })
+        await model.syncNow()
+        try await Task.sleep(for: .milliseconds(50))
+        let sync = backend.productEvents.last { $0.name == "sync_finished" }
+        XCTAssertEqual(sync?.outcome, "success")
+        XCTAssertNotNil(sync?.durationMs)
     }
 
     func testSigningInOnTheAccountPageFinishesOnboarding() async {

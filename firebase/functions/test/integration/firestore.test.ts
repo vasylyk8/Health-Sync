@@ -4,7 +4,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { FirestoreMeta } from '../../src/store/firestore.js';
 import { emptyManifest } from '../../src/store/types.js';
 import { beginDeletion, createConnectorLink, disconnect, purgeUserData, registerDevice, setCategories, sweepDeletions } from '../../src/account.js';
-import { hashToken } from '../../src/auth/tokens.js';
+import { FirestoreTokens, hashToken } from '../../src/auth/tokens.js';
 import { DEFAULT_CATEGORIES } from '../../src/config.js';
 import { DirBlobs } from '../helpers/memory.js';
 import { KrokOAuth, DEFAULT_SCOPES, pkceChallenge } from '../../src/auth/oauth.js';
@@ -14,6 +14,8 @@ import type { Response } from 'express';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getAuth } from 'firebase-admin/auth';
+import { recordProductEvent } from '../../src/analytics/events.js';
+import { rebuildAnalyticsRollups } from '../../src/analytics/rollup.js';
 
 if (!getApps().length) initializeApp({ projectId: 'demo-health-sync' });
 const db = getFirestore();
@@ -105,6 +107,14 @@ describe('FirestoreMeta.publish', () => {
     expect((await meta.getManifest('u1', 'HR'))!.files['2024-06']).toHaveLength(1);
   });
 
+  it('marks the first queryable publish as first-sync-ready exactly once', async () => {
+    await registerDevice(db, 'analytics-sync', 'UTC');
+    await meta.publish({ uid: 'analytics-sync', type: 'HR', batchId: 's1', generation: 1, mutate: (m) => add(m, 'p1'), userPatch: { lastVisibleAt: 1000 } });
+    expect((await db.doc('users/analytics-sync').get()).get('analytics.firstSyncReadyAt')).toBe(1000);
+    await meta.publish({ uid: 'analytics-sync', type: 'HR', batchId: 's2', generation: 1, mutate: (m) => add(m, 'p2'), userPatch: { lastVisibleAt: 2000 } });
+    expect((await db.doc('users/analytics-sync').get()).get('analytics.firstSyncReadyAt')).toBe(1000);
+  });
+
   it('round-trips coverage intervals (Firestore forbids nested arrays)', async () => {
     await registerDevice(db, 'u3', 'UTC');
     const mutate = (m: ReturnType<typeof emptyManifest>) => ({
@@ -137,6 +147,24 @@ describe('FirestoreMeta.publish', () => {
 });
 
 describe('accounts', () => {
+  it('records allowlisted product events idempotently and rolls up identifier-free aggregates', async () => {
+    const now = Date.UTC(2026, 8, 1, 12);
+    expect(await recordProductEvent(db, 'analytics-user', { name: 'app_opened', appVersion: '1.0.0' }, now)).toEqual({ recorded: true });
+    expect(await recordProductEvent(db, 'analytics-user', { name: 'app_opened', appVersion: '1.0.0' }, now + 1)).toEqual({ recorded: false });
+    await recordProductEvent(db, 'analytics-user', { name: 'health_connect_started', appVersion: '1.0.0' }, now + 2);
+    await recordProductEvent(db, 'analytics-user', { name: 'sync_finished', appVersion: '1.0.0', outcome: 'success', durationMs: 400 }, now + 3);
+    const tokens = new FirestoreTokens(db);
+    await tokens.touch('analytics-user', 'claude', now + 4);
+    await tokens.record({ uid: 'analytics-user', provider: 'claude', tool: 'get_workouts', ok: true, ms: 20 });
+    const user = await db.doc('users/analytics-user').get();
+    expect(user.get('analytics')).toMatchObject({ firstOpenedAt: now, healthConnectStartedAt: now + 2, assistantConnectedAt: now + 4, activationProvider: 'claude' });
+    expect((await db.collection('productEvents').where('uid', '==', 'analytics-user').get()).size).toBe(3);
+    await rebuildAnalyticsRollups(db, now + 10, 1);
+    const rollup = (await db.doc('analyticsRollups/2026-09-01').get()).data()!;
+    expect(rollup).toMatchObject({ cohort: { steps: { first_opened: 1, health_connect_started: 1 } }, reliability: { syncAttempts: 1, syncSuccesses: 1 } });
+    expect(JSON.stringify(rollup)).not.toContain('analytics-user');
+  });
+
   it('rotates links, revoking the old token', async () => {
     await registerDevice(db, 'u4', 'UTC');
     const a = await createConnectorLink(db, 'u4', 'claude', 'https://x.web.app/');
@@ -161,6 +189,7 @@ describe('accounts', () => {
     const { url } = await createConnectorLink(db, 'u5', 'chatgpt', 'https://x.web.app');
     await meta.publish({ uid: 'u5', type: 'HR', batchId: 'b1', generation: 1, mutate: (m) => add(m, 'p1') });
     await db.collection('accessLog').add({ uid: 'u5', tool: 't' });
+    await recordProductEvent(db, 'u5', { name: 'app_opened', appVersion: '1.0.0' });
     await beginDeletion(db, 'u5');
     expect((await db.doc(`tokens/${hashToken(url.split('/mcp/')[1]!)}`).get()).exists).toBe(false);
     await expect(createConnectorLink(db, 'u5', 'claude', 'https://x')).rejects.toThrow(/being deleted/);
@@ -174,6 +203,7 @@ describe('accounts', () => {
     expect((await db.doc('users/u5').get()).exists).toBe(false);
     expect((await db.collection('users/u5/types').get()).empty).toBe(true);
     expect((await db.collection('accessLog').where('uid', '==', 'u5').get()).empty).toBe(true);
+    expect((await db.collection('productEvents').where('uid', '==', 'u5').get()).empty).toBe(true);
     expect(deleted).toEqual(['u5']);
   });
 });

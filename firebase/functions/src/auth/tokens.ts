@@ -24,7 +24,7 @@ export interface RateLimiter {
 }
 
 export interface AccessLog {
-  record(entry: { uid: string; provider: string; tool: string; ok: boolean }): Promise<void>;
+  record(entry: { uid: string; provider: string; tool: string; ok: boolean; ms?: number }): Promise<void>;
 }
 
 export interface Connections {
@@ -52,14 +52,33 @@ export class FirestoreTokens implements TokenStore, RateLimiter, AccessLog, Conn
     });
   }
 
-  async record(entry: { uid: string; provider: string; tool: string; ok: boolean }): Promise<void> {
-    await this.db.collection('accessLog').add({ ...entry, at: Date.now(), expireAt: new Date(Date.now() + 90 * 86_400_000) });
+  async record(entry: { uid: string; provider: string; tool: string; ok: boolean; ms?: number }): Promise<void> {
+    const now = Date.now();
+    await this.db.collection('accessLog').add({ ...entry, at: now, expireAt: new Date(now + 90 * 86_400_000) });
+    if (entry.ok) {
+      const ref = this.db.collection('users').doc(entry.uid);
+      await this.db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists || snap.get('deleting') === true || snap.get('analytics.activatedAt') !== undefined) return;
+        tx.update(ref, { 'analytics.activatedAt': now, 'analytics.activationProvider': entry.provider });
+      });
+    }
   }
 
   async touch(uid: string, provider: Provider, now: number, previous?: { setUpAt: number; lastUsedAt: number }): Promise<void> {
     if (previous && now - previous.lastUsedAt < 5 * 60_000) return;
-    await this.db.collection('users').doc(uid).update({
-      [`connections.${provider}`]: { setUpAt: previous?.setUpAt ?? now, lastUsedAt: now },
+    const ref = this.db.collection('users').doc(uid);
+    if (previous) {
+      await ref.update({ [`connections.${provider}`]: { setUpAt: previous.setUpAt, lastUsedAt: now } });
+      return;
+    }
+    await this.db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists || snap.get('deleting') === true) return;
+      const existing = snap.get(`connections.${provider}`) as { setUpAt: number; lastUsedAt: number } | undefined;
+      const patch: Record<string, unknown> = { [`connections.${provider}`]: { setUpAt: existing?.setUpAt ?? now, lastUsedAt: now } };
+      if (snap.get('analytics.assistantConnectedAt') === undefined) patch['analytics.assistantConnectedAt'] = now;
+      tx.update(ref, patch);
     });
   }
 }

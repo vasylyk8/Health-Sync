@@ -128,15 +128,16 @@ export class KrokOAuth implements OAuthServerProvider {
       const user = await tx.get<UserDoc>(`users/${uid}`);
       if (!user || user.deleting) throw new InvalidGrantError('Open KROK on your iPhone and connect Apple Health before authorizing an assistant.');
       const scopes = p.scopes.filter((s) => s !== 'health:routes:full' || fullRoutes);
-      const grantId = randomUUID(), code = generateToken();
+      const grantId = randomUUID(), code = generateToken(), connectedAt = this.now();
       const grant: Grant = { uid, clientId: p.clientId, provider: p.provider, scopes, generation: user.generation,
-        epoch: user.oauthEpochs?.[p.provider] ?? 0, expires: this.now() + GRANT_MS, revoked: false };
+        epoch: user.oauthEpochs?.[p.provider] ?? 0, expires: connectedAt + GRANT_MS, revoked: false };
       tx.set(`users/${uid}/oauthGrants/${grantId}`, grant);
       tx.set(`oauthCredentials/${hashToken(code)}`, { kind: 'code', uid, grantId, clientId: p.clientId,
         resource: p.resource, scopes, expires: this.now() + 60_000, challenge: p.challenge, redirectUri: p.redirectUri } satisfies Credential);
       tx.set(path, { ...p, used: true });
       tx.set(`users/${uid}`, { ...user, oauthProfileId: user.oauthProfileId ?? randomUUID(),
-        connections: { ...user.connections, [p.provider]: { setUpAt: this.now(), lastUsedAt: this.now() } } });
+        analytics: { ...user.analytics, assistantConnectedAt: user.analytics?.assistantConnectedAt ?? connectedAt },
+        connections: { ...user.connections, [p.provider]: { setUpAt: connectedAt, lastUsedAt: connectedAt } } });
       redirect.searchParams.set('code', code);
       return redirect.href;
     });
