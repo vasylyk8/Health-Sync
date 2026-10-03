@@ -12,6 +12,8 @@ import { dataBucketName, incomingBucketName } from '../src/config.js';
 import { purgeUserData } from '../src/account.js';
 import { FirestoreMeta } from '../src/store/firestore.js';
 import { COVERAGE } from '../src/config.js';
+import { withDuck } from '../src/query/duck.js';
+import { dailyMaps } from '../src/query/health.js';
 
 const project = process.env.GCP_PROJECT_ID;
 if (!project) throw new Error('GCP_PROJECT_ID is required');
@@ -85,6 +87,27 @@ if (mode === 'diag') {
       const parts = Object.keys(m.files).filter((k) => !k.startsWith('_'));
       const iso = (n: number | null | undefined) => (n ? new Date(n).toISOString().slice(0, 10) : '-');
       console.log(`   ${t.id}: records ${m.records}, partitions ${parts.length} (${parts.sort()[0] ?? '-'}..${parts.sort().at(-1) ?? '-'}), earliest ${iso(m.coverage.earliest)}, latest ${iso(m.coverage.latest)}, checkedAt ${m.coverage.checkedAt ? new Date(m.coverage.checkedAt).toISOString() : '-'}`);
+    }
+    // What an AI would be given: the merged daily rows per year (counts only): days, and how many days carry each key.
+    try {
+      const cats = new Set(d.categories ?? ['core']);
+      const keys = ['steps', 'restingHr', 'hrv', 'sleepAsleepMin', 'walkingHrAvg', 'activeKcal', 'ringMoveKcal'];
+      const q = { uid, meta, data, now: () => Date.now(), tz: 'UTC' };
+      const { byDay } = await withDuck((c, dir) => dailyMaps(c, dir, q, cats, Date.UTC(2010, 0, 1), Date.now() + 86_400_000, '2010-01-01', '2030-01-01'));
+      const years = new Map<string, { days: number; keys: Record<string, number>; metrics: number }>();
+      for (const [day, m] of byDay) {
+        const y = years.get(day.slice(0, 4)) ?? { days: 0, keys: {}, metrics: 0 };
+        y.days++;
+        y.metrics += Object.keys(m).length;
+        for (const k of keys) if (m[k] !== undefined) y.keys[k] = (y.keys[k] ?? 0) + 1;
+        years.set(day.slice(0, 4), y);
+      }
+      console.log('   merged daily rows per year (days; avg metrics per day; days having ' + keys.join('/') + '):');
+      for (const [y, v] of [...years].sort()) console.log(`     ${y}: ${v.days} days; ${(v.metrics / v.days).toFixed(1)} metrics/day; ${keys.map((k) => v.keys[k] ?? 0).join('/')}`);
+      const recent = [...byDay].sort(([a], [b]) => (a < b ? -1 : 1)).slice(-3);
+      for (const [day, m] of recent) console.log(`     ${day}: ${Object.keys(m).sort().join(',')}`);
+    } catch (err) {
+      console.log(`   merged daily rows: failed (${(err as Error).message})`);
     }
   }
   process.exit(0);

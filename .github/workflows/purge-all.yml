@@ -1,6 +1,6 @@
 # Owner tool: removes every real account and its data from the server (the synthetic monitoring user and the directory
 # reviewer account are kept). IRREVERSIBLE in "run" mode.
-# A push to ops/purge-all only prints the plan (read-only). "run" needs a manual dispatch with the confirmation text.
+# A push to ops/purge-all only prints the read-only report (accounts, batch states, stored data per type, merged daily rows per year). "run" needs a manual dispatch with the confirmation text.
 name: purge-all
 on:
   push:
@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 30
     env:
       GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-      MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'plan' }}
+      MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'diag' }}
       CONFIRM: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm || '' }}
     steps:
       - run: |
