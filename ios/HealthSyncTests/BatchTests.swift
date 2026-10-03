@@ -73,6 +73,8 @@ final class BatchTests: XCTestCase {
         XCTAssertFalse(perms.contains { $0 is HKCorrelationType })
         // Metric keys are unique: two metrics writing the same key would overwrite each other.
         XCTAssertEqual(Set(file.dailyMetrics.map(\.key)).count, file.dailyMetrics.count)
+        let rawRecovery = Set(file.dailyMetrics.filter { $0.recoverMissingFromRaw == true }.map(\.key))
+        XCTAssertTrue(rawRecovery.isSuperset(of: ["restingHr", "hrv", "respiratoryRate", "spo2Avg", "vo2max"]))
     }
 
     func testCoverageDoesNotAskForUnrelatedHealthData() throws {
@@ -115,13 +117,20 @@ final class BatchTests: XCTestCase {
         XCTAssertFalse(HealthKitSource.isPermanentFailure(NSError(domain: NSURLErrorDomain, code: -1009)))
     }
 
+    func testRawDailyFallbackOnlyFillsMissingDays() {
+        let primary = [("2024-03-01", 50.0), ("2024-03-03", 52.0)]
+        let authorizedRaw = [("2024-03-01", 99.0), ("2024-03-02", 51.0), ("2024-03-03", 98.0)]
+        XCTAssertEqual(HealthKitSource.missingDaily(primary: primary, fallback: authorizedRaw).map(\.0), ["2024-03-02"])
+        XCTAssertEqual(HealthKitSource.missingDaily(primary: primary, fallback: authorizedRaw).map(\.1), [51.0])
+    }
+
     func testOutboxFromAnOlderAppAsksForTheDailyHistoryAgain() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let box = Outbox(root: root)
         try box.update { $0.dailyFullAt = Date(); $0.dailyVersion = 0 }
         XCTAssertEqual(Outbox(root: root).state.dailyVersion, 0)
-        XCTAssertEqual(SyncEngine.dailyVersion, 10)
-        XCTAssertEqual(SyncEngine.hourlyVersion, 7)
+        XCTAssertEqual(SyncEngine.dailyVersion, 11)
+        XCTAssertEqual(SyncEngine.hourlyVersion, 8)
         XCTAssertEqual(SyncEngine.detailVersion, 1)
     }
 }

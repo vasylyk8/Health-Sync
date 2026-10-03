@@ -448,7 +448,7 @@ final class SyncEngineTests: XCTestCase {
 
     private var hourlyScope: SyncScope {
         var s = scope
-        s.hourly = [HourlyMetric(name: "HeartRate", type: HKQuantityType(.heartRate), unit: HKUnit.count().unitDivided(by: .minute()), unitLabel: "count/min", cumulative: false, cols: ["avg", "min", "max"], appleOnly: false)]
+        s.hourly = [HourlyMetric(name: "HeartRate", type: HKQuantityType(.heartRate), unit: HKUnit.count().unitDivided(by: .minute()), unitLabel: "count/min", cumulative: false, cols: ["avg", "min", "max"], recoverMissingFromRaw: false)]
         return s
     }
 

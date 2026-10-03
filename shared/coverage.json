@@ -312,7 +312,7 @@
    "id": "HKQuantityTypeIdentifierRestingHeartRate",
    "unit": "count/min",
    "agg": "avg",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "hrv",
@@ -320,7 +320,7 @@
    "id": "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
    "unit": "ms",
    "agg": "avg",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "respiratoryRate",
@@ -328,7 +328,7 @@
    "id": "HKQuantityTypeIdentifierRespiratoryRate",
    "unit": "count/min",
    "agg": "avg",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "sleepingWristTempC",
@@ -336,7 +336,7 @@
    "id": "HKQuantityTypeIdentifierAppleSleepingWristTemperature",
    "unit": "degC",
    "agg": "avg",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "spo2Avg",
@@ -344,7 +344,7 @@
    "id": "HKQuantityTypeIdentifierOxygenSaturation",
    "unit": "%",
    "agg": "avg",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "spo2Min",
@@ -352,7 +352,7 @@
    "id": "HKQuantityTypeIdentifierOxygenSaturation",
    "unit": "%",
    "agg": "min",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "walkingHrAvg",
@@ -360,7 +360,7 @@
    "id": "HKQuantityTypeIdentifierWalkingHeartRateAverage",
    "unit": "count/min",
    "agg": "avg",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "sleepBreathingDisturbances",
@@ -368,7 +368,7 @@
    "id": "HKQuantityTypeIdentifierAppleSleepingBreathingDisturbances",
    "unit": "count",
    "agg": "avg",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "sleep",
@@ -481,7 +481,7 @@
    "id": "HKQuantityTypeIdentifierVO2Max",
    "unit": "ml/(kg*min)",
    "agg": "last",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "walkingSpeedMps",
@@ -761,7 +761,7 @@
    "id": "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
    "unit": "ms",
    "agg": "min",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "hrvMax",
@@ -769,7 +769,7 @@
    "id": "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
    "unit": "ms",
    "agg": "max",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "hrvRmssd",
@@ -777,7 +777,7 @@
    "id": "HKQuantityTypeIdentifierHeartRateVariabilityRMSSD",
    "unit": "ms",
    "agg": "avg",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "respiratoryMin",
@@ -785,7 +785,7 @@
    "id": "HKQuantityTypeIdentifierRespiratoryRate",
    "unit": "count/min",
    "agg": "min",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "respiratoryMax",
@@ -793,7 +793,7 @@
    "id": "HKQuantityTypeIdentifierRespiratoryRate",
    "unit": "count/min",
    "agg": "max",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "spo2Max",
@@ -801,7 +801,7 @@
    "id": "HKQuantityTypeIdentifierOxygenSaturation",
    "unit": "%",
    "agg": "max",
-   "source": "apple"
+   "recoverMissingFromRaw": true
   },
   {
    "key": "alcoholBeverages",

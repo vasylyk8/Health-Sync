@@ -37,4 +37,4 @@ Plain-language steps. Nothing here happens automatically: **no step below runs u
 - Real HealthKit reads of routes and per-workout data cannot be tested without a phone; the automated tests use realistic fake workouts, so step 5 is essential.
 - iOS only lets apps read Health data while the phone is unlocked, so the first full sync needs the app open. Background uploads continue only when iOS allows.
 - The private connector link has no expiry and grants access to all synced data, including exact routes if requested. Consider OAuth before adding other users.
-- Workouts imported from other apps often have no Apple-recorded statistics; heart rate is still looked up from the same source and time window, other streams may be missing.
+- Workouts imported from other apps often have no Apple-recorded statistics; heart rate is looked up from all authorized samples in the workout's time window, while other streams may still be missing.

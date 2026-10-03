@@ -31,9 +31,9 @@ struct DailyMetricSpec: Decodable, Sendable {
     let outputs: [String]?
     /// Consent category (default "core").
     let category: String?
-    /// "apple": read only samples written by Apple's own sources (Apple Watch, iPhone), so another app that also
-    /// writes (for example) a resting heart rate does not blend into the average.
-    let source: String?
+    /// If HealthKit's statistics collection omits a bucket, recover that bucket from the authorized raw samples.
+    /// This is reserved for sparse discrete quantities; cumulative quantities must never be raw-summed.
+    let recoverMissingFromRaw: Bool?
 }
 
 /// A group of data the user switches on or off as a whole (coverage.json `categories`).
@@ -110,7 +110,7 @@ struct HourlyMetric: @unchecked Sendable {
     let unitLabel: String
     let cumulative: Bool
     let cols: [String]
-    let appleOnly: Bool
+    let recoverMissingFromRaw: Bool
 }
 
 enum EventKind: Sendable { case quantity, category, medication, characteristic }
@@ -147,7 +147,7 @@ struct DailyMetric: @unchecked Sendable {
     let kind: Kind
     /// Consent category this metric belongs to.
     var category = "core"
-    var appleOnly = false
+    var recoverMissingFromRaw = false
 
     /// Batch type of the daily rows of this metric's category ("_daily" for the core category).
     var batchType: String { HealthTypes.dailyBatchType(category) }
@@ -212,7 +212,7 @@ enum HealthTypes {
             guard let qt = HKObjectType.quantityType(forIdentifier: HKQuantityTypeIdentifier(rawValue: h.id)),
                   let unit = unit(named: h.unit), qt.is(compatibleWith: unit) else { return nil }
             return HourlyMetric(name: h.name, type: qt, unit: unit, unitLabel: h.unit, cumulative: qt.aggregationStyle == .cumulative,
-                                cols: h.cols, appleOnly: h.name.hasPrefix("HeartRateVariability"))
+                                cols: h.cols, recoverMissingFromRaw: h.name.hasPrefix("HeartRateVariability"))
         }
         let events: [EventType] = (file.eventTypes ?? []).compactMap(eventType)
         var scope = SyncScope(types: types, workoutQuantities: quantities, dailyMetrics: metrics)
@@ -254,7 +254,7 @@ enum HealthTypes {
             // skip such a metric instead of crashing.
             guard (agg == .sum) == (qt.aggregationStyle == .cumulative) else { return nil }
             // HealthKit percentages are fractions (0.97); the server stores 97.
-            return DailyMetric(key: s.key, kind: .quantity(qt, unit: unit, agg: agg, scale: unitName == "%" ? 100 : 1), category: s.category ?? "core", appleOnly: s.source == "apple")
+            return DailyMetric(key: s.key, kind: .quantity(qt, unit: unit, agg: agg, scale: unitName == "%" ? 100 : 1), category: s.category ?? "core", recoverMissingFromRaw: s.recoverMissingFromRaw ?? false)
         case "category":
             guard let ct = HKObjectType.categoryType(forIdentifier: HKCategoryTypeIdentifier(rawValue: s.id)),
                   let mode = CategoryMode(rawValue: s.mode ?? "") else { return nil }
