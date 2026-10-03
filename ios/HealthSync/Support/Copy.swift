@@ -102,7 +102,7 @@ enum Copy {
 
     enum Metric {
         static let heartRateLabel = "heart rate readings"
-        static let heartRateCaption = "From every workout, start to finish."
+        static let heartRateCaption = "From every time you wore your watch."
         static let workoutsLabel = "workouts"
         static let workoutsCaption = "From your first to your latest."
         static let stepsLabel = "steps"
@@ -123,23 +123,23 @@ enum Copy {
         static let historyLabel = "days of history"
         static func historyCaption(_ since: String) -> String { "Back to \(since)." }
         static let gpsLabel = "GPS points"
-        static let gpsCaption = "All your routes, mapped."
+        static let gpsCaption = "Mapping all your workout routes."
         static let climbedLabel = "metres climbed"
         static func climbedCaption(_ everests: String) -> String { "≈ \(everests)× Mount Everest" }
         static let climbedFallback = "Every metre uphill."
-        static let heartbeatsLabel = "workout heartbeats, estimated"
-        static let heartbeatsCaption = "Counted from your heart rate."
+        static let heartbeatsLabel = "workout heartbeats"
+        static let heartbeatsCaption = "That’s a lot of extra beats!"
         static let hrvLabel = "days of HRV tracked"
-        static let hrvCaption = "Your recovery, tracked."
+        static let hrvCaption = "Your recovery is just as important."
         static let cycledLabel = "km cycled"
         static func cycledCaption(_ tours: String) -> String { "≈ \(tours) Tours de France" }
         static let cycledFallback = "Every ride adds up."
         static let swumLabel = "km swum"
-        static func swumCaption(_ lengths: String) -> String { "≈ \(lengths) pool lengths" }
+        static func swumCaption(_ lengths: String) -> String { "≈ \(lengths) Olympic pool lengths" }
         static let swumFallback = "Lap by lap."
         static let activeDaysLabel = "days with a workout"
         static let activeDaysCaption = "Showing up, day after day."
         static let typesLabel = "workout types"
-        static let typesCaption = "From running to rowing."
+        static let typesCaption = "Tracking everything that you’re into."
     }
 }
