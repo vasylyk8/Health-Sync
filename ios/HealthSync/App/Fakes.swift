@@ -39,6 +39,7 @@ final class FakeBackend: Backend, @unchecked Sendable {
     func deleteAllData() async throws { lock.withLock { links = [:]; setUp = [:] } }
 
     func setCategories(_ ids: [String]) async throws { lock.withLock { categories = ids } }
+    func setRaceGoal(raceId: String, raceName: String, raceDate: String, goalSeconds: Int?) async throws {}
 
     func status() async throws -> ServerStatus {
         lock.withLock {

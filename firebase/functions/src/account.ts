@@ -2,7 +2,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import { CATEGORY_IDS, COVERAGE, DEFAULT_CATEGORIES, PROVIDERS, type Provider } from './config.js';
 import { generateToken, hashToken } from './auth/tokens.js';
-import type { BlobStore, MetaStore, UserDoc } from './store/types.js';
+import { MAX_RACE_GOALS, type BlobStore, type MetaStore, type RaceGoal, type UserDoc } from './store/types.js';
 import { log } from './log.js';
 import { deleteProductEvents } from './analytics/events.js';
 
@@ -239,4 +239,48 @@ export async function setCategories(db: Firestore, deps: { meta: MetaStore; data
   for (const category of removed) await purgeCategoryData(deps, uid, category);
   log.info('categories set', { uid, categories: next.join(','), removed: removed.join(',') });
   return { categories: next, removed };
+}
+
+const RACE_ID_RE = /^[a-z0-9-]{1,40}$/;
+
+export interface RaceGoalInput { raceId: string; raceName: string; raceDate: string; goalSeconds: number | null }
+
+/** Strictly validates the `setRaceGoal` payload. */
+export function parseRaceGoal(value: unknown): RaceGoalInput {
+  const bad = (m: string) => new AccountError('invalid-argument', m);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw bad('Expected an object.');
+  const v = value as Record<string, unknown>;
+  if (typeof v.raceId !== 'string' || !RACE_ID_RE.test(v.raceId)) throw bad('raceId must match [a-z0-9-]{1,40}.');
+  // eslint-disable-next-line no-control-regex
+  if (typeof v.raceName !== 'string' || v.raceName.trim().length < 1 || v.raceName.length > 60 || /[\u0000-\u001f\u007f]/.test(v.raceName)) throw bad('raceName must be 1-60 characters without control characters.');
+  const ms = typeof v.raceDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.raceDate) ? Date.parse(v.raceDate + 'T00:00:00Z') : NaN;
+  if (Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== v.raceDate) throw bad('raceDate must be a date like 2026-10-11.');
+  const g = v.goalSeconds;
+  if (g !== null && (typeof g !== 'number' || !Number.isInteger(g) || g < 600 || g > 86_400)) throw bad('goalSeconds must be an integer from 600 to 86400, or null.');
+  return { raceId: v.raceId, raceName: v.raceName.trim(), raceDate: v.raceDate as string, goalSeconds: g };
+}
+
+/** Stores (or, with goalSeconds null, clears) the expected finish time of one race. */
+export async function setRaceGoal(db: Firestore, uid: string, value: unknown, now = Date.now()): Promise<{ races: number }> {
+  const input = parseRaceGoal(value);
+  const ref = db.collection('users').doc(uid);
+  const races = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new AccountError('failed-precondition', 'Register the device first.');
+    const user = snap.data() as UserDoc;
+    if (user.deleting) throw new AccountError('failed-precondition', 'This account is being deleted.');
+    const current = user.raceGoals ?? {};
+    if (input.goalSeconds === null) {
+      if (input.raceId in current) tx.update(ref, { [`raceGoals.${input.raceId}`]: FieldValue.delete() });
+      return Object.keys(current).filter((k) => k !== input.raceId).length;
+    }
+    if (!(input.raceId in current) && Object.keys(current).length >= MAX_RACE_GOALS) {
+      throw new AccountError('failed-precondition', `At most ${MAX_RACE_GOALS} race goals can be stored. Remove one first.`);
+    }
+    const goal: RaceGoal = { raceName: input.raceName, raceDate: input.raceDate, goalSeconds: input.goalSeconds, updatedAt: now };
+    tx.update(ref, { [`raceGoals.${input.raceId}`]: goal });
+    return new Set([...Object.keys(current), input.raceId]).size;
+  });
+  log.info('race goal set', { uid, cleared: input.goalSeconds === null });
+  return { races };
 }

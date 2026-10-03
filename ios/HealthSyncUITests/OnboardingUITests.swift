@@ -9,7 +9,7 @@ final class OnboardingUITests: XCTestCase {
 
     private func launch(_ extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-uiTesting"] + (extra.contains("-chicago") ? [] : ["-noChicago"]) + extra
+        app.launchArguments = ["-uiTesting"] + (extra.contains("-specialEdition") ? [] : ["-noSpecialEdition"]) + extra
         app.launch()
         return app
     }
@@ -32,13 +32,19 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["heroMetric"].waitForExistence(timeout: 5))
     }
 
-    func testChicagoArtShowsOnAccountPageWhileActive() {
-        let app = launch(["-chicago"])
+    func testMedalAppearsWhenTheUploadIsDoneAndTakesAFinishTime() {
+        let app = launch(["-specialEdition"])
         XCTAssertTrue(app.buttons["connectHealth"].waitForExistence(timeout: 5))
         app.buttons["connectHealth"].tap()
-        XCTAssertTrue(app.buttons["appleSignIn"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["GOOD LUCK, CHICAGO"].waitForExistence(timeout: 5))
-        snapshot("01c-Account-Chicago")
+        app.signInThroughAccountPage()
+        XCTAssertTrue(app.buttons["editionMedal"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["GOOD LUCK, CHICAGO"].exists)
+        snapshot("03a-Home-Medal")
+        app.buttons["editionMedal"].tap()
+        XCTAssertTrue(app.buttons["editionDone"].waitForExistence(timeout: 5))
+        snapshot("03b-Home-Medal-Picker")
+        app.buttons["editionDone"].tap()
+        XCTAssertTrue(app.staticTexts["GOAL 4:30:00"].waitForExistence(timeout: 5))
     }
 
     func testAppleAccountCanUsePublicOAuthWithoutCreatingAPrivateLink() {

@@ -1,22 +1,10 @@
 import SwiftUI
 
-/// A one-week splash for the Chicago Marathon: the four stars of the city flag over the skyline,
-/// and a dotted course line underneath. Drawn in the app's greys. Shown on Welcome until race day ends.
-enum ChicagoMarathon {
-    /// Launch arguments `-chicago` / `-noChicago` force it on or off (UI tests).
-    static func isActive(now: Date = Date(), calendar: Calendar = .current, arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
-        if arguments.contains("-noChicago") { return false }
-        if arguments.contains("-chicago") { return true }
-        var end = DateComponents()
-        end.year = 2026
-        end.month = 10
-        end.day = 12
-        guard let cutoff = calendar.date(from: end) else { return false }
-        return now < cutoff
-    }
-}
-
+/// The Chicago Marathon picture: the four stars of the city flag over the skyline, drawn in the app's greys.
+/// With `course` on, a dotted course line runs underneath. Used by `SpecialEdition.chicago2026`.
 struct ChicagoMarathonArt: View {
+    var course = true
+
     private static let star: [(CGFloat, CGFloat)] = [
         (0, -10), (2.89, -5), (8.66, -5), (5.77, 0), (8.66, 5), (2.89, 5),
         (0, 10), (-2.89, 5), (-8.66, 5), (-5.77, 0), (-8.66, -5), (-2.89, -5),
@@ -62,6 +50,7 @@ struct ChicagoMarathonArt: View {
             let wheel = Path(ellipseIn: CGRect(x: 270, y: 122, width: 56, height: 56)).applying(sky)
             context.stroke(wheel, with: ink, style: round(3.5 * 0.85 * s))
 
+            guard course else { return }
             // The course: dotted line with an open start and a solid finish.
             let course = Self.line([(24, 220), (318, 220)]).applying(base)
             context.stroke(course, with: .color(Theme.muted.opacity(0.6)),

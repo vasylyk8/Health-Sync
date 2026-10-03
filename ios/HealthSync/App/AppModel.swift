@@ -14,6 +14,10 @@ final class AppModel: ObservableObject {
         didSet {
             keepScreenAwakeDuringFirstSync()
             updateEstimate()
+            if progress.historyComplete, !uploadFinished {
+                uploadFinished = true
+                defaults.set(true, forKey: Self.uploadFinishedKey)
+            }
         }
     }
     /// Rough time left for the first sync, in coarse steps (see `SyncEstimator`).
@@ -56,6 +60,16 @@ final class AppModel: ObservableObject {
     static let onboardingUidKey = "onboardingUid"
     /// The account this phone's outbox (what was already uploaded) belongs to.
     static let syncedUidKey = "syncedUid"
+    /// Set once the first upload has finished, so Home opens straight into its finished look.
+    static let uploadFinishedKey = "uploadFinished"
+
+    /// The special edition (race medal) showing on Home, if any.
+    var edition: SpecialEdition?
+    /// The expected finish time the person entered for `edition`, in seconds.
+    @Published private(set) var goalSeconds: Int?
+    /// True from the moment the first upload has finished.
+    @Published private(set) var uploadFinished: Bool
+    private var goals: RaceGoalStore { RaceGoalStore(defaults: defaults) }
 
     init(backend: Backend, source: HealthSource, outbox: Outbox, scope: SyncScope, telemetry: Telemetry, defaults: UserDefaults = .standard) {
         self.backend = backend
@@ -64,6 +78,10 @@ final class AppModel: ObservableObject {
         self.scope = scope
         self.telemetry = telemetry
         self.defaults = defaults
+        let edition = SpecialEdition.active()
+        self.edition = edition
+        goalSeconds = edition.flatMap { RaceGoalStore(defaults: defaults).goal(for: $0.id) }
+        uploadFinished = defaults.bool(forKey: Self.uploadFinishedKey)
         let defaultCategories = Set(scope.categories.filter { $0.default == true }.map(\.id))
         let consent = ConsentStore(defaults: defaults, fallback: defaultCategories)
         self.consent = consent
@@ -236,6 +254,27 @@ final class AppModel: ObservableObject {
         Task { await engine.onProgress { p in Task { @MainActor in self.progress = p } } }
         startObservers()
         syncTask = Task { await syncNow() }
+        Task { await sendGoalIfPending() }
+    }
+
+    /// Saves the expected finish time (kept on the phone, and sent to the server so the person's AI can use it).
+    func saveGoal(seconds: Int) {
+        guard let edition, SpecialEdition.secondsRange.contains(seconds) else { return }
+        goals.save(seconds, for: edition.id)
+        goalSeconds = seconds
+        Task { await sendGoalIfPending() }
+    }
+
+    /// Sends the goal if the server does not have it yet; a failure leaves it to the next app start.
+    func sendGoalIfPending() async {
+        guard let edition, goals.isPending(edition.id), let seconds = goals.goal(for: edition.id) else { return }
+        do {
+            try await backend.setRaceGoal(raceId: edition.id, raceName: edition.raceName, raceDate: edition.raceDate, goalSeconds: seconds)
+            // Changed again while sending: the newer value is still pending.
+            if goals.goal(for: edition.id) == seconds { goals.markSent(edition.id) }
+        } catch {
+            telemetry.nonFatal("goal.send", code: (error as NSError).code)
+        }
     }
 
     /// Pauses the sync (it resumes where it left off), measures HealthKit read speed, then resumes.
@@ -512,6 +551,10 @@ final class AppModel: ObservableObject {
             defaults.removeObject(forKey: Self.pendingAccountKey)
             defaults.removeObject(forKey: Self.onboardingUidKey)
             defaults.removeObject(forKey: Self.syncedUidKey)
+            defaults.removeObject(forKey: Self.uploadFinishedKey)
+            goals.clear(editions: SpecialEdition.all)
+            goalSeconds = nil
+            uploadFinished = false
             status = .empty
             appleAccountLinked = false
             started = false

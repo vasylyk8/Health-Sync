@@ -30,6 +30,8 @@ protocol Backend: Uploader {
     func status() async throws -> ServerStatus
     /// Whether the server already has this upload batch (processed, or waiting to be processed).
     func batchExists(batchId: String) async throws -> Bool
+    /// Stores (or, with nil, clears) the runner's expected finish time for a race; the AI assistants can read it.
+    func setRaceGoal(raceId: String, raceName: String, raceDate: String, goalSeconds: Int?) async throws
     func signOut() async
     func hasAppleAccount() async -> Bool
     /// `replacingFreshAccount`: the uid of the anonymous account created during this onboarding. When the Apple
@@ -42,6 +44,7 @@ protocol Backend: Uploader {
 }
 
 extension Backend {
+    func setRaceGoal(raceId: String, raceName: String, raceDate: String, goalSeconds: Int?) async throws { throw BackendError.notConfigured }
     func hasAppleAccount() async -> Bool { false }
     func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool, replacingFreshAccount freshUid: String?) async throws { throw BackendError.notConfigured }
     func revokeAppleAuthorization(_ authorizationCode: String) async throws { throw BackendError.notConfigured }

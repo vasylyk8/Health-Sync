@@ -38,6 +38,12 @@ final class StubBackend: Backend, @unchecked Sendable {
     func createLink(provider: String) async throws -> String { "https://example.test/mcp/\(provider)" }
     func disconnect(provider: String) async throws {}
     func deleteAllData() async throws {}
+    var goalCalls: [(raceId: String, goalSeconds: Int?)] = []
+    var goalError: Error?
+    func setRaceGoal(raceId: String, raceName: String, raceDate: String, goalSeconds: Int?) async throws {
+        if let goalError { throw goalError }
+        goalCalls.append((raceId, goalSeconds))
+    }
     var categoryCalls: [[String]] = []
     func setCategories(_ ids: [String]) async throws { categoryCalls.append(ids) }
     func status() async throws -> ServerStatus { .empty }
@@ -52,6 +58,26 @@ final class AppModelTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let defaults = UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!
         return AppModel(backend: backend, source: ScriptedSource(), outbox: Outbox(root: root), scope: .empty, telemetry: NoTelemetry(), defaults: defaults)
+    }
+
+    func testTheFinishTimeIsStoredAndSentUntilTheServerHasIt() async throws {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        model.edition = SpecialEdition.chicago2026
+        XCTAssertNil(model.goalSeconds)
+        backend.goalError = URLError(.notConnectedToInternet)
+        model.saveGoal(seconds: 16_200)
+        XCTAssertEqual(model.goalSeconds, 16_200)
+        await model.sendGoalIfPending()
+        XCTAssertTrue(backend.goalCalls.isEmpty, "offline: nothing sent, still pending")
+        backend.goalError = nil
+        await model.sendGoalIfPending()
+        XCTAssertEqual(backend.goalCalls.map(\.raceId), ["chicago-marathon-2026"])
+        XCTAssertEqual(backend.goalCalls.first?.goalSeconds, 16_200)
+        await model.sendGoalIfPending()
+        XCTAssertEqual(backend.goalCalls.count, 1, "sent once")
+        model.saveGoal(seconds: 5)  // outside the accepted range
+        XCTAssertEqual(model.goalSeconds, 16_200)
     }
 
     func testAnAccountSwitchStartsTheFirstSyncOverOnTheNewAccount() async throws {
