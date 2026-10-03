@@ -4,9 +4,13 @@ import XCTest
 /// Backend whose sign-in can be made to fail (offline, server error).
 final class StubBackend: Backend, @unchecked Sendable {
     struct ProductEvent: Equatable { let name: String; let outcome: String?; let durationMs: Int? }
-    var productEvents: [ProductEvent] = []
+    private let productEventsQueue = DispatchQueue(label: "StubBackend.productEvents")
+    private var productEventStorage: [ProductEvent] = []
+    var productEvents: [ProductEvent] { productEventsQueue.sync { productEventStorage } }
     func recordProductEvent(name: String, appVersion: String, outcome: String?, durationMs: Int?) async throws {
-        productEvents.append(ProductEvent(name: name, outcome: outcome, durationMs: durationMs))
+        productEventsQueue.sync {
+            productEventStorage.append(ProductEvent(name: name, outcome: outcome, durationMs: durationMs))
+        }
     }
     var signInError: Error?
     var registerError: Error?
