@@ -146,6 +146,8 @@ export const setCategories = onCall(callableOpts, wrap((req) => {
   return account.setCategories(d.db, { meta: d.meta, data: d.data }, uidOf(req), (req.data as { categories?: unknown })?.categories);
 }));
 
+export const setRaceGoal = onCall(callableOpts, wrap((req) => account.setRaceGoal(deps().db, uidOf(req), req.data)));
+
 export const batchExists = onCall(callableOpts, wrap(async (req) => {
   const uid = uidOf(req);
   const d = deps();

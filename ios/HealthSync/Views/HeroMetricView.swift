@@ -19,6 +19,9 @@ private struct CountingNumber: View, Animatable {
             .lineLimit(1)
             .minimumScaleFactor(0.4)
             .foregroundStyle(Theme.ink)
+            // Negative tracking also trims the space after the last digit, so the frame ends inside a round 5 or 6
+            // and its right edge gets cut off. This gives that space back (the gap to the unit stays the same).
+            .padding(.trailing, size * 0.06)
     }
 }
 
@@ -40,6 +43,8 @@ struct HeroCounter: Equatable {
 struct HeroMetricView: View {
     /// Metrics that have data, in rotation order (never empty).
     let metrics: [HeroMetric]
+    /// The small look (44 pt number, body-size label) used under the race medal; otherwise the big one.
+    var compact = false
 
     private static let seconds = 5.0
     private static let fade = 0.45
@@ -63,8 +68,8 @@ struct HeroMetricView: View {
         let spec = NumberSpec.make(for: metric.value, wholeNumber: metric.wholeNumber)
         let finalText = spec.text(metric.value)
         // Sized from the final number, so the size does not jump while it counts.
-        let size = NumberSpec.fontSize(forTextLength: finalText.count)
-        VStack(alignment: .leading, spacing: 8) {
+        let size = compact ? 44 : NumberSpec.fontSize(forTextLength: finalText.count)
+        VStack(alignment: .leading, spacing: compact ? 4 : 8) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 CountingNumber(value: number, spec: spec, size: size)
                 if !spec.unit.isEmpty {
@@ -73,9 +78,9 @@ struct HeroMetricView: View {
                         .foregroundStyle(Theme.muted)
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 176, maxHeight: 176, alignment: .bottomLeading)
+            .frame(maxWidth: .infinity, minHeight: compact ? 52 : 176, maxHeight: compact ? 52 : 176, alignment: .bottomLeading)
             Text(metric.label)
-                .headlineText()
+                .modifier(LabelStyle(compact: compact))
                 .foregroundStyle(Theme.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -85,6 +90,7 @@ struct HeroMetricView: View {
                 .lineLimit(2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.9), value: compact)
         .opacity(visible ? 1 : 0)
         .offset(y: visible ? 0 : 10)
         .accessibilityElement(children: .ignore)
@@ -133,5 +139,14 @@ struct HeroMetricView: View {
             present(next)
             withAnimation(.easeInOut(duration: Self.fade)) { visible = true }
         }
+    }
+}
+
+/// The metric label: 24 pt in the big look, 17 pt in the compact one.
+private struct LabelStyle: ViewModifier {
+    let compact: Bool
+
+    func body(content: Content) -> some View {
+        if compact { content.bodyText(.semibold) } else { content.headlineText() }
     }
 }

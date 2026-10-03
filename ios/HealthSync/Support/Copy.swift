@@ -4,6 +4,7 @@ import Foundation
 enum Copy {
     enum Welcome {
         static let tagline = "Your Apple Health, meet your AI."
+        static let subtitle = "Every workout, heartbeat and night of sleep from all your sources, ready for your AI."
         static let connectButton = "Connect to Apple Health"
         /// Examples of what KROK can answer, scrolling slowly behind the tagline.
         static let questions = [
@@ -20,8 +21,7 @@ enum Copy {
 
     enum Account {
         static let headline = "Keep your data yours."
-        static let body = "An account is required to connect your data to your AI. You can delete your account and saved data anytime."
-        static let chicagoCaption = "GOOD LUCK, CHICAGO"
+        static let body = "An account is needed to connect with AI. You can delete it and your data anytime."
         static let signIn = "Sign in with Apple"
     }
 

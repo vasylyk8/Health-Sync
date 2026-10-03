@@ -25,6 +25,8 @@ This is health data of a particularly sensitive kind. KROK describes it back to 
 
 We do **not** read clinical records or documents, reproductive and sexual-health data such as pregnancy or contraception, or ECG recordings.
 
+If you enter an optional **expected finish time for a race**, it is stored with the race name and date, shared with the AI assistants you connect, and deleted with your account.
+
 ## Why we use it (legal bases)
 - To provide the service you asked for: storing your data so your connected assistants can read it (GDPR Art. 6(1)(b)).
 - Health data is special-category data. We process it only with your **explicit consent** (GDPR Art. 9(2)(a)), given when you connect Apple Health (including the types you allow on Apple's permission sheet), and again, per assistant, when you connect Claude or ChatGPT. You can withdraw consent at any time by switching a group off in KROK or in Apple Health, disconnecting, or deleting your data.

@@ -55,6 +55,17 @@ export interface TypeManifest {
   fragmented?: boolean;
 }
 
+/** A runner's self-set expected finish time for one race (users/{uid}.raceGoals[raceId]). Not a measurement. */
+export interface RaceGoal {
+  raceName: string;
+  /** Local calendar date, YYYY-MM-DD. */
+  raceDate: string;
+  goalSeconds: number;
+  updatedAt: number;
+}
+
+export const MAX_RACE_GOALS = 10;
+
 export interface UserDoc {
   /** Consent categories the user switched on (see CATEGORIES in config.ts); missing = the defaults. */
   categories?: string[];
@@ -65,6 +76,8 @@ export interface UserDoc {
   tz: string | null;
   connections: Partial<Record<string, { setUpAt: number; lastUsedAt: number }>>;
   links: Partial<Record<string, { tokenHash: string; createdAt: number }>>;
+  /** Optional expected finish times keyed by race id; at most MAX_RACE_GOALS. Deleted with the user doc. */
+  raceGoals?: Record<string, RaceGoal>;
   oauthEpochs?: Partial<Record<string, number>>;
   oauthProfileId?: string;
   /** Product milestones only. Never contains Health values, free text, or external identity data. */

@@ -67,6 +67,12 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
         _ = try await call("setCategories", ["categories": ids])
     }
 
+    func setRaceGoal(raceId: String, raceName: String, raceDate: String, goalSeconds: Int?) async throws {
+        var payload: [String: Any] = ["raceId": raceId, "raceName": raceName, "raceDate": raceDate]
+        payload["goalSeconds"] = goalSeconds ?? NSNull()
+        _ = try await call("setRaceGoal", payload)
+    }
+
     func status() async throws -> ServerStatus {
         let data = try await call("getStatus", [:])
         let json = try JSONSerialization.data(withJSONObject: data ?? [:])

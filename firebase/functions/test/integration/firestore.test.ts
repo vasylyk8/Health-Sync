@@ -3,7 +3,7 @@ import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { FirestoreMeta } from '../../src/store/firestore.js';
 import { emptyManifest } from '../../src/store/types.js';
-import { beginDeletion, createConnectorLink, disconnect, purgeUserData, registerDevice, setCategories, sweepDeletions } from '../../src/account.js';
+import { beginDeletion, createConnectorLink, disconnect, purgeUserData, registerDevice, setCategories, setRaceGoal, sweepDeletions } from '../../src/account.js';
 import { FirestoreTokens, hashToken } from '../../src/auth/tokens.js';
 import { DEFAULT_CATEGORIES } from '../../src/config.js';
 import { DirBlobs } from '../helpers/memory.js';
@@ -188,6 +188,7 @@ describe('accounts', () => {
     await registerDevice(db, 'u5', 'UTC');
     const { url } = await createConnectorLink(db, 'u5', 'chatgpt', 'https://x.web.app');
     await meta.publish({ uid: 'u5', type: 'HR', batchId: 'b1', generation: 1, mutate: (m) => add(m, 'p1') });
+    await setRaceGoal(db, 'u5', { raceId: 'chicago-marathon-2026', raceName: 'Chicago Marathon', raceDate: '2026-10-11', goalSeconds: 12_600 });
     await db.collection('accessLog').add({ uid: 'u5', tool: 't' });
     await recordProductEvent(db, 'u5', { name: 'app_opened', appVersion: '1.0.0' });
     await beginDeletion(db, 'u5');
@@ -205,6 +206,28 @@ describe('accounts', () => {
     expect((await db.collection('accessLog').where('uid', '==', 'u5').get()).empty).toBe(true);
     expect((await db.collection('productEvents').where('uid', '==', 'u5').get()).empty).toBe(true);
     expect(deleted).toEqual(['u5']);
+    expect((await db.doc('users/u5').get()).get('raceGoals')).toBeUndefined();
+  });
+});
+
+describe('setRaceGoal', () => {
+  const goal = (raceId: string, goalSeconds: number | null = 12_600) => ({ raceId, raceName: 'Race ' + raceId, raceDate: '2026-10-11', goalSeconds });
+  it('stores, updates and clears goals per race, and caps the number of races', async () => {
+    await registerDevice(db, 'u9', 'UTC');
+    expect(await setRaceGoal(db, 'u9', goal('chicago-marathon-2026'), 1000)).toEqual({ races: 1 });
+    expect((await db.doc('users/u9').get()).get('raceGoals')).toEqual({ 'chicago-marathon-2026': { raceName: 'Race chicago-marathon-2026', raceDate: '2026-10-11', goalSeconds: 12_600, updatedAt: 1000 } });
+    expect(await setRaceGoal(db, 'u9', goal('chicago-marathon-2026', 11_000), 2000)).toEqual({ races: 1 });
+    expect((await db.doc('users/u9').get()).get('raceGoals.chicago-marathon-2026.goalSeconds')).toBe(11_000);
+    for (let i = 1; i < 10; i++) await setRaceGoal(db, 'u9', goal(`r${i}`));
+    await expect(setRaceGoal(db, 'u9', goal('one-too-many'))).rejects.toThrow(/At most 10/);
+    expect(await setRaceGoal(db, 'u9', goal('r1', 15_000))).toEqual({ races: 10 });
+    expect(await setRaceGoal(db, 'u9', goal('r1', null))).toEqual({ races: 9 });
+    expect(await setRaceGoal(db, 'u9', goal('never-set', null))).toEqual({ races: 9 });
+    expect(Object.keys((await db.doc('users/u9').get()).get('raceGoals'))).not.toContain('r1');
+    await expect(setRaceGoal(db, 'u9', { ...goal('x'), goalSeconds: 5 })).rejects.toThrow(/goalSeconds/);
+    await expect(setRaceGoal(db, 'nobody', goal('x'))).rejects.toThrow(/Register the device/);
+    await beginDeletion(db, 'u9');
+    await expect(setRaceGoal(db, 'u9', goal('x'))).rejects.toThrow(/being deleted/);
   });
 });
 

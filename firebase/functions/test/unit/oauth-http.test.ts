@@ -155,7 +155,7 @@ describe('Public OAuth HTTP boundary', () => {
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: `Bearer ${credentials.access_token}` } } }));
     try {
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(16);
+      expect(tools).toHaveLength(17);
       expect(client.getInstructions()).not.toMatch(/get_glucose|get_health_events/);
       for (const name of ['get_glucose', 'get_health_events']) {
         expect(tools.some((tool) => tool.name === name)).toBe(false);

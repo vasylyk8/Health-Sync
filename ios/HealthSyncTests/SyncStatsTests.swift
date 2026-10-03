@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import HealthSync
 
@@ -280,15 +281,45 @@ final class HeroMetricsTests: XCTestCase {
         XCTAssertEqual(NumberSpec.fontSize(forTextLength: 9), 92)
     }
 
-    func testChicagoSplashRunsThroughRaceDayOnly() {
+    func testSpecialEditionRunsUntilTheEndOfTheLastDay() {
         var c = Calendar(identifier: .gregorian)
         c.timeZone = TimeZone(identifier: "UTC")!
         func date(_ d: Int, hour: Int) -> Date { c.date(from: DateComponents(year: 2026, month: 10, day: d, hour: hour))! }
-        XCTAssertTrue(ChicagoMarathon.isActive(now: date(2, hour: 12), calendar: c, arguments: []))
-        XCTAssertTrue(ChicagoMarathon.isActive(now: date(11, hour: 23), calendar: c, arguments: []))
-        XCTAssertFalse(ChicagoMarathon.isActive(now: date(12, hour: 0), calendar: c, arguments: []))
-        XCTAssertFalse(ChicagoMarathon.isActive(now: date(2, hour: 12), calendar: c, arguments: ["-noChicago"]))
-        XCTAssertTrue(ChicagoMarathon.isActive(now: date(20, hour: 12), calendar: c, arguments: ["-chicago"]))
+        XCTAssertEqual(SpecialEdition.active(now: date(2, hour: 12), calendar: c, arguments: [])?.id, "chicago-marathon-2026")
+        XCTAssertEqual(SpecialEdition.active(now: date(11, hour: 23), calendar: c, arguments: [])?.id, "chicago-marathon-2026")
+        XCTAssertNotNil(SpecialEdition.active(now: date(17, hour: 23), calendar: c, arguments: []), "the medal stays a week after race day")
+        XCTAssertNil(SpecialEdition.active(now: date(18, hour: 0), calendar: c, arguments: []))
+        XCTAssertNil(SpecialEdition.active(now: date(2, hour: 12), calendar: c, arguments: ["-noSpecialEdition"]))
+        XCTAssertNotNil(SpecialEdition.active(now: date(25, hour: 12), calendar: c, arguments: ["-specialEdition"]))
+    }
+
+    func testTheNewestEditionInItsWindowWins() {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        let next = SpecialEdition(id: "next-race", raceName: "Next Race", raceDay: DateComponents(year: 2027, month: 4, day: 18),
+                                  lastDay: DateComponents(year: 2027, month: 4, day: 24), medalTop: "NEXT", medalBottom: "APR 18, 2027",
+                                  caption: "GO", hours: 2...8, defaultGoal: (3, 45), art: { AnyView(EmptyView()) })
+        let editions = [next, SpecialEdition.chicago2026]
+        let now = c.date(from: DateComponents(year: 2027, month: 4, day: 1))!
+        XCTAssertEqual(SpecialEdition.active(now: now, calendar: c, arguments: [], editions: editions)?.id, "next-race")
+        XCTAssertEqual(next.raceDate, "2027-04-18")
+        XCTAssertEqual(next.defaultGoalSeconds, 3 * 3600 + 45 * 60)
+        XCTAssertEqual(SpecialEdition.timeText(seconds: 16_200), "4:30:00")
+    }
+
+    func testRaceGoalIsKeptUntilTheServerHasIt() {
+        let defaults = UserDefaults(suiteName: "goal-\(UUID().uuidString)")!
+        let store = RaceGoalStore(defaults: defaults)
+        XCTAssertNil(store.goal(for: "r"))
+        store.save(16_200, for: "r")
+        XCTAssertEqual(store.goal(for: "r"), 16_200)
+        XCTAssertTrue(store.isPending("r"))
+        store.markSent("r")
+        XCTAssertFalse(store.isPending("r"))
+        store.clear(editions: [SpecialEdition(id: "r", raceName: "R", raceDay: DateComponents(year: 2026, month: 1, day: 1),
+                                              lastDay: DateComponents(year: 2026, month: 1, day: 2), medalTop: "", medalBottom: "", caption: "",
+                                              hours: 2...8, defaultGoal: (4, 30), art: { AnyView(EmptyView()) })])
+        XCTAssertNil(store.goal(for: "r"))
     }
 }
 

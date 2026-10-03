@@ -91,10 +91,11 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            switch model.phase {
-            case .welcome: WelcomeView()
-            case .account: AccountView()
-            case .home: ConnectView()
+            // One onboarding view for both pages, so the questions keep scrolling when the page changes.
+            if model.phase == .home {
+                ConnectView()
+            } else {
+                OnboardingView()
             }
         }
         .background(Theme.background.ignoresSafeArea())

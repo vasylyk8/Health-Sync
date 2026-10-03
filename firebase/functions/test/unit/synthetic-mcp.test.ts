@@ -88,6 +88,18 @@ describe('opt-in data', () => {
     expect(r.profile.age_years).toBeGreaterThan(30);
   });
 
+  it('race goal is served without any opt-in category and a clear removes it', async () => {
+    const user = s.env.meta.users.get(s.env.uid)!;
+    user.raceGoals = { 'chicago-marathon-2026': { raceName: 'Chicago Marathon', raceDate: '2026-10-11', goalSeconds: 12_600, updatedAt: 1 } };
+    try {
+      const r = await ask('get_race_goal');
+      expect(r.races).toHaveLength(1);
+      expect(r.races[0]).toMatchObject({ raceId: 'chicago-marathon-2026', goalTime: '3:30:00', goalPacePerKm: '4:59' });
+      user.raceGoals = {};
+      expect((await ask('get_race_goal')).races).toEqual([]);
+    } finally { delete user.raceGoals; }
+  });
+
   it('glucose and detailed health events are not offered in public v1 (the data is stored, the tools are off)', async () => {
     const names = (await s.client.listTools()).tools.map((t) => t.name);
     expect(names).not.toContain('get_glucose');

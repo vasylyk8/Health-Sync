@@ -121,7 +121,7 @@ After 30+ days without a sync (deletion records expire in HealthKit): a full `re
 ### Manifest and index (Firestore, server-owned)
 - `users/{uid}/types/{type}`: manifest of Parquet files and coverage (`intervals`, `statsIntervals`, `caughtUp`, `earliest`, `latest`, `checkedAt`, `visibleAt`) for `HKWorkoutTypeIdentifier` and `_daily`.
 - `users/{uid}/workouts/{workoutId}`: raw-data index `{ streams: {name: {gen, files, points, unit, cols}}, expected, expectedGen, rawComplete, updatedAt }`.
-- `users/{uid}`: `{ generation, deleting, lastVisibleAt, connections, links, tz, analytics }`. `analytics` contains one-time product milestones and app version only—never Health values or free text.
+- `users/{uid}`: `{ generation, deleting, lastVisibleAt, connections, links, tz, analytics, raceGoals }`. `raceGoals` is an optional map `raceId -> { raceName, raceDate, goalSeconds, updatedAt }` (max 10) written by the `setRaceGoal` callable (`{ raceId, raceName, raceDate, goalSeconds | null }`; null clears) and served read-only by the MCP tool `get_race_goal`; it is deleted with the user doc. `analytics` contains one-time product milestones and app version only—never Health values or free text.
 - Product analytics: `productEvents/{id}` contains an allowlisted app/sync event and expires after 90 days; `accessLog/{id}` contains provider, tool name, outcome and coarse duration and expires after 90 days; `analyticsRollups/{UTC-date}` contains only aggregate counts and duration sums, with no account identifier. The private operator MCP reads rollups only.
 Publishing a batch is one Firestore transaction that checks the user's `generation` (so a deletion that started meanwhile wins).
 

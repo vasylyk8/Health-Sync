@@ -6,6 +6,8 @@ struct ConnectView: View {
     @State private var selected: AIProvider?
     @State private var confirmDelete = false
     @State private var showChoices = false
+    /// The race medal's finish-time picker is open (the number and sync status step aside).
+    @State private var editingGoal = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -68,14 +70,32 @@ struct ConnectView: View {
         .frame(height: 44)
     }
 
-    /// Three groups with air between them: the big number floats in the middle; what is happening (sync state) and
-    /// what to do about it (the connect buttons) sit together at the bottom.
+    /// The race medal (if a special edition is showing and the upload is done) replaces the big number as the
+    /// main art; the number then shrinks and moves down above the buttons.
+    private var activeEdition: SpecialEdition? { model.uploadFinished ? model.edition : nil }
+
+    /// Three groups with air between them: the main art (the big number, or the medal) floats in the middle;
+    /// what is happening (sync state) and what to do about it (the connect buttons) sit together at the bottom.
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Spacer(minLength: 24)
-            HeroMetricView(metrics: heroMetrics)
-            Spacer(minLength: 40)
-            progress
+            if let edition = activeEdition {
+                Spacer(minLength: 8)
+                EditionMedalView(edition: edition, editing: $editingGoal)
+                    .transition(.opacity)
+                Spacer(minLength: editingGoal ? 0 : 24)
+            } else {
+                Spacer(minLength: 24)
+            }
+            // Kept in place (just hidden) while the picker is open, so it does not count up from 0 again afterwards.
+            Group {
+                HeroMetricView(metrics: heroMetrics, compact: activeEdition != nil)
+                Spacer(minLength: activeEdition == nil ? 40 : 24)
+                progress
+            }
+            .opacity(editingGoal ? 0 : 1)
+            .frame(maxHeight: editingGoal ? 0 : nil)
+            .clipped()
+            .accessibilityHidden(editingGoal)
             if showRecentReady {
                 Text(Copy.Home.recentReady)
                     .smallText()
@@ -92,6 +112,7 @@ struct ConnectView: View {
             .padding(.bottom, 24)
         }
         .padding(.horizontal, Theme.margin)
+        .animation(.easeInOut(duration: 0.6), value: activeEdition != nil)
     }
 
     /// While the first sync runs and recent workouts are already readable: the nudge above the connect buttons.
