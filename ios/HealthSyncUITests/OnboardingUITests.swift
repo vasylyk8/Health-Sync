@@ -74,7 +74,7 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertFalse(app.buttons["appleSignIn"].exists, "Welcome no longer offers Sign in with Apple")
         app.buttons["connectHealth"].tap()
         XCTAssertTrue(app.buttons["appleSignIn"].waitForExistence(timeout: 10))
-        XCTAssertFalse(app.buttons["connectHealth"].exists)
+        XCTAssertTrue(app.buttons["connectHealth"].waitForNonExistence(timeout: 5), "the connect button has faded out")
         XCTAssertFalse(app.buttons["provider.claude"].exists, "no way past the account page without signing in")
         snapshot("01b-Account")
         app.signInThroughAccountPage()

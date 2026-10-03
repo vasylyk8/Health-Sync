@@ -69,6 +69,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var goalSeconds: Int?
     /// True from the moment the first upload has finished.
     @Published private(set) var uploadFinished: Bool
+    /// The send started by the last `saveGoal` (tests wait for it).
+    private(set) var goalSend: Task<Void, Never>?
     private var goals: RaceGoalStore { RaceGoalStore(defaults: defaults) }
 
     init(backend: Backend, source: HealthSource, outbox: Outbox, scope: SyncScope, telemetry: Telemetry, defaults: UserDefaults = .standard) {
@@ -262,7 +264,7 @@ final class AppModel: ObservableObject {
         guard let edition, SpecialEdition.secondsRange.contains(seconds) else { return }
         goals.save(seconds, for: edition.id)
         goalSeconds = seconds
-        Task { await sendGoalIfPending() }
+        goalSend = Task { await sendGoalIfPending() }
     }
 
     /// Sends the goal if the server does not have it yet; a failure leaves it to the next app start.

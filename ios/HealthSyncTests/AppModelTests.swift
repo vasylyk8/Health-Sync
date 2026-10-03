@@ -68,7 +68,7 @@ final class AppModelTests: XCTestCase {
         backend.goalError = URLError(.notConnectedToInternet)
         model.saveGoal(seconds: 16_200)
         XCTAssertEqual(model.goalSeconds, 16_200)
-        await model.sendGoalIfPending()
+        await model.goalSend?.value
         XCTAssertTrue(backend.goalCalls.isEmpty, "offline: nothing sent, still pending")
         backend.goalError = nil
         await model.sendGoalIfPending()
