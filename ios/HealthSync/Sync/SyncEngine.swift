@@ -223,10 +223,7 @@ actor SyncEngine {
             // Years of daily history and the summaries of every workout take a minute or more on a large
             // history and do not depend on the raw data (or on each other), so they run alongside it: the raw
             // data starts as soon as the list of workouts is known.
-            // Daily and hourly values run first, with nothing else reading Apple Health: asked for while thousands of workout
-            // reads were in flight, the statistics queries came back empty for most older years on a real iPhone.
-            try await step { try await SyncTiming.shared.measure("phase.daily") { try await self.dailyContext() } }
-            try await step { try await SyncTiming.shared.measure("phase.hourly") { try await self.hourlyHistory() } }
+            background.append(Task { try await self.step { try await SyncTiming.shared.measure("phase.daily") { try await self.dailyContext() } } })
             let history = Task {
                 try await self.step {
                     guard let wt = self.scope.workout else { return }
@@ -240,6 +237,7 @@ actor SyncEngine {
                 }
             }
             background.append(history)
+            background.append(Task { try await self.step { try await SyncTiming.shared.measure("phase.hourly") { try await self.hourlyHistory() } } })
             background.append(Task {
                 try await self.step {
                     try await SyncTiming.shared.measure("phase.events") {
