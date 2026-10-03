@@ -41,8 +41,8 @@ struct QuestionFeed: View {
                 ],
                 startPoint: .top, endPoint: .bottom)
         )
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Examples of questions you can ask: " + questions.joined(separator: " "))
+        // Decorative and moving, and partly faded out: hidden from VoiceOver and the contrast audit.
+        .accessibilityHidden(true)
     }
 
     private var bubbles: some View {
