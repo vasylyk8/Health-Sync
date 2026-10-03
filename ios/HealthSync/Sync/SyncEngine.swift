@@ -353,7 +353,8 @@ actor SyncEngine {
     /// 2: a failed HealthKit query used to drop its metric silently and the pass was recorded as complete.
     /// 3: the daily statistics queries now share the read gate (they failed under load and left their metrics out).
     /// 4: results of the daily metric queries were not all collected (most metrics never reported back).
-    static let dailyVersion = 4
+    /// 5: the results were collected through captured variables and mostly lost on the phone's optimized build.
+    static let dailyVersion = 5
 
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }
@@ -418,8 +419,8 @@ actor SyncEngine {
                 let key = full ? "full|\(batch.typeId)|\(Int64(chunkStart.timeIntervalSince1970))" : "inc|\(batch.typeId)"
                 if outbox.state.dailyHashes[key] == hash && !batch.records.isEmpty { continue }
                 var header = BatchHeader(type: batch.typeId, mode: .stats, seq: try outbox.nextSeq(batch.typeId), window: (chunkStart, chunkEnd), checkedAt: end)
-                if batch.category == "core" {
-                    header.note = (pendingNotes + [source.dailyDiagnosticNote()].compactMap { $0 }).joined(separator: " || ")
+                if batch.category == "core" || batch.note != nil {
+                    header.note = (pendingNotes + [batch.note].compactMap { $0 }).joined(separator: " || ")
                     pendingNotes = []
                 }
                 try await sendLines(batch.typeId, header: header, lines: lines, anchor: nil, completes: .dailyHash(key: key, hash: hash), readMs: readMs)
@@ -438,7 +439,8 @@ actor SyncEngine {
     /// about once an hour.
     /// Bump when hourly rows sent by an older app may be incomplete: the next run re-reads the whole history once.
     /// 2: a failed HealthKit query used to drop its series silently and the chunk was recorded as complete.
-    static let hourlyVersion = 2
+    /// 3: the same collection fix for the hourly queries' older chunks.
+    static let hourlyVersion = 3
 
     private func hourlyHistory() async throws {
         guard !scope.hourly.isEmpty else { return }

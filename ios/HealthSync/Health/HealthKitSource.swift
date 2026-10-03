@@ -465,7 +465,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     func dailyContext(from: Date, to: Date) async throws -> [Record] {
-        try await dailyRecords(scope.dailyMetrics.filter { $0.category == "core" }, from: from, to: to)
+        try await dailyRecords(scope.dailyMetrics.filter { $0.category == "core" }, from: from, to: to).records
     }
 
     func dailyContextBatches(from: Date, to: Date, categories: Set<String>) async throws -> [DailyBatch] {
@@ -473,7 +473,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         for category in categories.union(["core"]).sorted() {
             let metrics = scope.dailyMetrics.filter { $0.category == category }
             guard !metrics.isEmpty else { continue }
-            out.append(DailyBatch(typeId: HealthTypes.dailyBatchType(category), category: category, records: try await dailyRecords(metrics, from: from, to: to)))
+            let read = try await dailyRecords(metrics, from: from, to: to)
+            out.append(DailyBatch(typeId: HealthTypes.dailyBatchType(category), category: category, records: read.records, note: "\(category): \(read.note)"))
         }
         return out
     }
@@ -491,17 +492,19 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
     }
 
-    private func dailyRecords(_ metrics: [DailyMetric], from: Date, to: Date) async throws -> [Record] {
+    private func dailyRecords(_ metrics: [DailyMetric], from: Date, to: Date) async throws -> (records: [Record], note: String) {
         let cal = Calendar.current
         let started = Date()
         let start = cal.startOfDay(for: from)
         // The metrics are independent queries (dozens per year of history), so several run at the same time;
         // results are merged in the metrics' order so the output does not depend on which finished first.
-        var perMetric = [[DailyCell]?](repeating: nil, count: metrics.count)
-        var errors: [Int: Error] = [:]
-        var received = 0
         let limit = max(1, Self.dailyConcurrency)
-        await withTaskGroup(of: (Int, Result<[DailyCell], Error>).self) { group in
+        // The results are gathered inside the group body and handed back as its return value (not through variables captured
+        // by the group's closures, which on the optimized build the phone runs lost most of the results).
+        let collected = await withTaskGroup(of: (Int, Result<[DailyCell], Error>).self, returning: (cells: [[DailyCell]?], errors: [Int: Error], received: Int).self) { group in
+            var cells = [[DailyCell]?](repeating: nil, count: metrics.count)
+            var errors: [Int: Error] = [:]
+            var received = 0
             var next = 0
             func startNext() {
                 guard next < metrics.count else { return }
@@ -517,15 +520,19 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
                 }
             }
             for _ in 0 ..< min(limit, metrics.count) { startNext() }
-            for await (i, result) in group {
+            while let (i, result) = await group.next() {
                 received += 1
                 switch result {
-                case .success(let cells): perMetric[i] = cells
+                case .success(let c): cells[i] = c
                 case .failure(let error): errors[i] = error
                 }
                 startNext()
             }
+            return (cells, errors, received)
         }
+        var perMetric = collected.cells
+        var errors = collected.errors
+        let received = collected.received
         // A metric with neither a result nor an error (it never reported back) is treated like a failed one: tried again below.
         let lost = metrics.indices.filter { perMetric[$0] == nil && errors[$0] == nil }
         // A query that failed for a passing reason (Apple Health busy or briefly locked) works a moment later: try those
@@ -565,7 +572,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         for cells in perMetric {
             for c in cells ?? [] { days[c.day, default: [:]][c.key] = c.value }
         }
-        return days.keys.sorted().map { day in ["k": "day", "day": .string(day), "m": .object(days[day] ?? [:])] }
+        return (days.keys.sorted().map { day in ["k": "day", "day": .string(day), "m": .object(days[day] ?? [:])] }, note)
     }
 
     /// Metric queries running at once during the daily-context pass.
