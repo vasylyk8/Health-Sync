@@ -78,12 +78,12 @@ struct OnboardingView: View {
     /// One slot, two buttons (both black pills): "Connect to Apple Health" fades into Apple's own button.
     private var button: some View {
         ZStack(alignment: .top) {
-            connectButton
-                .opacity(onAccount ? 0 : 1)
-                .allowsHitTesting(!onAccount)
-                .accessibilityHidden(onAccount)
-            // Only in the tree on page 2: Apple's button is a UIKit view that stays visible to accessibility and
-            // to UI tests even when it is faded out.
+            // Each button is in the tree only on its own page (fading in and out), so the other never lingers
+            // for accessibility or UI tests.
+            if !onAccount {
+                connectButton
+                    .transition(.opacity)
+            }
             if onAccount {
                 AppleSignInButton()
                     .transition(.opacity)
