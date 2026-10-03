@@ -67,6 +67,9 @@ struct BatchHeader: Sendable {
     /// Timings sent to the server so slow syncs can be diagnosed (never health data).
     var readMs: Int?
     var uploadMs: Int?
+    /// A short diagnostic line (metric counts, error codes, never health values) the server writes to its log, so a sync
+    /// that loses data on a real iPhone can be understood without asking the owner to run tests.
+    var note: String?
 
     func record(batchId: String, now: Date, tz: String, device: String, appVersion: String) -> Record {
         var r: Record = [
@@ -83,8 +86,17 @@ struct BatchHeader: Sendable {
         var perf: [String: RecordValue] = [:]
         if let readMs { perf["readMs"] = .int(Int64(min(max(readMs, 0), 3_600_000))) }
         if let uploadMs { perf["uploadMs"] = .int(Int64(min(max(uploadMs, 0), 3_600_000))) }
+        if let note, !note.isEmpty { perf["note"] = .string(BatchHeader.cleanNote(note)) }
         if !perf.isEmpty { r["perf"] = .object(perf) }
         return r
+    }
+}
+
+extension BatchHeader {
+    /// Only the characters the server accepts in a note, at most 700 of them.
+    static func cleanNote(_ text: String) -> String {
+        let allowed = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ,.:;()_/|=<>+*-")
+        return String(text.map { allowed.contains($0) ? $0 : "_" }.prefix(700))
     }
 }
 

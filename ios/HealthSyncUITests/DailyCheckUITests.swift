@@ -37,6 +37,8 @@ final class DailyCheckUITests: XCTestCase {
         shot.lifetime = .keepAlways
         add(shot)
         XCTAssertTrue(output.label.contains("BENCH DONE"), "the check did not finish")
+        XCTAssertTrue(output.label.contains("DAILYCHECK history done"), "the multi-year sync did not finish: " + output.label.components(separatedBy: "\n").filter { $0.contains("history") }.joined(separator: " | "))
+        XCTAssertFalse(output.label.contains("DAILYCHECK FAIL history"), "multi-year sync: " + output.label.components(separatedBy: "\n").filter { $0.contains("FAIL history") }.joined(separator: " | "))
         XCTAssertTrue(output.label.contains("DAILYCHECK OK"), "daily metrics missing: " + output.label.components(separatedBy: "\n").filter { $0.contains("DAILYCHECK") }.joined(separator: " | "))
     }
 }

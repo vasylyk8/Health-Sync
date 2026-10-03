@@ -381,11 +381,27 @@ actor SyncEngine {
         let categories = enabledCategories
         // One year per batch set keeps memory and batch sizes bounded.
         var chunkStart = start
+        // A year that cannot be read (Apple Health busy or locked) must not hold back the years after it, and the history is
+        // then not recorded as complete, so the next run reads that year again (years already on the server are not re-sent).
+        var firstReadFailure: Error?
+        var pendingNotes: [String] = []
         while chunkStart < end {
             try checkTime()
             let chunkEnd = min(cal.date(byAdding: .year, value: 1, to: chunkStart) ?? end, end)
             let started = Date()
-            let batches = try await SyncTiming.shared.measure("hk.dailyChunk") { try await source.dailyContextBatches(from: chunkStart, to: chunkEnd, categories: categories) }
+            let batches: [DailyBatch]
+            do {
+                batches = try await SyncTiming.shared.measure("hk.dailyChunk") { try await source.dailyContextBatches(from: chunkStart, to: chunkEnd, categories: categories) }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch is OutOfTime {
+                throw OutOfTime()
+            } catch {
+                firstReadFailure = firstReadFailure ?? error
+                pendingNotes.append("FAILED " + (source.dailyDiagnosticNote() ?? "daily read failed") + " err=\((error as NSError).domain)/\((error as NSError).code)")
+                chunkStart = chunkEnd
+                continue
+            }
             let readMs = Self.ms(since: started)
             for batch in batches {
                 // Categories other than core send nothing when they have no rows; core always reports (it advances the covered window).
@@ -401,11 +417,16 @@ actor SyncEngine {
                 let hash = digest.finalize().map { String(format: "%02x", $0) }.joined()
                 let key = full ? "full|\(batch.typeId)|\(Int64(chunkStart.timeIntervalSince1970))" : "inc|\(batch.typeId)"
                 if outbox.state.dailyHashes[key] == hash && !batch.records.isEmpty { continue }
-                let header = BatchHeader(type: batch.typeId, mode: .stats, seq: try outbox.nextSeq(batch.typeId), window: (chunkStart, chunkEnd), checkedAt: end)
+                var header = BatchHeader(type: batch.typeId, mode: .stats, seq: try outbox.nextSeq(batch.typeId), window: (chunkStart, chunkEnd), checkedAt: end)
+                if batch.category == "core" {
+                    header.note = (pendingNotes + [source.dailyDiagnosticNote()].compactMap { $0 }).joined(separator: " || ")
+                    pendingNotes = []
+                }
                 try await sendLines(batch.typeId, header: header, lines: lines, anchor: nil, completes: .dailyHash(key: key, hash: hash), readMs: readMs)
             }
             chunkStart = chunkEnd
         }
+        if let firstReadFailure { throw firstReadFailure }
         if full {
             try outbox.update { $0.dailyFullAt = end }
             stats.markDailyBackfilled()

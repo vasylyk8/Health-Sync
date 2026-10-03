@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ingestObject } from '../../src/ingest/ingest.js';
@@ -34,7 +35,8 @@ describe.skipIf(!dir)('what the phone sends is what an AI gets back', () => {
   it('every seeded metric comes back with the value that was written, day by day', async () => {
     const r = await s.call('get_daily_context', { start_date: new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10), end_date: new Date(Date.now() + 86_400_000).toISOString().slice(0, 10) });
     expect(r.isError, r.text.slice(0, 300)).toBe(false);
-    const days = (r.json.days as Record<string, number | string>[]).filter((d) => typeof d.steps === 'number');
+    // (The multi-year scenario below adds older days; this one is about the ten most recent.)
+    const days = (r.json.days as Record<string, number | string>[]).filter((d) => typeof d.steps === 'number' && (d.steps as number) < 4000);
     expect(days.length).toBe(10);
     for (const row of days) {
       // The check seeds day d (1 = yesterday) with steps 3 x (800 + d) and the other types with a value that depends on d too.
@@ -67,5 +69,41 @@ describe.skipIf(!dir)('what the phone sends is what an AI gets back', () => {
     expect(week.isError).toBe(false);
     expect(week.json.periods.length).toBeGreaterThan(0);
     expect(published).toBeGreaterThan(0);
+  });
+
+  it('the full sync over about two years: every day of every year has its metrics with the written values', async () => {
+    const win = (fromDaysAgo: number, toDaysAgo: number) => ({
+      start_date: new Date(Date.now() - fromDaysAgo * 86_400_000).toISOString().slice(0, 10),
+      end_date: new Date(Date.now() - toDaysAgo * 86_400_000).toISOString().slice(0, 10),
+      metrics: ['steps', 'restingHr', 'hrv', 'activeKcal', 'sleepAsleepMin'],
+    });
+    const rows: Record<string, number | string>[] = [];
+    for (const [a, b] of [[804, 405], [404, 11]] as const) {
+      const r = await s.call('get_daily_context', win(a, b));
+      expect(r.isError, r.text.slice(0, 300)).toBe(false);
+      rows.push(...(r.json.days as Record<string, number | string>[]));
+    }
+    const history = rows.filter((d) => typeof d.steps === 'number' && (d.steps as number) >= 5011);
+    const missing: string[] = [];
+    for (const row of history) {
+      const d = (row.steps as number) - 5000;
+      const want = { restingHr: 50 + (d % 10), hrv: 40 + (d % 20), activeKcal: 300 + (d % 50), sleepAsleepMin: 420 };
+      for (const [k, v] of Object.entries(want)) if (Number(row[k]) !== v) missing.push(`${row.date} ${k}=${row[k]} want ${v}`);
+    }
+    // Every one of the 790 seeded days (11 to 800 days ago) should be there; a day or two at the edges may fall outside
+    // the windows when the check runs across midnight.
+    expect(history.length, `days with steps per year: ${JSON.stringify(Object.fromEntries([...new Set(history.map((r) => String(r.date).slice(0, 4)))].map((y) => [y, history.filter((r) => String(r.date).startsWith(y)).length])))}`).toBeGreaterThanOrEqual(785);
+    expect(missing.slice(0, 10), `${missing.length} wrong or missing values`).toEqual([]);
+  });
+
+  it('the diagnostic note travels with the daily batches and the server accepted it', () => {
+    const notes: string[] = [];
+    for (const f of readdirSync(dir!).filter((x) => x.endsWith('.ndjson.gz'))) {
+      const first = JSON.parse(gunzipSync(readFileSync(join(dir!, f))).toString().split('\n')[0]!) as { type: string; perf?: { note?: string } };
+      if (first.perf?.note) notes.push(first.perf.note);
+    }
+    for (const n of notes) console.log(`NOTE ${n}`);
+    expect(notes.length, 'the engine sent no diagnostic note').toBeGreaterThan(0);
+    expect(notes.every((n) => /daily from=\d{4}-\d{2}-\d{2} to=\d{4}-\d{2}-\d{2} data=\d+\/\d+ got=\d+ lost=\d+/.test(n))).toBe(true);
   });
 });
