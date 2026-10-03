@@ -622,7 +622,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             let range = HKQuery.predicateForSamples(withStart: start, end: to, options: [])
             let first = (try? await fetch(type, predicate: range, sort: sort, limit: 1))?.first?.startDate
             let plain = (try? await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal, allowFallback: false))?.count
-            let explicit = if let sources = await allSourcesPredicate(type) {
+            let explicit: Int? = if let sources = await allSourcesPredicate(type) {
                 (try? await dailyStatisticsOnce(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal,
                                                 predicate: Self.and(range, sources), options: Self.statisticsOptions(agg)))?.count
             } else { nil }
@@ -916,7 +916,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     private func recordFallback(_ type: HKQuantityType, mode: String, hourly: Bool) {
         let short = type.identifier.replacingOccurrences(of: HealthTypes.quantityPrefix, with: "") + ":" + mode
-        sourceLock.withLock {
+        sourceLock.withLock { () -> Void in
             if hourly { hourlyFallbacks.insert(short) } else { dailyFallbacks.insert(short) }
         }
     }
