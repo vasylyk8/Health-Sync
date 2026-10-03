@@ -354,7 +354,8 @@ actor SyncEngine {
     /// 3: the daily statistics queries now share the read gate (they failed under load and left their metrics out).
     /// 4: results of the daily metric queries were not all collected (most metrics never reported back).
     /// 5: the results were collected through captured variables and mostly lost on the phone's optimized build.
-    static let dailyVersion = 5
+    /// 6: the same read again with the per-year probe that shows which way of asking Apple Health returns the older data.
+    static let dailyVersion = 6
 
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }
