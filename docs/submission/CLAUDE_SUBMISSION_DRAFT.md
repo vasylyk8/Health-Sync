@@ -10,7 +10,7 @@ Use [directory management](https://claude.ai/directory/manage) after prerequisit
 - **Terms:** https://krok-1d60a.firebaseapp.com/terms (verify after deployment).
 - **Demo:** https://drive.google.com/file/d/1bHNkx5rvJSU8aMhlTKbo36jjviG2N6l6/view?usp=sharing
 - **Privacy:** https://krok-1d60a.firebaseapp.com/privacy
-- **Support contact:** vasylyk@outlook.com (existing public support address).
+- **Support contact:** support@2ndopinions.ai (publisher-designated support address).
 - **Icon:** PR30's actual `submission/krok-health/assets/icon.png`.
 - **Categories:** choose applicable supported consumer-health/fitness categories in the portal; verify current options.
 - **Slug:** proposed `krok`, subject to availability and owner approval; permanent after publication.

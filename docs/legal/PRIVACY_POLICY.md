@@ -1,6 +1,6 @@
 # KROK Privacy Policy (DRAFT – needs legal review before launch)
 
-_Last updated: 2 October 2026. Controller: 2ndOp Inc, 1 Yule Ave, Toronto, ON M6S 1E7, Canada · vasylyk@outlook.com._
+_Last updated: 3 October 2026. Controller: 2ndOp Inc · support@2ndopinions.ai._
 
 ## What KROK does
 KROK copies your **workouts** from Apple Health, with their detailed measurements and GPS routes, plus **daily and hourly summaries** (sleep, heart rate, steps and similar), to our servers, so that the AI assistants **you** connect (Anthropic's Claude and/or OpenAI's ChatGPT) can answer questions about your training and recovery. If you choose, KROK can also share further groups of Apple Health data (see "Additional data groups").
@@ -39,7 +39,7 @@ We do **not** read clinical records or documents, reproductive and sexual-health
 Until you delete it (••• menu → Delete All My Data, completed within 24 hours), or automatically **one year after your last sync**. Data of an additional group is deleted as soon as you switch that group off. Access logs (which tool was used and when, no health values) are kept for 90 days.
 
 ## Your rights
-You can access, correct, export or delete your data, withdraw consent, and complain to your data protection authority. The easiest way to delete your server data is in the app. For anything else, email vasylyk@outlook.com.
+You can access, correct, export or delete your data, withdraw consent, and complain to your data protection authority. The easiest way to delete your server data is in the app. For anything else, email support@2ndopinions.ai.
 
 ## Security
 Encryption in transit and at rest, per-assistant private links that can be revoked, strict access controls, and no health data or locations in logs. Anyone who has your private link can read your data through it, so treat it like a password and disconnect the assistant if it is exposed.
