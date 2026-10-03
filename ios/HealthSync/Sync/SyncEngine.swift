@@ -56,6 +56,9 @@ struct SyncProgress: Equatable, Sendable {
 /// useful fast: recent workouts → daily context → all workout summaries → raw detail of every
 /// workout (newest first).
 actor SyncEngine {
+    /// 1: effort scores and one-minute heart-rate recovery are also read through their workout time window.
+    static let detailVersion = 1
+
     struct Config: Sendable {
         /// Workouts per anchored page. Pages are also split into ≤ 5 MB uploads.
         var workoutPageLimit = 200
@@ -356,7 +359,8 @@ actor SyncEngine {
     /// 5: the results were collected through captured variables and mostly lost on the phone's optimized build.
     /// 6: the same read again with the per-year probe that shows which way of asking Apple Health returns the older data.
     /// 7: read alone instead of next to the workout reads (older years came back empty under that load), with a retry of empty key metrics.
-    static let dailyVersion = 7
+    /// 8: fall back to source-explicit statistics (and raw discrete samples) when HealthKit returns an empty collection for existing samples.
+    static let dailyVersion = 8
 
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }
@@ -446,7 +450,8 @@ actor SyncEngine {
     /// 2: a failed HealthKit query used to drop its series silently and the chunk was recorded as complete.
     /// 3: the same collection fix for the hourly queries' older chunks.
     /// 4: read alone instead of next to the workout reads.
-    static let hourlyVersion = 4
+    /// 5: use the same source-explicit fallback as daily history when older hourly collections are empty.
+    static let hourlyVersion = 5
 
     private func hourlyHistory() async throws {
         guard !scope.hourly.isEmpty else { return }
@@ -482,7 +487,8 @@ actor SyncEngine {
                 }
             } else {
                 let id = HealthTypes.hourlyId
-                let header = BatchHeader(type: id, mode: .stats, seq: try outbox.nextSeq(id), window: (chunkStart, chunkEnd), checkedAt: end)
+                var header = BatchHeader(type: id, mode: .stats, seq: try outbox.nextSeq(id), window: (chunkStart, chunkEnd), checkedAt: end)
+                header.note = source.hourlyDiagnosticNote()
                 try await send(id, header: header, records: records, anchor: nil, completes: .hourly(through: chunkEnd, at: last ? end : nil), readMs: readMs)
             }
             chunkStart = chunkEnd
@@ -587,6 +593,12 @@ actor SyncEngine {
     /// Workouts are read several at a time and sent in groups (one upload per group). While one group
     /// is being written and uploaded, the next is already being read from HealthKit.
     private func uploadDetails(_ index: [WorkoutRef]) async throws {
+        if outbox.state.detailVersion < Self.detailVersion {
+            try outbox.update {
+                $0.detailsDone = []
+                $0.detailVersion = Self.detailVersion
+            }
+        }
         let todo = index.filter { !outbox.state.detailsDone.contains($0.id) }
         guard !todo.isEmpty else { return }
         SyncTiming.shared.markDetailsStart()

@@ -59,6 +59,8 @@ protocol HealthSource: Sendable {
     func earliestDailyDate() async throws -> Date?
     /// What the last daily-context read found, as one short diagnostic line (nil for sources with nothing to report).
     func dailyDiagnosticNote() -> String?
+    /// Which source-aware fallbacks the last hourly read needed (type names only; never health values).
+    func hourlyDiagnosticNote() -> String?
     /// How many HealthKit queries may run at the same time (raw workout data), adjusted while syncing.
     var queryConcurrency: Int { get }
     func setQueryConcurrency(_ n: Int)
@@ -88,4 +90,5 @@ extension HealthSource {
 
 extension HealthSource {
     func dailyDiagnosticNote() -> String? { nil }
+    func hourlyDiagnosticNote() -> String? { nil }
 }

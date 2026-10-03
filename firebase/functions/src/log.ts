@@ -15,7 +15,10 @@ function emit(severity: string, message: string, fields: Fields = {}) {
   const safe: Fields = {};
   for (const [k, v] of Object.entries(fields)) {
     if (!SAFE_KEYS.has(k)) continue;
-    safe[k] = typeof v === 'string' ? v.slice(0, 200) : v;
+    // Batch diagnostic notes are already character-filtered and capped at 700 bytes by
+    // both the app and the ingest schema. Keep the full note so a source-fallback matrix
+    // is not cut off; other log strings remain deliberately short.
+    safe[k] = typeof v === 'string' ? v.slice(0, k === 'note' ? 700 : 200) : v;
   }
   // Cloud Logging parses one JSON object per line.
   process.stdout.write(JSON.stringify({ severity, message, ...safe }) + '\n');
