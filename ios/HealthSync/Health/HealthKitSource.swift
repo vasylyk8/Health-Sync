@@ -636,7 +636,6 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         return !((try? await fetch(type, predicate: predicate, sort: nil, limit: 1)) ?? []).isEmpty
     }
 
-    /// Metric queries running at once during the daily-context pass.
     private func dailyCells(_ metric: DailyMetric, start: Date, to: Date, calendar cal: Calendar) async throws -> [DailyCell] {
         var out: [DailyCell] = []
         switch metric.kind {
