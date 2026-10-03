@@ -2,7 +2,6 @@ import SwiftUI
 
 struct WelcomeView: View {
     @EnvironmentObject var model: AppModel
-    private let showChicago = ChicagoMarathon.isActive()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,11 +24,8 @@ struct WelcomeView: View {
             Wordmark()
                 .frame(height: 44)
             Spacer(minLength: 16)
-            if showChicago {
-                chicago
-                    .riseIn()
-                Spacer(minLength: 16)
-            }
+            QuestionFeed(questions: Copy.Welcome.questions)
+                .padding(.bottom, 40)
             Text(Copy.Welcome.tagline)
                 .tracking(-1.8)
                 .displayText()
@@ -37,33 +33,9 @@ struct WelcomeView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
                 .riseIn(delay: 0.05)
-                .padding(.bottom, 16)
-            // In the scrolling part: pinned next to the buttons it would push them off screen at large text sizes.
-            Text(Copy.Welcome.dataNote)
-                .smallText()
-                .foregroundStyle(Theme.muted)
-                .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 24)
         }
         .padding(.horizontal, Theme.margin)
-    }
-
-    private var chicago: some View {
-        VStack(spacing: 12) {
-            ChicagoMarathonArt()
-                .frame(maxWidth: 280)
-            VStack(spacing: 2) {
-                Text(Copy.Welcome.chicagoCaption)
-                    .tracking(4.5)
-                    .smallText(.semibold)
-                Text(Copy.Welcome.chicagoDate)
-                    .tracking(1.5)
-                    .smallText()
-            }
-            .foregroundStyle(Theme.muted)
-            .accessibilityElement(children: .combine)
-        }
-        .frame(maxWidth: .infinity)
     }
 
     private var connectButton: some View {

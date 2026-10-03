@@ -75,7 +75,14 @@ struct ConnectView: View {
             progress
                 .padding(.top, 40)
             Spacer(minLength: 24)
-            VStack(spacing: 12) {
+            if showRecentReady {
+                Text(Copy.Home.recentReady)
+                    .smallText()
+                    .foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 16)
+            }
+            HStack(spacing: 12) {
                 ForEach(model.providers) { provider in
                     ProviderPill(provider: provider, setUp: model.isSetUp(provider)) { selected = provider }
                 }
@@ -83,6 +90,12 @@ struct ConnectView: View {
             .padding(.bottom, 24)
         }
         .padding(.horizontal, Theme.margin)
+    }
+
+    /// While the first sync runs and recent workouts are already readable: the nudge above the connect buttons.
+    private var showRecentReady: Bool {
+        let p = model.progress
+        return p.stepsTotal > 0 && !p.historyComplete && p.recentReady
     }
 
     private var heroMetrics: [HeroMetric] {
@@ -103,12 +116,6 @@ struct ConnectView: View {
                     .smallText()
                     .foregroundStyle(Theme.muted)
                     .padding(.top, 2)
-                if p.recentReady {
-                    Text(Copy.Home.recentReady)
-                        .smallText()
-                        .foregroundStyle(Theme.muted)
-                        .padding(.top, 12)
-                }
             } else if p.historyComplete && model.status.typesWithData == 0 && model.status.registered {
                 Text(Copy.Home.noData).bodyText(.semibold)
                 Text(Copy.Home.noDataDetail)
@@ -161,7 +168,7 @@ struct ConnectView: View {
     }
 }
 
-/// One assistant as a full-width pill: "Connect Claude" until it is set up, then its name and a check mark.
+/// One assistant as a half-width pill: "Connect Claude" until it is set up, then its name and a check mark.
 struct ProviderPill: View {
     let provider: AIProvider
     let setUp: Bool
@@ -170,16 +177,19 @@ struct ProviderPill: View {
     var body: some View {
         Button(action: action) {
             if setUp {
-                HStack {
+                HStack(spacing: 8) {
                     Text(provider.name)
-                    Spacer()
-                    CheckBadge()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    CheckBadge(size: 22)
                 }
             } else {
                 Text(Copy.Home.connect(provider.name))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
         }
-        .buttonStyle(PillButtonStyle(kind: setUp ? .secondary : .primary))
+        .buttonStyle(PillButtonStyle(kind: setUp ? .secondary : .primary, horizontalPadding: 12))
         .accessibilityLabel(setUp ? "\(provider.name), \(Copy.Home.connected)" : Copy.Home.connect(provider.name))
         .accessibilityHint(setUp ? "Shows connection details" : "Opens setup steps")
         .accessibilityValue(setUp ? "Set up" : "Not set up")

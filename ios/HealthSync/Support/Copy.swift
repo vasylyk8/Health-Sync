@@ -5,19 +5,23 @@ enum Copy {
     enum Welcome {
         static let tagline = "Your Apple Health, meet your AI."
         static let connectButton = "Connect to Apple Health"
-        static let chicagoCaption = "CHICAGO MARATHON"
-        static let chicagoDate = "OCT 11, 2026"
-        static let dataNote = "Your Apple Health data is copied securely to our servers in the EU so the assistants you connect can read it. Nothing is shared until you connect one."
+        /// Examples of what KROK can answer, scrolling slowly behind the tagline.
+        static let questions = [
+            "What are my fastest 5K and 10K efforts?",
+            "Did my heart rate drift during yesterday’s long run?",
+            "How has my training load changed over six weeks?",
+            "Is my sleep and recovery better or worse than my usual?",
+            "How long did I spend in each heart rate zone this week?",
+            "What were my km splits on Sunday’s run?",
+            "How much climbing was in my last long ride?",
+            "How does my resting heart rate compare to last month?",
+        ]
     }
 
     enum Account {
-        static let headline = "One last step: your KROK account."
-        static let reasons = [
-            "Claude and ChatGPT connect to KROK’s secure connector, and they need to know whose data to read. Your account is how they find yours, and only yours.",
-            "It also keeps your data tied to you, so you can restore it after reinstalling KROK or switching iPhones.",
-        ]
-        static let privacyNote = "Sign in with Apple shares no name or email with KROK. Your data stays private until you connect an assistant."
-        static let syncing = "Your Apple Health data is already syncing in the background."
+        static let headline = "Keep your data yours."
+        static let body = "An account is required to connect your data to your AI. You can delete your account and saved data anytime."
+        static let chicagoCaption = "GOOD LUCK, CHICAGO"
         static let signIn = "Sign in with Apple"
     }
 
@@ -33,7 +37,7 @@ enum Copy {
         static func minutesLeft(_ minutes: Int) -> String { "About \(minutes) min left" }
         static let almostDone = "Almost done"
         static let overAnHour = "More than an hour left"
-        static let keepOpen = "Keep the app open while syncing."
+        static let keepOpen = "Keep the app open."
         static let upToDate = "Up to date"
         static let gettingReady = "Getting ready…"
         static let recentReady = "Your recent workouts are ready. You can already ask Claude or ChatGPT about them."
