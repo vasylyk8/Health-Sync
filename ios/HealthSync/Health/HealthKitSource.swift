@@ -736,7 +736,29 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         if appleOnly, let sources = await appleSourcesPredicate(type) { predicate = Self.and(range, sources) }
         var out = try await dailyStatisticsOnce(type, unit: unit, agg: agg, scale: scale, from: from, to: to, calendar: calendar,
                                                 predicate: predicate, options: options)
-        guard allowFallback, out.isEmpty, try await hasQuantitySamples(type, predicate: predicate) else { return out }
+        guard allowFallback else { return out }
+
+        // A restored device can return a *partial* statistics collection: some days from the current Watch are present,
+        // while older days (and, in practice, RestingHeartRate from the same week) are silently absent. For the sparse
+        // Apple-only discrete metrics, read the authorized samples and fill only the missing days. Existing HealthKit
+        // statistics remain authoritative, and cumulative quantities are never raw-summed.
+        if appleOnly {
+            guard case .sum = agg else {
+                let raw = try await rawDailyStatistics(type, unit: unit, agg: agg, scale: scale, from: from, to: to,
+                                                       calendar: calendar, predicate: predicate)
+                let existing = Set(out.map(\.0))
+                let missing = raw.filter { !existing.contains($0.0) }
+                if !missing.isEmpty {
+                    out.append(contentsOf: missing)
+                    out.sort { $0.0 < $1.0 }
+                    recordFallback(type, mode: "raw-merge", hourly: false)
+                }
+                return out
+            }
+            return out
+        }
+
+        guard out.isEmpty, try await hasQuantitySamples(type, predicate: predicate) else { return out }
 
         // A real restored iPhone can return an empty source-less statistics collection for years of samples from retired
         // Watches/iPhones. Naming every source makes HealthKit apply its own source-priority/de-duplication rules again.
@@ -749,18 +771,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             }
         }
 
-        // Discrete quantities do not have the double-counting risk of cumulative steps/energy. If HealthKit's statistics
-        // cache is still empty (notably RestingHeartRate), aggregate the authorized samples themselves.
-        if !appleOnly {
-            // Non-Apple metrics can include very dense streams such as all-day heart rate. The explicit-source
-            // statistics query above is the safe fallback; loading millions of samples is not.
-        } else if case .sum = agg {
-            // Summing raw samples from overlapping Watch/iPhone sources can double-count steps or energy.
-        } else {
-            out = try await rawDailyStatistics(type, unit: unit, agg: agg, scale: scale, from: from, to: to,
-                                               calendar: calendar, predicate: predicate)
-            if !out.isEmpty { recordFallback(type, mode: "raw", hourly: false) }
-        }
+        // Non-Apple metrics can include very dense streams such as all-day heart rate. The explicit-source statistics
+        // query above is the safe fallback; loading millions of raw samples is not.
         return out
     }
 
@@ -985,6 +997,17 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         if metric.appleOnly, let sources = await appleSourcesPredicate(metric.type) { predicate = Self.and(range, sources) }
         let anchor = Calendar.current.dateInterval(of: .hour, for: from)?.start ?? from
         var out = try await hourlyBucketsOnce(metric, from: anchor, to: to, predicate: predicate, options: options)
+        if metric.appleOnly && !metric.cumulative {
+            let raw = try await rawHourlyBuckets(metric, from: anchor, to: to, predicate: predicate)
+            let existing = Set(out.map(\.t))
+            let missing = raw.filter { !existing.contains($0.t) }
+            if !missing.isEmpty {
+                out.append(contentsOf: missing)
+                out.sort { $0.t < $1.t }
+                recordFallback(metric.type, mode: "raw-merge", hourly: true)
+            }
+            return out
+        }
         guard out.isEmpty, try await hasQuantitySamples(metric.type, predicate: predicate) else { return out }
 
         if !metric.appleOnly, let sources = await allSourcesPredicate(metric.type) {
@@ -993,10 +1016,6 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
                 recordFallback(metric.type, mode: "sources", hourly: true)
                 return out
             }
-        }
-        if metric.appleOnly && !metric.cumulative {
-            out = try await rawHourlyBuckets(metric, from: anchor, to: to, predicate: predicate)
-            if !out.isEmpty { recordFallback(metric.type, mode: "raw", hourly: true) }
         }
         return out
     }

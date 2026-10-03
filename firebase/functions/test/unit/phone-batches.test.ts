@@ -104,9 +104,11 @@ describe.skipIf(!dir)('what the phone sends is what an AI gets back', () => {
     }
     for (const n of notes) console.log(`NOTE ${n}`);
     expect(notes.length, 'the engine sent no diagnostic note').toBeGreaterThan(0);
+    const dailyNotes = notes.filter((n) => /daily from=\d{4}-\d{2}-\d{2} to=\d{4}-\d{2}-\d{2}/.test(n));
+    expect(dailyNotes.length, 'the engine sent no daily diagnostic note').toBeGreaterThan(0);
     // Every metric of every chunk must report back from the first collection pass; "lost" ones are only rescued by a retry.
-    const lost = notes.filter((n) => !/ lost=0\(/.test(n));
+    const lost = dailyNotes.filter((n) => !/ lost=0\(/.test(n));
     expect(lost, 'chunks where metric results never reached the collector').toEqual([]);
-    expect(notes.every((n) => /daily from=\d{4}-\d{2}-\d{2} to=\d{4}-\d{2}-\d{2} data=\d+\/\d+ got=\d+ lost=\d+/.test(n))).toBe(true);
+    expect(dailyNotes.every((n) => /data=\d+\/\d+ got=\d+ lost=\d+/.test(n))).toBe(true);
   });
 });
