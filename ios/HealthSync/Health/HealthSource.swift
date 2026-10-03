@@ -14,6 +14,8 @@ struct DailyBatch: Sendable {
     var typeId: String
     var category: String
     var records: [Record]
+    /// What the read of this category found (counts, lost/failed metrics), sent with the batch for diagnosis.
+    var note: String? = nil
 }
 
 /// A workout on this iPhone (id only), used to find those whose raw data is not uploaded yet.
@@ -70,7 +72,7 @@ extension HealthSource {
     func requestMedicationAuthorization() async {}
     func requestAuthorization(scope: SyncScope, categories: Set<String>) async throws { try await requestAuthorization(scope: scope) }
     func dailyContextBatches(from: Date, to: Date, categories: Set<String>) async throws -> [DailyBatch] {
-        [DailyBatch(typeId: HealthTypes.dailyId, category: "core", records: try await dailyContext(from: from, to: to))]
+        [DailyBatch(typeId: HealthTypes.dailyId, category: "core", records: try await dailyContext(from: from, to: to), note: dailyDiagnosticNote())]
     }
     func hourlySeries(from: Date, to: Date) async throws -> [Record] { [] }
     func observeOtherData(categories: Set<String>, onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {}
