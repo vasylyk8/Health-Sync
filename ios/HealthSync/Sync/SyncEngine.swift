@@ -363,7 +363,8 @@ actor SyncEngine {
     /// 9: fill individual missing buckets of sparse discrete metrics from raw samples.
     /// 10: recognize every reserved Apple bundle identifier in the source filter.
     /// 11: accept every HealthKit source the user authorized; source is no longer an exclusion rule.
-    static let dailyVersion = 11
+    /// 12: collect daily reads sequentially; the device reported completions without retaining their result slots.
+    static let dailyVersion = 12
 
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }

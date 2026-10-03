@@ -513,44 +513,22 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let started = Date()
         let start = cal.startOfDay(for: from)
         sourceLock.withLock { dailyFallbacks = [] }
-        // The metrics are independent queries (dozens per year of history), so several run at the same time;
-        // results are merged in the metrics' order so the output does not depend on which finished first.
-        let limit = max(1, Self.dailyConcurrency)
-        // The results are gathered inside the group body and handed back as its return value (not through variables captured
-        // by the group's closures, which on the optimized build the phone runs lost most of the results).
-        let collected = await withTaskGroup(of: (Int, Result<[DailyCell], Error>).self, returning: (cells: [[DailyCell]?], errors: [Int: Error], received: Int).self) { group in
-            var cells = [[DailyCell]?](repeating: nil, count: metrics.count)
-            var errors: [Int: Error] = [:]
-            var received = 0
-            var next = 0
-            func startNext() {
-                guard next < metrics.count else { return }
-                let i = next
-                next += 1
-                group.addTask {
-                    // One metric failing (e.g. no permission) must not lose the others.
-                    do {
-                        return (i, .success(try await SyncTiming.shared.measure("hk.daily") { try await self.dailyCells(metrics[i], start: start, to: to, calendar: cal) }))
-                    } catch {
-                        return (i, .failure(error))
-                    }
+        // Real-device build 52 reported 65 completions but 64 missing result slots. The first slot (restingHr)
+        // was never retried, leaving that metric missing even when a subsequent probe could read it.
+        // Keep each read and its destination together, without the task-group scheduling closure. Daily queries
+        // are small; correctness is more important than parallelizing this part of the historical sync.
+        var perMetric = [[DailyCell]?](repeating: nil, count: metrics.count)
+        var errors: [Int: Error] = [:]
+        for (i, metric) in metrics.enumerated() {
+            do {
+                perMetric[i] = try await SyncTiming.shared.measure("hk.daily") {
+                    try await self.dailyCells(metric, start: start, to: to, calendar: cal)
                 }
+            } catch {
+                errors[i] = error
             }
-            for _ in 0 ..< min(limit, metrics.count) { startNext() }
-            while let (i, result) = await group.next() {
-                received += 1
-                switch result {
-                case .success(let c): cells[i] = c
-                case .failure(let error): errors[i] = error
-                }
-                startNext()
-            }
-            return (cells, errors, received)
         }
-        var perMetric = collected.cells
-        var errors = collected.errors
-        let received = collected.received
-        // A metric with neither a result nor an error (it never reported back) is treated like a failed one: tried again below.
+        let received = metrics.count
         let lost = metrics.indices.filter { perMetric[$0] == nil && errors[$0] == nil }
         // A query that failed for a passing reason (Apple Health busy or briefly locked) works a moment later: try those
         // again one at a time. If one still fails, the whole chunk fails, so it is retried on the next run instead of
@@ -596,7 +574,9 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             return "\(metrics[i].key)=\(ns.domain.replacingOccurrences(of: "com.apple.", with: ""))/\(ns.code)"
         }.joined(separator: ",")
         let fallbacks = sourceLock.withLock { dailyFallbacks.sorted().joined(separator: ",") }
-        let note = "daily from=\(SleepNights.dayKey(start, calendar: cal)) to=\(SleepNights.dayKey(to, calendar: cal)) data=\(withData)/\(metrics.count) got=\(received) lost=\(lost.count)(\(lostKeys)) empty=\(empty.count) failed=\(failedShort.isEmpty ? "none" : failedShort) ms=\(Int(Date().timeIntervalSince(started) * 1000)) retries=\(retries) suspect=\(suspectKeys.isEmpty ? "none" : suspectKeys) fallback=\(fallbacks.isEmpty ? "none" : fallbacks)"
+        let counts = metrics.indices.filter { Self.sentinelKeys.contains(metrics[$0].key) }
+            .map { "\(metrics[$0].key)=\((perMetric[$0] ?? []).count)" }.joined(separator: ",")
+        let note = "daily from=\(SleepNights.dayKey(start, calendar: cal)) to=\(SleepNights.dayKey(to, calendar: cal)) data=\(withData)/\(metrics.count) got=\(received) lost=\(lost.count)(\(lostKeys)) counts=\(counts) empty=\(empty.count) failed=\(failedShort.isEmpty ? "none" : failedShort) ms=\(Int(Date().timeIntervalSince(started) * 1000)) retries=\(retries) suspect=\(suspectKeys.isEmpty ? "none" : suspectKeys) fallback=\(fallbacks.isEmpty ? "none" : fallbacks)"
         sourceLock.withLock { lastDailyNote = note }
         // A query that still fails after its retry fails the chunk (so it is read again on the next run) instead of being
         // uploaded with metrics silently missing. Only errors that retrying cannot fix (no permission) leave a metric out.
@@ -657,8 +637,6 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     /// Metric queries running at once during the daily-context pass.
-    private static let dailyConcurrency = 8
-
     private func dailyCells(_ metric: DailyMetric, start: Date, to: Date, calendar cal: Calendar) async throws -> [DailyCell] {
         var out: [DailyCell] = []
         switch metric.kind {
