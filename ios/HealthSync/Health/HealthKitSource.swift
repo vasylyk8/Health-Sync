@@ -2,6 +2,7 @@ import CoreLocation
 import CryptoKit
 import Foundation
 import HealthKit
+import UIKit
 import WorkoutKit
 
 /// Reads Apple Health through HealthKit and converts workouts (with their raw data) and daily
@@ -474,7 +475,9 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             let metrics = scope.dailyMetrics.filter { $0.category == category }
             guard !metrics.isEmpty else { continue }
             let read = try await dailyRecords(metrics, from: from, to: to)
-            out.append(DailyBatch(typeId: HealthTypes.dailyBatchType(category), category: category, records: read.records, note: "\(category): \(read.note)"))
+            var note = "\(category): \(read.note)"
+            if category == "core" { note += " || probe " + (await dailyProbe(metrics, from: from, to: to)) }
+            out.append(DailyBatch(typeId: HealthTypes.dailyBatchType(category), category: category, records: read.records, note: note, incomplete: read.incomplete))
         }
         return out
     }
@@ -492,7 +495,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
     }
 
-    private func dailyRecords(_ metrics: [DailyMetric], from: Date, to: Date) async throws -> (records: [Record], note: String) {
+    private func dailyRecords(_ metrics: [DailyMetric], from: Date, to: Date) async throws -> (records: [Record], note: String, incomplete: Bool) {
         let cal = Calendar.current
         let started = Date()
         let start = cal.startOfDay(for: from)
@@ -546,6 +549,22 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
                 errors[i] = error
             }
         }
+        // A metric that has samples in this range but came back empty is a read that lost data (seen on a real iPhone while
+        // workouts were being read at the same time): ask again after a pause, and if it is still empty report the chunk as
+        // incomplete so it is read again later instead of being recorded as complete.
+        var retries = 0
+        var suspect: [Int] = []
+        for round in 0 ... 2 {
+            suspect = []
+            for i in metrics.indices where Self.sentinelKeys.contains(metrics[i].key) && errors[i] == nil && (perMetric[i] ?? []).isEmpty {
+                if await hasSamples(metrics[i], start: start, to: to) { suspect.append(i) }
+            }
+            if suspect.isEmpty || round == 2 { break }
+            retries += 1
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            for i in suspect { if let cells = try? await dailyCells(metrics[i], start: start, to: to, calendar: cal) { perMetric[i] = cells } }
+        }
+        let suspectKeys = suspect.map { metrics[$0].key }.joined(separator: ",")
         // What the last daily pass found, for the in-app speed test: which metrics had data, were empty or failed (and why).
         let withData = perMetric.filter { !($0 ?? []).isEmpty }.count
         let dataKeys = perMetric.indices.filter { !(perMetric[$0] ?? []).isEmpty }.prefix(12).map { metrics[$0].key }
@@ -557,13 +576,12 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         sourceLock.withLock { lastDailyReport = "\(withData)/\(metrics.count) metrics with data (\(dataKeys.joined(separator: ", "))), \(received) of \(metrics.count) reported, \(lost.count) retried. Empty: \(empty.isEmpty ? "none" : empty.joined(separator: ", ")). Failed: \(failed.isEmpty ? "none" : failed.joined(separator: "; "))" }
         // The same facts as one short line that travels with the batch (and is logged by the server): per chunk, so a read
         // that loses data on a real iPhone shows up there. Counts, metric names and error codes only.
-        let lostKeys = lost.prefix(6).map { metrics[$0].key }.joined(separator: ",")
+        let lostKeys = lost.prefix(3).map { metrics[$0].key }.joined(separator: ",")
         let failedShort = errors.keys.sorted().prefix(6).map { i -> String in
             let ns = errors[i]! as NSError
             return "\(metrics[i].key)=\(ns.domain.replacingOccurrences(of: "com.apple.", with: ""))/\(ns.code)"
         }.joined(separator: ",")
-        let firstSamples = await earliestSampleNote()
-        let note = "daily from=\(SleepNights.dayKey(start, calendar: cal)) to=\(SleepNights.dayKey(to, calendar: cal)) data=\(withData)/\(metrics.count) got=\(received) lost=\(lost.count)(\(lostKeys)) empty=\(empty.count) failed=\(failedShort.isEmpty ? "none" : failedShort) ms=\(Int(Date().timeIntervalSince(started) * 1000)) \(firstSamples)"
+        let note = "daily from=\(SleepNights.dayKey(start, calendar: cal)) to=\(SleepNights.dayKey(to, calendar: cal)) data=\(withData)/\(metrics.count) got=\(received) lost=\(lost.count)(\(lostKeys)) empty=\(empty.count) failed=\(failedShort.isEmpty ? "none" : failedShort) ms=\(Int(Date().timeIntervalSince(started) * 1000)) retries=\(retries) suspect=\(suspectKeys.isEmpty ? "none" : suspectKeys)"
         sourceLock.withLock { lastDailyNote = note }
         // A query that still fails after its retry fails the chunk (so it is read again on the next run) instead of being
         // uploaded with metrics silently missing. Only errors that retrying cannot fix (no permission) leave a metric out.
@@ -572,7 +590,53 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         for cells in perMetric {
             for c in cells ?? [] { days[c.day, default: [:]][c.key] = c.value }
         }
-        return (days.keys.sorted().map { day in ["k": "day", "day": .string(day), "m": .object(days[day] ?? [:])] }, note)
+        return (days.keys.sorted().map { day in ["k": "day", "day": .string(day), "m": .object(days[day] ?? [:])] }, note, !suspect.isEmpty)
+    }
+
+    /// For a few key metrics, what each way of asking Apple Health returns for this chunk, as one short line that travels
+    /// with the batch: s = first sample in the range (does the data exist), n = days from the statistics query, a = the same
+    /// restricted to Apple's own sources, m = the same asked month by month, src = Apple sources / all sources for the type.
+    /// Counts and dates only. It tells which of the ways loses the older data on a real iPhone.
+    private func dailyProbe(_ metrics: [DailyMetric], from: Date, to: Date) async -> String {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: from)
+        var parts: [String] = []
+        for key in ["steps", "restingHr", "hrAvg", "hrv", "activeKcal"] {
+            guard let metric = metrics.first(where: { $0.key == key }), case .quantity(let type, let unit, let agg, let scale) = metric.kind else { continue }
+            let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+            let range = HKQuery.predicateForSamples(withStart: start, end: to, options: [])
+            let first = (try? await fetch(type, predicate: range, sort: sort, limit: 1))?.first?.startDate
+            let plain = (try? await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal, appleOnly: false))?.count
+            let apple = (try? await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal, appleOnly: true))?.count
+            var monthly = 0
+            var cursor = start
+            while cursor < to {
+                let next = min(cal.date(byAdding: .month, value: 1, to: cursor) ?? to, to)
+                monthly += (try? await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: cursor, to: next, calendar: cal, appleOnly: false))?.count ?? 0
+                cursor = next
+            }
+            let sources = await sourceCounts(type)
+            func text(_ n: Int?) -> String { n.map(String.init) ?? "err" }
+            parts.append("\(key):s=\(first.map { SleepNights.dayKey($0, calendar: cal) } ?? "-"),n=\(text(plain)),a=\(text(apple)),m=\(monthly),src=\(sources.apple)/\(sources.all)")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private func sourceCounts(_ type: HKQuantityType) async -> (apple: Int, all: Int) {
+        let sources: Set<HKSource> = await withCheckedContinuation { cont in
+            let q = HKSourceQuery(sampleType: type, samplePredicate: nil) { _, sources, _ in cont.resume(returning: sources ?? []) }
+            store.execute(q)
+        }
+        return (sources.filter { $0.bundleIdentifier.hasPrefix("com.apple.health") }.count, sources.count)
+    }
+
+    private static let sentinelKeys: Set<String> = ["steps", "restingHr", "hrAvg", "hrv", "activeKcal"]
+
+    private func hasSamples(_ metric: DailyMetric, start: Date, to: Date) async -> Bool {
+        guard case .quantity(let type, _, _, _) = metric.kind else { return false }
+        var predicate = HKQuery.predicateForSamples(withStart: start, end: to, options: [])
+        if metric.appleOnly, let sources = await appleSourcesPredicate(type) { predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [predicate, sources]) }
+        return !((try? await fetch(type, predicate: predicate, sort: nil, limit: 1)) ?? []).isEmpty
     }
 
     /// Metric queries running at once during the daily-context pass.
@@ -1085,6 +1149,54 @@ extension HealthKitSource {
         return Double(ws.count) / max(secs, 0.001) * 60
     }
 
+    /// Speed-test rows G3/G4: how many days of the key metrics each year of history returns when asked for alone and while
+    /// workouts are being read, with the way of asking (probe) and the phone's state. Read-only; counts and dates only.
+    private func dailyDiagnosis(fresh: [HKWorkout], emit: (String) -> Void) async {
+        let cal = Calendar.current
+        let core = scope.dailyMetrics.filter { $0.category == "core" }
+        let (protectedData, appState) = await MainActor.run { (UIApplication.shared.isProtectedDataAvailable, UIApplication.shared.applicationState.rawValue) }
+        emit("G3 phone: protected data \(protectedData ? "available" : "NOT available"), app state \(appState == 0 ? "active" : appState == 1 ? "inactive" : "background")")
+        guard let earliest = try? await earliestDailyDate() else {
+            emit("G3 no earliest date")
+            return
+        }
+        func counts(_ records: [Record]) -> String {
+            var days: [String: Int] = [:]
+            for r in records {
+                guard case .object(let m)? = r["m"] else { continue }
+                for k in ["steps", "hrAvg", "restingHr", "hrv", "activeKcal", "sleepAsleepMin"] where m[k] != nil { days[k, default: 0] += 1 }
+            }
+            return ["steps", "hrAvg", "restingHr", "hrv", "activeKcal", "sleepAsleepMin"].map { "\($0) \(days[$0] ?? 0)d" }.joined(separator: ", ")
+        }
+        func read(_ from: Date, _ to: Date) async -> String {
+            let t0 = Date()
+            guard let r = try? await dailyRecords(core, from: from, to: to) else { return "failed" }
+            let withData = r.note.components(separatedBy: " data=").dropFirst().first?.components(separatedBy: " ").first ?? "?"
+            let retries = r.note.components(separatedBy: " retries=").dropFirst().first?.components(separatedBy: " ").first ?? "?"
+            return "\(withData) metrics · \(counts(r.records)) · retries \(retries)\(r.incomplete ? " · INCOMPLETE" : "") · \(Int(Date().timeIntervalSince(t0))) s"
+        }
+        var chunks: [(Date, Date)] = []
+        var cursor = cal.startOfDay(for: earliest)
+        let end = Date()
+        while cursor < end {
+            let next = min(cal.date(byAdding: .year, value: 1, to: cursor) ?? end, end)
+            chunks.append((cursor, next))
+            cursor = next
+        }
+        for (a, b) in chunks {
+            emit("G3 \(SleepNights.dayKey(a, calendar: cal)) to \(SleepNights.dayKey(b, calendar: cal)), alone: " + (await read(a, b)))
+        }
+        // The same years again with workouts being read at the same time, as during a sync.
+        for index in [max(0, chunks.count - 6), max(0, chunks.count - 2)] {
+            let (a, b) = chunks[index]
+            let load = Task { while !Task.isCancelled { _ = await self.wholeRead(fresh, width: 24) } }
+            let line = await read(a, b)
+            load.cancel()
+            await load.value
+            emit("G4 \(SleepNights.dayKey(a, calendar: cal)) to \(SleepNights.dayKey(b, calendar: cal)), while workouts are read: " + line)
+        }
+    }
+
     /// Measurements that answer the open questions about Step 4 on the user's own data. Read-only; numbers only.
     /// Rows: A device, B what the workouts look like, C cost per workout by age, D time window vs association,
     /// E route lane on/off, F read settings, G daily history, H uploads of the last sync, I projection.
@@ -1368,6 +1480,10 @@ extension HealthKitSource {
         let oneYear = await Self.timed { _ = try? await self.dailyContext(from: Date().addingTimeInterval(-365 * 86_400), to: Date()) }
         emit("G daily: oldest date \(f(eSecs)) s (\(f(years)) years), one year of daily metrics \(f(oneYear)) s")
         emit("G2 daily result: \(dailyReport)")
+
+        // G3. The daily history year by year, each year asked for alone (nothing else reading Apple Health), then two
+        // years again while workouts are being read, as during a sync. Shows where daily values are lost.
+        await dailyDiagnosis(fresh: fresh, emit: emit)
 
         // H. Uploads from the sync that ran before this test (same app session).
         emit("H " + (SyncTiming.shared.uploadSummary() ?? "no uploads yet in this app session (run the test during Step 4 to include them)"))

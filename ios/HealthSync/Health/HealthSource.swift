@@ -16,6 +16,8 @@ struct DailyBatch: Sendable {
     var records: [Record]
     /// What the read of this category found (counts, lost/failed metrics), sent with the batch for diagnosis.
     var note: String? = nil
+    /// Metrics that have samples in the range came back empty even after asking again: the read lost data and is repeated later.
+    var incomplete = false
 }
 
 /// A workout on this iPhone (id only), used to find those whose raw data is not uploaded yet.
