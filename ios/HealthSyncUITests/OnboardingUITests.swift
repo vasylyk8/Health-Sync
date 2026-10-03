@@ -32,10 +32,13 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["heroMetric"].waitForExistence(timeout: 5))
     }
 
-    func testChicagoArtShowsWhileActive() {
+    func testChicagoArtShowsOnAccountPageWhileActive() {
         let app = launch(["-chicago"])
-        XCTAssertTrue(app.staticTexts["CHICAGO MARATHON"].waitForExistence(timeout: 5))
-        snapshot("00-Welcome-Chicago")
+        XCTAssertTrue(app.buttons["connectHealth"].waitForExistence(timeout: 5))
+        app.buttons["connectHealth"].tap()
+        XCTAssertTrue(app.buttons["appleSignIn"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["GOOD LUCK, CHICAGO"].waitForExistence(timeout: 5))
+        snapshot("01c-Account-Chicago")
     }
 
     func testAppleAccountCanUsePublicOAuthWithoutCreatingAPrivateLink() {

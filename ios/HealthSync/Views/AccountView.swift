@@ -3,6 +3,7 @@ import SwiftUI
 /// Second onboarding page: Sign in with Apple. The first sync is already running while the person reads it.
 struct AccountView: View {
     @EnvironmentObject var model: AppModel
+    private let showChicago = ChicagoMarathon.isActive()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,6 +26,13 @@ struct AccountView: View {
             Wordmark()
                 .frame(height: 44)
             Spacer(minLength: 16)
+            if showChicago {
+                chicago
+                    .riseIn()
+                // Two spacers below, one above: the art sits in the upper part of the free space.
+                Spacer(minLength: 40)
+                Spacer(minLength: 0)
+            }
             Text(Copy.Account.headline)
                 .tracking(-1.8)
                 .displayText()
@@ -33,26 +41,10 @@ struct AccountView: View {
                 .accessibilityAddTraits(.isHeader)
                 .riseIn(delay: 0.05)
                 .padding(.bottom, 16)
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(Copy.Account.reasons, id: \.self) { reason in
-                    Text(reason)
-                        .bodyText()
-                        .foregroundStyle(Theme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .riseIn(delay: 0.15)
-            .padding(.bottom, 16)
-            Text(Copy.Account.privacyNote)
+            Text(Copy.Account.body)
                 .smallText()
                 .foregroundStyle(Theme.muted)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 16)
-            Text(Copy.Account.syncing)
-                .smallText(.semibold)
-                .foregroundStyle(Theme.muted)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("accountSyncing")
                 .padding(.bottom, 24)
             // UI tests cannot drive Apple's own sign-in sheet; this stands in for it (never shown otherwise).
             if ProcessInfo.processInfo.arguments.contains("-uiTesting") {
@@ -65,5 +57,18 @@ struct AccountView: View {
             }
         }
         .padding(.horizontal, Theme.margin)
+    }
+
+    /// A send-off to Chicago Marathon runners, shown until race day ends.
+    private var chicago: some View {
+        VStack(spacing: 12) {
+            ChicagoMarathonArt()
+                .frame(maxWidth: 320)
+            Text(Copy.Account.chicagoCaption)
+                .tracking(4.5)
+                .smallText(.semibold)
+                .foregroundStyle(Theme.muted)
+        }
+        .frame(maxWidth: .infinity)
     }
 }

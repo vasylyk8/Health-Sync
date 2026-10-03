@@ -7,13 +7,15 @@ struct PillButtonStyle: ButtonStyle {
 
     var kind: Kind = .primary
     var height: CGFloat = Theme.pillHeight
+    /// Side padding inside the pill; the half-width pills on Home use less.
+    var horizontalPadding: CGFloat = Theme.margin
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .bodyText(.semibold)
             .foregroundStyle(kind == .primary ? Theme.buttonText : Theme.ink)
-            .padding(.horizontal, Theme.margin)
+            .padding(.horizontal, horizontalPadding)
             .frame(maxWidth: .infinity, minHeight: height)
             .background(kind == .primary ? Theme.buttonFill : Theme.surface, in: RoundedRectangle(cornerRadius: Theme.buttonRadius, style: .continuous))
             .opacity(isEnabled ? 1 : 0.5)
