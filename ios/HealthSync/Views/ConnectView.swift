@@ -68,25 +68,27 @@ struct ConnectView: View {
         .frame(height: 44)
     }
 
+    /// Three groups with air between them: the big number floats in the middle; what is happening (sync state) and
+    /// what to do about it (the connect buttons) sit together at the bottom.
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HeroMetricView(metrics: heroMetrics)
-                .padding(.top, 48)
-            progress
-                .padding(.top, 40)
             Spacer(minLength: 24)
+            HeroMetricView(metrics: heroMetrics)
+            Spacer(minLength: 40)
+            progress
             if showRecentReady {
                 Text(Copy.Home.recentReady)
                     .smallText()
                     .foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.bottom, 16)
+                    .padding(.top, 24)
             }
             HStack(spacing: 12) {
                 ForEach(model.providers) { provider in
                     ProviderPill(provider: provider, setUp: model.isSetUp(provider)) { selected = provider }
                 }
             }
+            .padding(.top, showRecentReady ? 16 : 24)
             .padding(.bottom, 24)
         }
         .padding(.horizontal, Theme.margin)
