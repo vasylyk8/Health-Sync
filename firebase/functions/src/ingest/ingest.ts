@@ -127,7 +127,7 @@ export async function ingestObject(objectPath: string, deps: IngestDeps, opts: {
   }
   if (result === 'published' || result === 'duplicate') await finishPublishedEffects(deps, uid, parsed);
   await incoming.delete(objectPath).catch(() => undefined);
-  log.info('batch processed', { uid, batchId, type, result, records: parsed.recordCount, mode: header.mode, readMs: header.perf?.readMs, uploadMs: header.perf?.uploadMs });
+  log.info('batch processed', { uid, batchId, type, result, records: parsed.recordCount, mode: header.mode, readMs: header.perf?.readMs, uploadMs: header.perf?.uploadMs, note: header.perf?.note });
   return result;
 }
 

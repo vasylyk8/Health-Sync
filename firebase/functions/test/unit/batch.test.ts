@@ -21,6 +21,14 @@ describe('parseBatch', () => {
     expect(p.recordCount).toBe(3);
   });
 
+  it('accepts the app\'s diagnostic note in the header timings, and rejects odd characters or an overlong note', () => {
+    const ok = 'daily from=2025-10-26 to=2026-10-03 data=50/65 got=65 lost=64(restingHr,hrv) empty=15 failed=hrv=healthkit/5 ms=12800 first(steps=2013-07-14,hr=none) || FAILED x';
+    const p = parseBatch(gz([header({ perf: { readMs: 5, note: ok } }), { k: 'w', id: 'a', s: S, e: S + 1, act: 1 }]));
+    expect(p.header.perf?.note).toBe(ok);
+    expect(() => parseBatch(gz([header({ perf: { note: 'bad <script>{}' } }), { k: 'w', id: 'a', s: S, e: S + 1, act: 1 }]))).toThrow(BatchError);
+    expect(() => parseBatch(gz([header({ perf: { note: 'x'.repeat(701) } }), { k: 'w', id: 'a', s: S, e: S + 1, act: 1 }]))).toThrow(BatchError);
+  });
+
   it('keeps unknown fields in extra', () => {
     const p = parseBatch(gz([header({ type: 'HKWorkoutTypeIdentifier' }), { k: 'w', id: 'w1', s: S, e: S + 60_000, act: 37, actName: 'Running', dist: 5000, futureField: 1 }]));
     const row = p.partitions.get('2024-03')![0]!;

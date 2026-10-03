@@ -4,13 +4,18 @@
 name: daily-check
 on:
   push:
-    branches: [main, 'ops/phone-to-server-check']
-    paths: ['.github/workflows/daily-check.yml', 'ios/HealthSync/Health/**', 'ios/HealthSync/Sync/Records.swift', 'ios/HealthSyncUITests/DailyCheckUITests.swift', 'firebase/functions/test/unit/phone-batches.test.ts', 'firebase/functions/test/helpers/synthetic.ts']
+    branches: [main, 'ops/phone-to-server-check', 'fix/daily-release-build']
+    paths: ['.github/workflows/daily-check.yml', 'ios/HealthSync/Health/**', 'ios/HealthSync/Sync/**', 'firebase/functions/src/ingest/**', 'ios/HealthSyncUITests/DailyCheckUITests.swift', 'firebase/functions/test/unit/phone-batches.test.ts', 'firebase/functions/test/helpers/synthetic.ts']
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   check:
+    # Debug and the optimized Release build the phone runs: they can behave differently.
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, Release]
     runs-on: macos-latest
     timeout-minutes: 40
     defaults:
@@ -35,6 +40,7 @@ jobs:
             xcodebuild test -project HealthSync.xcodeproj -scheme HealthSync \
               -destination "platform=iOS Simulator,name=$SIM_DEVICE" \
               -only-testing:HealthSyncUITests/DailyCheckUITests \
+              -configuration ${{ matrix.config }} ENABLE_TESTABILITY=YES SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) DEBUG' \
               -resultBundlePath "daily-$1.xcresult" \
               CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= 2>&1 | tee daily.log | grep -E "DAILYLOG|DAILYUI|error:|Test Case|\*\* TEST"
             return ${PIPESTATUS[0]}
@@ -52,7 +58,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: daily-check-log
+          name: daily-check-log-${{ matrix.config }}
           path: ios/daily.log
       - name: Collect the upload batches the app built
         run: |
@@ -71,18 +77,22 @@ jobs:
           ls -la batches
       - uses: actions/upload-artifact@v4
         with:
-          name: phone-batches
+          name: phone-batches-${{ matrix.config }}
           path: ios/batches
           if-no-files-found: error
   server:
     needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, Release]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: phone-batches
+          name: phone-batches-${{ matrix.config }}
           path: phone-batches
       - uses: actions/setup-node@v4
         with:

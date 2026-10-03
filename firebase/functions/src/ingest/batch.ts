@@ -30,7 +30,12 @@ export const HeaderSchema = z.object({
   reconcileId: z.string().uuid().optional(),
   reconcileDone: z.boolean().optional(),
   /** Client timings for the batch (never health data): read = HealthKit query, upload = previous upload. */
-  perf: z.object({ readMs: z.number().int().min(0).max(3_600_000).optional(), uploadMs: z.number().int().min(0).max(3_600_000).optional() }).strict().optional(),
+  perf: z.object({
+    readMs: z.number().int().min(0).max(3_600_000).optional(),
+    uploadMs: z.number().int().min(0).max(3_600_000).optional(),
+    /** A short diagnostic line from the app (counts, metric names, error codes; never health values), written to the log. */
+    note: z.string().max(700).regex(/^[A-Za-z0-9 ,.:;()_/|=<>+*-]*$/).optional(),
+  }).strict().optional(),
 }).strict();
 export type BatchHeader = z.infer<typeof HeaderSchema>;
 

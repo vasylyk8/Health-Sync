@@ -465,7 +465,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     func dailyContext(from: Date, to: Date) async throws -> [Record] {
-        try await dailyRecords(scope.dailyMetrics.filter { $0.category == "core" }, from: from, to: to)
+        try await dailyRecords(scope.dailyMetrics.filter { $0.category == "core" }, from: from, to: to).records
     }
 
     func dailyContextBatches(from: Date, to: Date, categories: Set<String>) async throws -> [DailyBatch] {
@@ -473,7 +473,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         for category in categories.union(["core"]).sorted() {
             let metrics = scope.dailyMetrics.filter { $0.category == category }
             guard !metrics.isEmpty else { continue }
-            out.append(DailyBatch(typeId: HealthTypes.dailyBatchType(category), category: category, records: try await dailyRecords(metrics, from: from, to: to)))
+            let read = try await dailyRecords(metrics, from: from, to: to)
+            out.append(DailyBatch(typeId: HealthTypes.dailyBatchType(category), category: category, records: read.records, note: "\(category): \(read.note)"))
         }
         return out
     }
@@ -491,16 +492,19 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
     }
 
-    private func dailyRecords(_ metrics: [DailyMetric], from: Date, to: Date) async throws -> [Record] {
+    private func dailyRecords(_ metrics: [DailyMetric], from: Date, to: Date) async throws -> (records: [Record], note: String) {
         let cal = Calendar.current
+        let started = Date()
         let start = cal.startOfDay(for: from)
         // The metrics are independent queries (dozens per year of history), so several run at the same time;
         // results are merged in the metrics' order so the output does not depend on which finished first.
-        var perMetric = [[DailyCell]?](repeating: nil, count: metrics.count)
-        var errors: [Int: Error] = [:]
-        var received = 0
         let limit = max(1, Self.dailyConcurrency)
-        await withTaskGroup(of: (Int, Result<[DailyCell], Error>).self) { group in
+        // The results are gathered inside the group body and handed back as its return value (not through variables captured
+        // by the group's closures, which on the optimized build the phone runs lost most of the results).
+        let collected = await withTaskGroup(of: (Int, Result<[DailyCell], Error>).self, returning: (cells: [[DailyCell]?], errors: [Int: Error], received: Int).self) { group in
+            var cells = [[DailyCell]?](repeating: nil, count: metrics.count)
+            var errors: [Int: Error] = [:]
+            var received = 0
             var next = 0
             func startNext() {
                 guard next < metrics.count else { return }
@@ -516,15 +520,19 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
                 }
             }
             for _ in 0 ..< min(limit, metrics.count) { startNext() }
-            for await (i, result) in group {
+            while let (i, result) = await group.next() {
                 received += 1
                 switch result {
-                case .success(let cells): perMetric[i] = cells
+                case .success(let c): cells[i] = c
                 case .failure(let error): errors[i] = error
                 }
                 startNext()
             }
+            return (cells, errors, received)
         }
+        var perMetric = collected.cells
+        var errors = collected.errors
+        let received = collected.received
         // A metric with neither a result nor an error (it never reported back) is treated like a failed one: tried again below.
         let lost = metrics.indices.filter { perMetric[$0] == nil && errors[$0] == nil }
         // A query that failed for a passing reason (Apple Health busy or briefly locked) works a moment later: try those
@@ -547,18 +555,24 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             return "\(metrics[i].key) \(ns.domain.replacingOccurrences(of: "com.apple.", with: "")) \(ns.code)"
         }
         sourceLock.withLock { lastDailyReport = "\(withData)/\(metrics.count) metrics with data (\(dataKeys.joined(separator: ", "))), \(received) of \(metrics.count) reported, \(lost.count) retried. Empty: \(empty.isEmpty ? "none" : empty.joined(separator: ", ")). Failed: \(failed.isEmpty ? "none" : failed.joined(separator: "; "))" }
-        if let transient = errors.values.first(where: { !Self.isPermanentFailure($0) }) {
-            // Give up on a metric that keeps failing (three chunks in a row), so one stubborn query cannot block the rest forever.
-            let tries = sourceLock.withLock { () -> Int in dailyTransientFailures += 1; return dailyTransientFailures }
-            if tries <= 3 { throw transient }
-        } else {
-            sourceLock.withLock { dailyTransientFailures = 0 }
-        }
+        // The same facts as one short line that travels with the batch (and is logged by the server): per chunk, so a read
+        // that loses data on a real iPhone shows up there. Counts, metric names and error codes only.
+        let lostKeys = lost.prefix(6).map { metrics[$0].key }.joined(separator: ",")
+        let failedShort = errors.keys.sorted().prefix(6).map { i -> String in
+            let ns = errors[i]! as NSError
+            return "\(metrics[i].key)=\(ns.domain.replacingOccurrences(of: "com.apple.", with: ""))/\(ns.code)"
+        }.joined(separator: ",")
+        let firstSamples = await earliestSampleNote()
+        let note = "daily from=\(SleepNights.dayKey(start, calendar: cal)) to=\(SleepNights.dayKey(to, calendar: cal)) data=\(withData)/\(metrics.count) got=\(received) lost=\(lost.count)(\(lostKeys)) empty=\(empty.count) failed=\(failedShort.isEmpty ? "none" : failedShort) ms=\(Int(Date().timeIntervalSince(started) * 1000)) \(firstSamples)"
+        sourceLock.withLock { lastDailyNote = note }
+        // A query that still fails after its retry fails the chunk (so it is read again on the next run) instead of being
+        // uploaded with metrics silently missing. Only errors that retrying cannot fix (no permission) leave a metric out.
+        if let transient = errors.values.first(where: { !Self.isPermanentFailure($0) }) { throw transient }
         var days: [String: [String: RecordValue]] = [:]
         for cells in perMetric {
             for c in cells ?? [] { days[c.day, default: [:]][c.key] = c.value }
         }
-        return days.keys.sorted().map { day in ["k": "day", "day": .string(day), "m": .object(days[day] ?? [:])] }
+        return (days.keys.sorted().map { day in ["k": "day", "day": .string(day), "m": .object(days[day] ?? [:])] }, note)
     }
 
     /// Metric queries running at once during the daily-context pass.
@@ -925,9 +939,26 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     private var observedTypes = Set<String>()
-    private var dailyTransientFailures = 0
     private var lastDailyReport = ""
+    private var lastDailyNote = ""
+    private var earliestNoteCache: String?
     var dailyReport: String { sourceLock.withLock { lastDailyReport } }
+    func dailyDiagnosticNote() -> String? { sourceLock.withLock { lastDailyNote.isEmpty ? nil : lastDailyNote } }
+
+    /// The oldest sample this app can read for a few key types ("first(steps=2013-07-14,...)"), once per app session. A type
+    /// that starts much later than the others shows that Apple Health is not handing the app its older samples.
+    private func earliestSampleNote() async -> String {
+        if let cached = sourceLock.withLock({ earliestNoteCache }) { return cached }
+        var parts: [String] = []
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+        for (label, id) in [("steps", HKQuantityTypeIdentifier.stepCount), ("hr", .heartRate), ("rhr", .restingHeartRate), ("hrv", .heartRateVariabilitySDNN)] {
+            let first = (try? await fetch(HKQuantityType(id), predicate: nil, sort: sort, limit: 1))?.first?.startDate
+            parts.append("\(label)=\(first.map { SleepNights.dayKey($0, calendar: .current) } ?? "none")")
+        }
+        let note = "first(" + parts.joined(separator: ",") + ")"
+        sourceLock.withLock { earliestNoteCache = note }
+        return note
+    }
     private var hourlyTransientFailures = 0
 
     /// Heart rate and steps (hourly series) and every event type of the switched-on categories wake the app in the

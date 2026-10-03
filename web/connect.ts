@@ -29,7 +29,7 @@ async function start() {
   try { await getRedirectResult(auth); }
   catch { appleRedirectFailed = true; }
   if (!request) {
-    status.textContent = 'Start the connection in Claude or ChatGPT. To link your existing data, first sign in with Apple inside KROK on your iPhone.';
+    status.textContent = 'Set up KROK on your iPhone using the steps below, then start the connection in Claude or ChatGPT. Already set up? Start the connection in your assistant.';
     return;
   }
   const infoResponse = await fetch(`/oauth/request/${encodeURIComponent(request)}`);

@@ -1,0 +1,35 @@
+# Prints the diagnostic notes the app sends with its daily batches (counts, metric names, error codes; no health values),
+# newest first, from the ingest service's log. Lets a sync that loses data on a real iPhone be understood without the owner.
+name: ingest-notes
+on:
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: 'How many hours back to read'
+        default: '12'
+      limit:
+        description: 'Most entries to print'
+        default: '200'
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read the notes
+        env:
+          HOURS: ${{ inputs.hours }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="ingest" AND jsonPayload.note:*' \
+            --project "$GCP_PROJECT_ID" --freshness="${HOURS}h" --limit="$LIMIT" \
+            --format='value(timestamp,jsonPayload.uid,jsonPayload.type,jsonPayload.result,jsonPayload.note)' | grep -v 'synthetic-monitor' || echo "no notes in the last ${HOURS} hours"

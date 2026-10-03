@@ -25,3 +25,7 @@ OpenAI's PHI prohibition and sensitive-data requirements need a publisher compli
 5. For Claude, use [directory management](https://claude.ai/directory/manage) on an eligible paid plan. Follow `CLAUDE_SUBMISSION_DRAFT.md`, connect the canonical public endpoint, disclose personal health data, confirm every tool through MCP Inspector or actual Claude, and supply secure reviewer fields. Verify permanent slug/category/region controls, complete owner compliance acknowledgments, then submit. Do not upload the OpenAI ZIP as a substitute for Claude's connector flow.
 
 The current tools cannot control the owner's logged-in OpenAI/Claude dashboards or make business verification and owner attestations. They can prepare, validate and repair the technical artifacts and incorporate supplied challenge/recording evidence.
+
+## Required before directory publication: iPhone download link
+
+The App Store URL is still missing. Public pages currently show the owner-approved placeholder. Complete [the app download launch checklist](APP_DOWNLOAD_LAUNCH_CHECKLIST.md) once the owner supplies the live URL.

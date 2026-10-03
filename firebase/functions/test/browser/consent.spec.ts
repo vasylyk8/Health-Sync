@@ -70,6 +70,9 @@ async function signIn(page: Page) {
 test('consent renders safely on mobile, requires sign-in and makes exact routes opt-in', async ({ page }) => {
   await begin(page, [...DEFAULT_SCOPES, 'health:routes:full'], '<img src=x onerror=alert(1)>');
   await expect(page.locator('#client')).toContainText('<img src=x onerror=alert(1)>');
+  await expect(page.locator('#iphone-setup')).toContainText('KROK requires its iPhone app');
+  await expect(page.locator('[data-krok-download="pending"]')).toBeDisabled();
+  await expect(page.locator('#iphone-setup')).toContainText('same Apple Account');
   await expect(page.locator('#client img')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Allow access' })).toBeDisabled();
   await expect(page.getByRole('checkbox')).not.toBeChecked();
