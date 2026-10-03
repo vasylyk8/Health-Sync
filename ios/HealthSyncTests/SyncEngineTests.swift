@@ -12,6 +12,7 @@ final class ScriptedSource: HealthSource, @unchecked Sendable {
     var daily: [Record] = []
     var eventPages: [AnchoredPage] = []
     var hourly: [Record] = []
+    var hourlyNote: String?
     private(set) var hourlyRanges: [(from: Date, to: Date)] = []
     var earliestDaily: Date?
     /// Steps that throw: "recent", "anchored", "index", "daily", "detail".
@@ -66,6 +67,8 @@ final class ScriptedSource: HealthSource, @unchecked Sendable {
         hourlyRanges.append((from, to))
         return hourly
     }
+
+    func hourlyDiagnosticNote() -> String? { hourlyNote }
 
     func earliestDailyDate() async throws -> Date? { earliestDaily }
     func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {}
@@ -323,6 +326,22 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertEqual(up.uploaded.filter { $0.type == HealthTypes.streamId }.count, 1)
     }
 
+    func testWorkoutDetailsAreReadAgainAfterExtractionLogicChanges() async throws {
+        let source = ScriptedSource()
+        source.index = [WorkoutRef(id: "W1", start: Date())]
+        source.details = ["W1": detail("W1")]
+        let box = Outbox(root: root)
+        try box.update {
+            $0.detailsDone = ["W1"]
+            $0.detailVersion = 0
+        }
+        let (engine, _) = makeEngine(source, RecordingUploader(), outbox: box)
+        _ = try await engine.run()
+        XCTAssertEqual(source.detailReads, ["W1"])
+        XCTAssertEqual(box.state.detailVersion, SyncEngine.detailVersion)
+        XCTAssertEqual(box.state.detailsDone, ["W1"])
+    }
+
     func testWorkoutsWithoutRawDataOrThatVanishedAreMarkedDoneWithoutUpload() async throws {
         let source = ScriptedSource()
         source.index = [WorkoutRef(id: "MANUAL", start: Date()), WorkoutRef(id: "GONE", start: Date())]
@@ -437,12 +456,15 @@ final class SyncEngineTests: XCTestCase {
         let source = ScriptedSource()
         source.earliestDaily = Date(timeIntervalSinceNow: -3 * 86_400)
         source.hourly = SeriesRecords.hourlyChunks(name: "HeartRate", unit: "count/min", hours: [HourBucket(t: 3_600_000, v: 60, lo: 50, hi: 70)])
+        source.hourlyNote = "hourly fallback=HeartRate:sources"
         let up = RecordingUploader()
         let box = Outbox(root: root)
         let engine = SyncEngine(source: source, uploader: up, outbox: box, scope: hourlyScope)
         _ = try await engine.run()
         XCTAssertEqual(source.hourlyRanges.count, 1)
         XCTAssertEqual(up.uploaded.filter { $0.type == HealthTypes.hourlyId }.count, 1)
+        let header = try XCTUnwrap(up.uploaded.first { $0.type == HealthTypes.hourlyId }?.header)
+        XCTAssertEqual((header["perf"] as? [String: Any])?["note"] as? String, source.hourlyNote)
         XCTAssertNotNil(box.state.hourlyThrough)
         XCTAssertNotNil(box.state.hourlyAt)
         _ = try await engine.run()

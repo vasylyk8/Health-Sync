@@ -330,6 +330,9 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         // from other apps carry no Apple statistics but often have heart rate samples.
         var wanted = Set(w.allStatistics.keys.map(\.identifier))
         wanted.insert(HealthTypes.quantityPrefix + "HeartRate")
+        // These quantities exist in Apple Health but are commonly related to the workout without appearing in
+        // HKWorkout.allStatistics. Always try them; their sparse time-window fallback is handled below.
+        wanted.formUnion(Self.workoutWindowFallbackTypes)
         let specs = scope.workoutQuantities.filter { wanted.contains($0.id) && $0.stream }
 
         // Every quantity type and the route are read at the same time (each is an independent query);
@@ -339,7 +342,9 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let parts: [Part] = try await withThrowingTaskGroup(of: Part.self) { group in
             for (i, q) in specs.enumerated() {
                 group.addTask {
-                    let points = try await timing.measure("hk.quantity") { try await self.quantityPoints(q, workout: w, allowTimeWindow: q.name == "HeartRate") }
+                    let points = try await timing.measure("hk.quantity") {
+                        try await self.quantityPoints(q, workout: w, allowTimeWindow: q.name == "HeartRate" || Self.workoutWindowFallbackTypes.contains(q.id))
+                    }
                     return .series(i, points)
                 }
             }
@@ -369,9 +374,16 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         var found = try await quantitySamples(q.type, predicate: HKQuery.predicateForObjects(from: w))
         SyncTiming.shared.count("hk.samples", found.count)
         if found.isEmpty && allowTimeWindow {
-            let window = HKQuery.predicateForSamples(withStart: w.startDate, end: w.endDate, options: [])
-            let sameSource = HKQuery.predicateForObjects(from: [w.sourceRevision.source])
-            found = try await quantitySamples(q.type, predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [window, sameSource]))
+            // Recovery is written shortly after the workout ends. Effort samples can come from Fitness rather than the
+            // workout's original source, so only ordinary heart rate is restricted to that source.
+            let end = q.name == "HeartRateRecoveryOneMinute" ? w.endDate.addingTimeInterval(5 * 60) : w.endDate
+            let window = HKQuery.predicateForSamples(withStart: w.startDate, end: end, options: [])
+            if q.name == "HeartRate" {
+                let sameSource = HKQuery.predicateForObjects(from: [w.sourceRevision.source])
+                found = try await quantitySamples(q.type, predicate: Self.and(window, sameSource))
+            } else {
+                found = try await quantitySamples(q.type, predicate: window)
+            }
         }
         // Plain samples become one point each; series samples (e.g. heart rate recorded as a series)
         // are expanded at the same time, one query each.
@@ -401,6 +413,12 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
         return chunks.flatMap { $0 }
     }
+
+    private static let workoutWindowFallbackTypes: Set<String> = [
+        HealthTypes.quantityPrefix + "EstimatedWorkoutEffortScore",
+        HealthTypes.quantityPrefix + "WorkoutEffortScore",
+        HealthTypes.quantityPrefix + "HeartRateRecoveryOneMinute",
+    ]
 
     /// Every individual reading of a series sample (e.g. heart rate every few seconds).
     private func expandSeries(_ sample: HKQuantitySample, _ q: WorkoutQuantity) async throws -> [SeriesPoint] {
@@ -499,6 +517,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let cal = Calendar.current
         let started = Date()
         let start = cal.startOfDay(for: from)
+        sourceLock.withLock { dailyFallbacks = [] }
         // The metrics are independent queries (dozens per year of history), so several run at the same time;
         // results are merged in the metrics' order so the output does not depend on which finished first.
         let limit = max(1, Self.dailyConcurrency)
@@ -581,7 +600,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             let ns = errors[i]! as NSError
             return "\(metrics[i].key)=\(ns.domain.replacingOccurrences(of: "com.apple.", with: ""))/\(ns.code)"
         }.joined(separator: ",")
-        let note = "daily from=\(SleepNights.dayKey(start, calendar: cal)) to=\(SleepNights.dayKey(to, calendar: cal)) data=\(withData)/\(metrics.count) got=\(received) lost=\(lost.count)(\(lostKeys)) empty=\(empty.count) failed=\(failedShort.isEmpty ? "none" : failedShort) ms=\(Int(Date().timeIntervalSince(started) * 1000)) retries=\(retries) suspect=\(suspectKeys.isEmpty ? "none" : suspectKeys)"
+        let fallbacks = sourceLock.withLock { dailyFallbacks.sorted().joined(separator: ",") }
+        let note = "daily from=\(SleepNights.dayKey(start, calendar: cal)) to=\(SleepNights.dayKey(to, calendar: cal)) data=\(withData)/\(metrics.count) got=\(received) lost=\(lost.count)(\(lostKeys)) empty=\(empty.count) failed=\(failedShort.isEmpty ? "none" : failedShort) ms=\(Int(Date().timeIntervalSince(started) * 1000)) retries=\(retries) suspect=\(suspectKeys.isEmpty ? "none" : suspectKeys) fallback=\(fallbacks.isEmpty ? "none" : fallbacks)"
         sourceLock.withLock { lastDailyNote = note }
         // A query that still fails after its retry fails the chunk (so it is read again on the next run) instead of being
         // uploaded with metrics silently missing. Only errors that retrying cannot fix (no permission) leave a metric out.
@@ -606,13 +626,13 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
             let range = HKQuery.predicateForSamples(withStart: start, end: to, options: [])
             let first = (try? await fetch(type, predicate: range, sort: sort, limit: 1))?.first?.startDate
-            let plain = (try? await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal, appleOnly: false))?.count
-            let apple = (try? await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal, appleOnly: true))?.count
+            let plain = (try? await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal, appleOnly: false, allowFallback: false))?.count
+            let apple = (try? await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal, appleOnly: true, allowFallback: false))?.count
             var monthly = 0
             var cursor = start
             while cursor < to {
                 let next = min(cal.date(byAdding: .month, value: 1, to: cursor) ?? to, to)
-                monthly += (try? await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: cursor, to: next, calendar: cal, appleOnly: false))?.count ?? 0
+                monthly += (try? await dailyStatistics(type, unit: unit, agg: agg, scale: scale, from: cursor, to: next, calendar: cal, appleOnly: false, allowFallback: false))?.count ?? 0
                 cursor = next
             }
             let sources = await sourceCounts(type)
@@ -701,7 +721,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
     }
 
-    private func dailyStatistics(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date, calendar: Calendar, appleOnly: Bool = false) async throws -> [(String, Double)] {
+    private func dailyStatistics(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date,
+                                 calendar: Calendar, appleOnly: Bool = false, allowFallback: Bool = true) async throws -> [(String, Double)] {
         let options: HKStatisticsOptions
         switch agg {
         case .sum: options = .cumulativeSum
@@ -710,10 +731,38 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         case .max: options = .discreteMax
         case .last: options = .mostRecent
         }
-        var predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
-        if appleOnly, let sources = await appleSourcesPredicate(type) { predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [predicate, sources]) }
-        // Same read gate as every other HealthKit read: dozens of year-long statistics queries at once, next to thousands of
-        // workout reads, left the daily queries failing (and their metrics out of the rows).
+        let range = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
+        var predicate = range
+        if appleOnly, let sources = await appleSourcesPredicate(type) { predicate = Self.and(range, sources) }
+        var out = try await dailyStatisticsOnce(type, unit: unit, agg: agg, scale: scale, from: from, to: to, calendar: calendar,
+                                                predicate: predicate, options: options)
+        guard allowFallback, out.isEmpty, try await hasQuantitySamples(type, predicate: predicate) else { return out }
+
+        // A real restored iPhone can return an empty source-less statistics collection for years of samples from retired
+        // Watches/iPhones. Naming every source makes HealthKit apply its own source-priority/de-duplication rules again.
+        if !appleOnly, let sources = await allSourcesPredicate(type) {
+            out = try await dailyStatisticsOnce(type, unit: unit, agg: agg, scale: scale, from: from, to: to, calendar: calendar,
+                                                predicate: Self.and(range, sources), options: options)
+            if !out.isEmpty {
+                recordFallback(type, mode: "sources", hourly: false)
+                return out
+            }
+        }
+
+        // Discrete quantities do not have the double-counting risk of cumulative steps/energy. If HealthKit's statistics
+        // cache is still empty (notably RestingHeartRate), aggregate the authorized samples themselves.
+        if case .sum = agg {
+            // Summing raw samples from overlapping Watch/iPhone sources can double-count steps or energy.
+        } else {
+            out = try await rawDailyStatistics(type, unit: unit, agg: agg, scale: scale, from: from, to: to,
+                                               calendar: calendar, predicate: predicate)
+            if !out.isEmpty { recordFallback(type, mode: "raw", hourly: false) }
+        }
+        return out
+    }
+
+    private func dailyStatisticsOnce(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date,
+                                     calendar: Calendar, predicate: NSPredicate, options: HKStatisticsOptions) async throws -> [(String, Double)] {
         await queryGate.acquire()
         defer { queryGate.release() }
         let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
@@ -738,6 +787,29 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             if v.isFinite { out.append((SleepNights.dayKey(stats.startDate, calendar: calendar), v)) }
         }
         return out
+    }
+
+    private func rawDailyStatistics(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date,
+                                    calendar: Calendar, predicate: NSPredicate) async throws -> [(String, Double)] {
+        let samples = try await quantitySamples(type, predicate: predicate)
+        var values: [String: [(Date, Double)]] = [:]
+        for sample in samples {
+            let value = sample.quantity.doubleValue(for: unit) * scale
+            guard value.isFinite else { continue }
+            values[SleepNights.dayKey(sample.startDate, calendar: calendar), default: []].append((sample.startDate, value))
+        }
+        return values.keys.sorted().compactMap { day in
+            guard let entries = values[day], !entries.isEmpty else { return nil }
+            let value: Double
+            switch agg {
+            case .sum: return nil
+            case .avg: value = entries.reduce(0) { $0 + $1.1 } / Double(entries.count)
+            case .min: value = entries.map(\.1).min()!
+            case .max: value = entries.map(\.1).max()!
+            case .last: value = entries.max { $0.0 < $1.0 }!.1
+            }
+            return (day, value)
+        }
     }
 
     private func dailyCategory(_ type: HKCategoryType, mode: CategoryMode, from: Date, to: Date, calendar: Calendar) async throws -> [(String, RecordValue)] {
@@ -819,6 +891,24 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     private let sourceLock = NSLock()
     private var appleSourceCache: [String: NSPredicate?] = [:]
+    private var allSourceCache: [String: NSPredicate?] = [:]
+    private var dailyFallbacks: Set<String> = []
+    private var hourlyFallbacks: Set<String> = []
+
+    private static func and(_ first: NSPredicate, _ second: NSPredicate) -> NSPredicate {
+        NSCompoundPredicate(andPredicateWithSubpredicates: [first, second])
+    }
+
+    private func recordFallback(_ type: HKQuantityType, mode: String, hourly: Bool) {
+        let short = type.identifier.replacingOccurrences(of: HealthTypes.quantityPrefix, with: "") + ":" + mode
+        sourceLock.withLock {
+            if hourly { hourlyFallbacks.insert(short) } else { dailyFallbacks.insert(short) }
+        }
+    }
+
+    private func hasQuantitySamples(_ type: HKQuantityType, predicate: NSPredicate) async throws -> Bool {
+        !(try await fetch(type, predicate: predicate, sort: nil, limit: 1)).isEmpty
+    }
 
     /// Predicate matching only samples written by Apple's own sources (Apple Watch, iPhone) for `type`, or nil when
     /// there is no such source (then nothing is filtered). Some apps write their own resting heart rate or HRV.
@@ -828,13 +918,27 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             let q = HKSourceQuery(sampleType: type, samplePredicate: nil) { _, sources, _ in cont.resume(returning: sources ?? []) }
             store.execute(q)
         }
-        let apple = sources.filter { $0.bundleIdentifier.hasPrefix("com.apple.health") }
+        let apple = sources.filter { $0.bundleIdentifier.lowercased().hasPrefix("com.apple.health") }
         let predicate: NSPredicate? = apple.isEmpty ? nil : HKQuery.predicateForObjects(from: apple)
         sourceLock.withLock { appleSourceCache[type.identifier] = .some(predicate) }
         return predicate
     }
 
+    /// An explicit predicate containing every source known for this type. This is intentionally different from no
+    /// source predicate: restored devices on iOS 27 have returned empty historical statistics for the latter.
+    private func allSourcesPredicate(_ type: HKQuantityType) async -> NSPredicate? {
+        if let cached = sourceLock.withLock({ allSourceCache[type.identifier] }) { return cached }
+        let sources: Set<HKSource> = await withCheckedContinuation { cont in
+            let q = HKSourceQuery(sampleType: type, samplePredicate: nil) { _, sources, _ in cont.resume(returning: sources ?? []) }
+            store.execute(q)
+        }
+        let predicate: NSPredicate? = sources.isEmpty ? nil : HKQuery.predicateForObjects(from: sources)
+        sourceLock.withLock { allSourceCache[type.identifier] = .some(predicate) }
+        return predicate
+    }
+
     func hourlySeries(from: Date, to: Date) async throws -> [Record] {
+        sourceLock.withLock { hourlyFallbacks = [] }
         var records: [Record] = []
         var errors: [Error] = []
         for metric in scope.hourly {
@@ -873,13 +977,33 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             if metric.cols.contains("min") { options.insert(.discreteMin) }
             if metric.cols.contains("max") { options.insert(.discreteMax) }
         }
-        var predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
-        if metric.appleOnly, let sources = await appleSourcesPredicate(metric.type) { predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [predicate, sources]) }
+        let range = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
+        var predicate = range
+        if metric.appleOnly, let sources = await appleSourcesPredicate(metric.type) { predicate = Self.and(range, sources) }
         let anchor = Calendar.current.dateInterval(of: .hour, for: from)?.start ?? from
+        var out = try await hourlyBucketsOnce(metric, from: anchor, to: to, predicate: predicate, options: options)
+        guard out.isEmpty, try await hasQuantitySamples(metric.type, predicate: predicate) else { return out }
+
+        if !metric.appleOnly, let sources = await allSourcesPredicate(metric.type) {
+            out = try await hourlyBucketsOnce(metric, from: anchor, to: to, predicate: Self.and(range, sources), options: options)
+            if !out.isEmpty {
+                recordFallback(metric.type, mode: "sources", hourly: true)
+                return out
+            }
+        }
+        if !metric.cumulative {
+            out = try await rawHourlyBuckets(metric, from: anchor, to: to, predicate: predicate)
+            if !out.isEmpty { recordFallback(metric.type, mode: "raw", hourly: true) }
+        }
+        return out
+    }
+
+    private func hourlyBucketsOnce(_ metric: HourlyMetric, from: Date, to: Date, predicate: NSPredicate,
+                                   options: HKStatisticsOptions) async throws -> [HourBucket] {
         await queryGate.acquire()
         defer { queryGate.release() }
         let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
-            let q = HKStatisticsCollectionQuery(quantityType: metric.type, quantitySamplePredicate: predicate, options: options, anchorDate: anchor, intervalComponents: DateComponents(hour: 1))
+            let q = HKStatisticsCollectionQuery(quantityType: metric.type, quantitySamplePredicate: predicate, options: options, anchorDate: from, intervalComponents: DateComponents(hour: 1))
             q.initialResultsHandler = { _, collection, error in
                 if let collection { cont.resume(returning: collection) } else { cont.resume(throwing: error ?? HealthSourceError.noResults) }
             }
@@ -887,7 +1011,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
         var out: [HourBucket] = []
         let unit = metric.unit
-        collection.enumerateStatistics(from: anchor, to: to) { stats, _ in
+        collection.enumerateStatistics(from: from, to: to) { stats, _ in
             func value(_ q: HKQuantity?) -> Double? { q.map { $0.doubleValue(for: unit) }.flatMap { $0.isFinite ? $0 : nil } }
             let bucket: HourBucket
             if metric.cumulative {
@@ -898,6 +1022,25 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             if bucket.v != nil || bucket.lo != nil || bucket.hi != nil { out.append(bucket) }
         }
         return out
+    }
+
+    private func rawHourlyBuckets(_ metric: HourlyMetric, from: Date, to: Date, predicate: NSPredicate) async throws -> [HourBucket] {
+        let samples = try await quantitySamples(metric.type, predicate: predicate)
+        let cal = Calendar.current
+        var values: [Date: [Double]] = [:]
+        for sample in samples {
+            let value = sample.quantity.doubleValue(for: metric.unit)
+            guard value.isFinite, let hour = cal.dateInterval(of: .hour, for: sample.startDate)?.start else { continue }
+            values[hour, default: []].append(value)
+        }
+        return values.keys.sorted().compactMap { hour in
+            guard let points = values[hour], !points.isEmpty else { return nil }
+            let avg = points.reduce(0, +) / Double(points.count)
+            return HourBucket(t: hour.msValue,
+                              v: metric.cols.contains("avg") ? avg : nil,
+                              lo: metric.cols.contains("min") ? points.min() : nil,
+                              hi: metric.cols.contains("max") ? points.max() : nil)
+        }
     }
 
     /// Turns the samples of one event type into `ev` chunks, one group per writing app.
@@ -1008,6 +1151,12 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     private var earliestNoteCache: String?
     var dailyReport: String { sourceLock.withLock { lastDailyReport } }
     func dailyDiagnosticNote() -> String? { sourceLock.withLock { lastDailyNote.isEmpty ? nil : lastDailyNote } }
+    func hourlyDiagnosticNote() -> String? {
+        sourceLock.withLock {
+            let modes = hourlyFallbacks.sorted().joined(separator: ",")
+            return "hourly fallback=\(modes.isEmpty ? "none" : modes)"
+        }
+    }
 
     /// The oldest sample this app can read for a few key types ("first(steps=2013-07-14,...)"), once per app session. A type
     /// that starts much later than the others shows that Apple Health is not handing the app its older samples.

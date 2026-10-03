@@ -50,6 +50,7 @@ final class OutboxMigrationTests: XCTestCase {
         XCTAssertEqual(again.workoutTotal, 5)
         XCTAssertEqual(again.dailyFullAt, Date(timeIntervalSince1970: 100))
         XCTAssertEqual(again.schemaVersion, Outbox.State.currentSchema)
+        XCTAssertEqual(again.detailVersion, SyncEngine.detailVersion)
     }
 
     func testCompletionsUpdateState() throws {

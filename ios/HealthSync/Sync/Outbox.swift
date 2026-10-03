@@ -68,12 +68,14 @@ final class Outbox: @unchecked Sendable {
         var dailyVersion = 0
         /// Same for the hourly series.
         var hourlyVersion = 0
+        /// Version of workout-detail extraction; a newer app re-reads each workout once when new streams become reachable.
+        var detailVersion = 1
 
         init() {}
 
         private enum CodingKeys: String, CodingKey {
             case schemaVersion, anchors, seq, recentDone, caughtUp, reconcile, dailyFullAt, detailsDone, workoutTotal, lastSyncAt
-            case dailyHashes, hourlyThrough, hourlyAt, profileAt, medicationsAt, dailyVersion, hourlyVersion
+            case dailyHashes, hourlyThrough, hourlyAt, profileAt, medicationsAt, dailyVersion, hourlyVersion, detailVersion
         }
 
         /// Tolerant decoding: a state file written by an older app version (missing or extra keys)
@@ -97,6 +99,7 @@ final class Outbox: @unchecked Sendable {
             medicationsAt = try c.decodeIfPresent(Date.self, forKey: .medicationsAt)
             dailyVersion = try c.decodeIfPresent(Int.self, forKey: .dailyVersion) ?? 0
             hourlyVersion = try c.decodeIfPresent(Int.self, forKey: .hourlyVersion) ?? 0
+            detailVersion = try c.decodeIfPresent(Int.self, forKey: .detailVersion) ?? 0
         }
     }
 
