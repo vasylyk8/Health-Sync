@@ -82,10 +82,12 @@ struct OnboardingView: View {
                 .opacity(onAccount ? 0 : 1)
                 .allowsHitTesting(!onAccount)
                 .accessibilityHidden(onAccount)
-            AppleSignInButton()
-                .opacity(onAccount ? 1 : 0)
-                .allowsHitTesting(onAccount)
-                .accessibilityHidden(!onAccount)
+            // Only in the tree on page 2: Apple's button is a UIKit view that stays visible to accessibility and
+            // to UI tests even when it is faded out.
+            if onAccount {
+                AppleSignInButton()
+                    .transition(.opacity)
+            }
         }
         .animation(change, value: onAccount)
     }
