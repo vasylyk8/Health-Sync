@@ -223,7 +223,10 @@ actor SyncEngine {
             // Years of daily history and the summaries of every workout take a minute or more on a large
             // history and do not depend on the raw data (or on each other), so they run alongside it: the raw
             // data starts as soon as the list of workouts is known.
-            background.append(Task { try await self.step { try await SyncTiming.shared.measure("phase.daily") { try await self.dailyContext() } } })
+            // Daily and hourly values run first, with nothing else reading Apple Health: asked for while thousands of workout
+            // reads were in flight, the statistics queries came back empty for most older years on a real iPhone.
+            try await step { try await SyncTiming.shared.measure("phase.daily") { try await self.dailyContext() } }
+            try await step { try await SyncTiming.shared.measure("phase.hourly") { try await self.hourlyHistory() } }
             let history = Task {
                 try await self.step {
                     guard let wt = self.scope.workout else { return }
@@ -237,7 +240,6 @@ actor SyncEngine {
                 }
             }
             background.append(history)
-            background.append(Task { try await self.step { try await SyncTiming.shared.measure("phase.hourly") { try await self.hourlyHistory() } } })
             background.append(Task {
                 try await self.step {
                     try await SyncTiming.shared.measure("phase.events") {
@@ -355,7 +357,8 @@ actor SyncEngine {
     /// 4: results of the daily metric queries were not all collected (most metrics never reported back).
     /// 5: the results were collected through captured variables and mostly lost on the phone's optimized build.
     /// 6: the same read again with the per-year probe that shows which way of asking Apple Health returns the older data.
-    static let dailyVersion = 6
+    /// 7: read alone instead of next to the workout reads (older years came back empty under that load), with a retry of empty key metrics.
+    static let dailyVersion = 7
 
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }
@@ -387,6 +390,7 @@ actor SyncEngine {
         // then not recorded as complete, so the next run reads that year again (years already on the server are not re-sent).
         var firstReadFailure: Error?
         var pendingNotes: [String] = []
+        var incomplete = false
         while chunkStart < end {
             try checkTime()
             let chunkEnd = min(cal.date(byAdding: .year, value: 1, to: chunkStart) ?? end, end)
@@ -409,6 +413,7 @@ actor SyncEngine {
                 // Categories other than core send nothing when they have no rows; core always reports (it advances the covered window).
                 if batch.records.isEmpty && batch.category != "core" { continue }
                 // The totals on Home come from the core rows (activity, sleep, recovery), counted even when they are not sent again.
+                if batch.incomplete { incomplete = true }
                 if batch.category == "core" {
                     stats.addDays(batch.records)
                     report(syncing: running)
@@ -430,7 +435,8 @@ actor SyncEngine {
         }
         if let firstReadFailure { throw firstReadFailure }
         if full {
-            try outbox.update { $0.dailyFullAt = end }
+            // A chunk that lost values is read again in about six hours, not left as complete for a week.
+            try outbox.update { $0.dailyFullAt = incomplete ? end.addingTimeInterval(-(config.dailyFullEvery - 6 * 3600)) : end }
             stats.markDailyBackfilled()
         }
         lastDailyAt = end
@@ -441,7 +447,8 @@ actor SyncEngine {
     /// Bump when hourly rows sent by an older app may be incomplete: the next run re-reads the whole history once.
     /// 2: a failed HealthKit query used to drop its series silently and the chunk was recorded as complete.
     /// 3: the same collection fix for the hourly queries' older chunks.
-    static let hourlyVersion = 3
+    /// 4: read alone instead of next to the workout reads.
+    static let hourlyVersion = 4
 
     private func hourlyHistory() async throws {
         guard !scope.hourly.isEmpty else { return }
