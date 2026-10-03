@@ -647,7 +647,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             let q = HKSourceQuery(sampleType: type, samplePredicate: nil) { _, sources, _ in cont.resume(returning: sources ?? []) }
             store.execute(q)
         }
-        return (sources.filter { $0.bundleIdentifier.hasPrefix("com.apple.health") }.count, sources.count)
+        return (sources.filter { $0.bundleIdentifier.lowercased().hasPrefix("com.apple.") }.count, sources.count)
     }
 
     private static let sentinelKeys: Set<String> = ["steps", "restingHr", "hrAvg", "hrv", "activeKcal"]
@@ -933,7 +933,10 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             let q = HKSourceQuery(sampleType: type, samplePredicate: nil) { _, sources, _ in cont.resume(returning: sources ?? []) }
             store.execute(q)
         }
-        let apple = sources.filter { $0.bundleIdentifier.lowercased().hasPrefix("com.apple.health") }
+        // Apple-owned HealthKit writers are not limited to the Health app's bundle. Watch-generated quantities can
+        // come from other reserved com.apple.* sources, and the exact writer changed across watchOS generations.
+        // Third-party apps cannot use Apple's bundle namespace, so their derived values remain excluded.
+        let apple = sources.filter { $0.bundleIdentifier.lowercased().hasPrefix("com.apple.") }
         let predicate: NSPredicate? = apple.isEmpty ? nil : HKQuery.predicateForObjects(from: apple)
         sourceLock.withLock { appleSourceCache[type.identifier] = .some(predicate) }
         return predicate
@@ -1296,7 +1299,7 @@ extension HealthKitSource {
 
     /// App that recorded a workout: "Apple" for the Watch, iPhone and Health app, otherwise its bundle id (never a person's name).
     private static func sourceLabel(_ s: HKSource) -> String {
-        s.bundleIdentifier.lowercased().hasPrefix("com.apple.health") ? "Apple" : s.bundleIdentifier
+        s.bundleIdentifier.lowercased().hasPrefix("com.apple.") ? "Apple" : s.bundleIdentifier
     }
 
     /// Types the app reads for a workout (as in `workoutDetail`).

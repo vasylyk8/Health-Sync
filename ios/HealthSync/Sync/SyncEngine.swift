@@ -360,7 +360,7 @@ actor SyncEngine {
     /// 6: the same read again with the per-year probe that shows which way of asking Apple Health returns the older data.
     /// 7: read alone instead of next to the workout reads (older years came back empty under that load), with a retry of empty key metrics.
     /// 8: fall back to source-explicit statistics (and raw discrete samples) when HealthKit returns an empty collection for existing samples.
-    static let dailyVersion = 9
+    static let dailyVersion = 10
 
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }
@@ -451,7 +451,7 @@ actor SyncEngine {
     /// 3: the same collection fix for the hourly queries' older chunks.
     /// 4: read alone instead of next to the workout reads.
     /// 5: use the same source-explicit fallback as daily history when older hourly collections are empty.
-    static let hourlyVersion = 6
+    static let hourlyVersion = 7
 
     private func hourlyHistory() async throws {
         guard !scope.hourly.isEmpty else { return }
