@@ -4,8 +4,8 @@
 name: daily-check
 on:
   push:
-    branches: [main, 'ops/phone-to-server-check']
-    paths: ['.github/workflows/daily-check.yml', 'ios/HealthSync/Health/**', 'ios/HealthSync/Sync/Records.swift', 'ios/HealthSyncUITests/DailyCheckUITests.swift', 'firebase/functions/test/unit/phone-batches.test.ts', 'firebase/functions/test/helpers/synthetic.ts']
+    branches: [main, 'ops/phone-to-server-check', 'fix/daily-chain-diag']
+    paths: ['.github/workflows/daily-check.yml', 'ios/HealthSync/Health/**', 'ios/HealthSync/Sync/**', 'firebase/functions/src/ingest/**', 'ios/HealthSyncUITests/DailyCheckUITests.swift', 'firebase/functions/test/unit/phone-batches.test.ts', 'firebase/functions/test/helpers/synthetic.ts']
   workflow_dispatch:
 permissions:
   contents: read

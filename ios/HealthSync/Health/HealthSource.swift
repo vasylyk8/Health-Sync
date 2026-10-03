@@ -53,6 +53,8 @@ protocol HealthSource: Sendable {
     func profileRecords() async throws -> [Record]
     /// Earliest sample across the daily-context metrics, to know how far back to start.
     func earliestDailyDate() async throws -> Date?
+    /// What the last daily-context read found, as one short diagnostic line (nil for sources with nothing to report).
+    func dailyDiagnosticNote() -> String?
     /// How many HealthKit queries may run at the same time (raw workout data), adjusted while syncing.
     var queryConcurrency: Int { get }
     func setQueryConcurrency(_ n: Int)
@@ -77,4 +79,9 @@ extension HealthSource {
     var queryConcurrency: Int { 1 }
     func setQueryConcurrency(_ n: Int) {}
     func benchmark(onUpdate: @escaping @Sendable (String) -> Void) async { onUpdate("The speed test needs Apple Health on a real iPhone.") }
+}
+
+
+extension HealthSource {
+    func dailyDiagnosticNote() -> String? { nil }
 }
