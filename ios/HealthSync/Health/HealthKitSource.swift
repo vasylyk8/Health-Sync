@@ -751,7 +751,10 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
         // Discrete quantities do not have the double-counting risk of cumulative steps/energy. If HealthKit's statistics
         // cache is still empty (notably RestingHeartRate), aggregate the authorized samples themselves.
-        if case .sum = agg {
+        if !appleOnly {
+            // Non-Apple metrics can include very dense streams such as all-day heart rate. The explicit-source
+            // statistics query above is the safe fallback; loading millions of samples is not.
+        } else if case .sum = agg {
             // Summing raw samples from overlapping Watch/iPhone sources can double-count steps or energy.
         } else {
             out = try await rawDailyStatistics(type, unit: unit, agg: agg, scale: scale, from: from, to: to,
@@ -991,7 +994,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
                 return out
             }
         }
-        if !metric.cumulative {
+        if metric.appleOnly && !metric.cumulative {
             out = try await rawHourlyBuckets(metric, from: anchor, to: to, predicate: predicate)
             if !out.isEmpty { recordFallback(metric.type, mode: "raw", hourly: true) }
         }
