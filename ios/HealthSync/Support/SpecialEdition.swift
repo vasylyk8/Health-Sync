@@ -25,6 +25,8 @@ struct SpecialEdition {
     let defaultGoal: (hours: Int, minutes: Int)
     /// The picture in the middle of the medal, drawn to fill a 342 x 240 box (Chicago: stars over the skyline).
     let art: @MainActor () -> AnyView
+    /// The question shown under the medal once a goal is set, to copy and ask an assistant. Gets "4:30".
+    var prompt: (String) -> String = { _ in "" }
 
     /// "2026-10-11", as the server stores it.
     var raceDate: String {
@@ -37,9 +39,9 @@ struct SpecialEdition {
     func goalSeconds(hours h: Int, minutes m: Int) -> Int { h * 3600 + m * 60 }
     var defaultGoalSeconds: Int { goalSeconds(hours: defaultGoal.hours, minutes: defaultGoal.minutes) }
 
-    /// "4:30:00"
+    /// "4:30" (hours and minutes; the goal is never shown to the second)
     static func timeText(seconds: Int) -> String {
-        String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+        String(format: "%d:%02d", seconds / 3600, seconds / 60 % 60)
     }
 
     // MARK: The editions
@@ -54,7 +56,8 @@ struct SpecialEdition {
         caption: "GOOD LUCK, CHICAGO",
         hours: 2...8,
         defaultGoal: (4, 30),
-        art: { AnyView(ChicagoMarathonArt(course: false)) })
+        art: { AnyView(ChicagoMarathonArt(course: false)) },
+        prompt: { time in "Am I in \(time) shape for Chicago?" })
 
     /// Newest first. Only the first one that is inside its window shows.
     static let all: [SpecialEdition] = [chicago2026]

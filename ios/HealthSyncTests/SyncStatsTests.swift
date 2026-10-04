@@ -304,7 +304,8 @@ final class HeroMetricsTests: XCTestCase {
         XCTAssertEqual(SpecialEdition.active(now: now, calendar: c, arguments: [], editions: editions)?.id, "next-race")
         XCTAssertEqual(next.raceDate, "2027-04-18")
         XCTAssertEqual(next.defaultGoalSeconds, 3 * 3600 + 45 * 60)
-        XCTAssertEqual(SpecialEdition.timeText(seconds: 16_200), "4:30:00")
+        XCTAssertEqual(SpecialEdition.timeText(seconds: 16_200), "4:30", "hours and minutes only")
+        XCTAssertEqual(SpecialEdition.chicago2026.prompt("4:30"), "Am I in 4:30 shape for Chicago?")
     }
 
     func testRaceGoalIsKeptUntilTheServerHasIt() {
