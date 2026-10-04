@@ -65,7 +65,7 @@ enum HealthBench {
         let count = args.firstIndex(of: "-benchCount").flatMap { Int(args[$0 + 1]) } ?? 300
         let store = HKHealthStore()
         let scope = HealthTypes.scope(HealthTypes.loadCoverage())
-        let share = HealthLab.shareTypes
+        let share = HealthLab.shareTypes.union([HKQuantityType(.restingHeartRate), HKQuantityType(.heartRateVariabilitySDNN)])
         let read = HealthTypes.readPermissions(for: scope).union(share)
         m.log("authorizing")
         // One request only: a second permission request right after a first one never answers in the
@@ -78,10 +78,17 @@ enum HealthBench {
             return
         }
         m.log("authorized")
+        let history = args.contains("-benchHistory")
         let heavy = args.firstIndex(of: "-benchHeavy").flatMap { Int(args[$0 + 1]) } ?? 60
         let light = max(0, count - heavy)
-        await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: args.contains("-benchScheduling") ? 9 : 1.3, m)
+        await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: history || args.contains("-benchScheduling") ? 9 : 1.3, heavyStride: history ? 6 : 1, m)
         await seedBackground(store, count: 100_000, m)
+        if history {
+            await seedHistoryDetails(store, m)
+            await historyComparison(scope, m)
+            m.log("BENCH DONE")
+            return
+        }
         if args.contains("-benchScheduling") {
             await schedulingComparison(scope, m)
             m.log("BENCH DONE")
@@ -160,6 +167,90 @@ enum HealthBench {
             try? FileManager.default.removeItem(at: root)
         }
         m.log(passed ? "SCHED CHECK OK" : "SCHED CHECK FAILED")
+    }
+
+    /// Each hypothesis alone, with fixed data/time and fresh outboxes. Warm-up is excluded from timing comparisons.
+    private static func historyComparison(_ scope: SyncScope, _ m: BenchModel) async {
+        let at = Date()
+        let expected = (try? await HealthKitSource(scope: scope).workoutIndex().count) ?? 0
+        let args = ProcessInfo.processInfo.arguments
+        let requested = args.firstIndex(of: "-benchCount").flatMap { Int(args[$0 + 1]) } ?? 300
+        var passed = expected == requested && expected > 0
+        for forced in [true, false] {
+            var reference: String?
+            let order: [RawHistoryExperiment] = forced ? [.baseline, .shared, .larger, .parallel, .baseline, .parallel, .larger, .shared, .baseline] : [.baseline, .shared, .larger, .parallel]
+            for (run, variant) in order.enumerated() {
+                let net = BenchCapture()
+                let root = FileManager.default.temporaryDirectory.appendingPathComponent("history-\(UUID().uuidString)")
+                let box = Outbox(root: root)
+                let source = HealthKitSource(scope: scope)
+                source.historyExperiment = variant
+                source.debugFailingStatistics = forced
+                let engine = SyncEngine(source: source, uploader: net, outbox: box, scope: scope, now: { at })
+                let before = SyncTiming.shared.phaseMilliseconds()
+                let started = Date()
+                let watcher = Task { @MainActor in
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(20))
+                        if Task.isCancelled { break }
+                        let p = await engine.progress
+                        m.log("HIST running \(variant.rawValue) forced=\(forced): \(Int(Date().timeIntervalSince(started)))s details \(p.detailsDone)/\(p.detailsTotal)")
+                    }
+                }
+                do {
+                    let outcome = try await engine.run()
+                    let wall = Date().timeIntervalSince(started)
+                    let fingerprint = net.fingerprint
+                    if reference == nil { reference = fingerprint }
+                    let equal = fingerprint == reference
+                    let complete = outcome == .finished && box.state.detailsDone.count == expected && box.pending().isEmpty
+                    passed = passed && equal && complete
+                    let phases = SyncTiming.shared.phaseMilliseconds()
+                    let delta = phases.map { key, value in "\(key)=\(String(format: "%.2f", (value - (before[key] ?? 0)) / 1000))s" }.sorted().joined(separator: " ")
+                    let counters = await source.historyExperimentSummary()
+                    m.log("HIST result \(variant.rawValue) forced=\(forced) warmup=\(run == 0): wall=\(String(format: "%.2f", wall))s details=\(box.state.detailsDone.count)/\(expected) equal=\(equal) complete=\(complete) digest=\(fingerprint) \(counters) \(net.summary(wall: wall)) \(delta)")
+                } catch {
+                    passed = false
+                    m.log("HIST failed \(variant.rawValue) forced=\(forced): \(error)")
+                }
+                watcher.cancel()
+                await watcher.value
+                try? FileManager.default.removeItem(at: root)
+            }
+        }
+        m.log(passed ? "HIST CHECK OK" : "HIST CHECK FAILED")
+    }
+
+    /// Sparse recovery metrics through the workout history and long samples crossing a query boundary.
+    private static func seedHistoryDetails(_ store: HKHealthStore, _ m: BenchModel) async {
+        let workouts = await allWorkouts(store)
+        guard let oldest = workouts.first?.startDate else { return }
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: oldest)
+        let bpm = HKUnit.count().unitDivided(by: .minute())
+        var samples: [HKSample] = []
+        var day = start
+        var index = 0
+        while day < Date() {
+            let t = day.addingTimeInterval(9 * 3600)
+            samples.append(HKQuantitySample(type: HKQuantityType(.restingHeartRate), quantity: HKQuantity(unit: bpm, doubleValue: Double(45 + index % 20)), start: t, end: t.addingTimeInterval(1800)))
+            samples.append(HKQuantitySample(type: HKQuantityType(.heartRateVariabilitySDNN), quantity: HKQuantity(unit: .secondUnit(with: .milli), doubleValue: Double(30 + index % 60)), start: t, end: t))
+            day = cal.date(byAdding: .day, value: 1, to: day)!
+            index += 1
+        }
+        let boundary = cal.date(byAdding: .month, value: 3, to: start.addingTimeInterval(-300))!
+        samples += [
+            HKQuantitySample(type: HKQuantityType(.stepCount), quantity: HKQuantity(unit: .count(), doubleValue: 4321), start: boundary.addingTimeInterval(-2 * 86400), end: boundary.addingTimeInterval(86400)),
+            HKQuantitySample(type: HKQuantityType(.heartRate), quantity: HKQuantity(unit: bpm, doubleValue: 72), start: boundary.addingTimeInterval(-2 * 86400), end: boundary.addingTimeInterval(3600)),
+        ]
+        do {
+            var i = 0
+            while i < samples.count {
+                try await store.save(Array(samples[i..<min(i + 1000, samples.count)]))
+                i += 1000
+            }
+            m.log("history recovery/boundaries: seeded \(samples.count) samples")
+        } catch { m.log("HIST seed failed: \(error)") }
     }
 
     /// Reads every workout the way the app does (per-workout queries, many at once) and reports the rate.
