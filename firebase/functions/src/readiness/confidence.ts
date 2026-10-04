@@ -17,6 +17,8 @@ export interface ConfidenceInputs {
   longRunsWithSplits: number;
   /** Share of run minutes with HR readings (0-1) and how it was measured; null without runs. */
   hrCoverage: { fraction: number; rawRuns: number; summaryRuns: number } | null;
+  /** An earlier race used as an estimator when there is no recent one. */
+  earlierRace?: { ageWeeks: number; tagged: boolean } | null;
   priorMarathon: { present: boolean; hasStreams: boolean; representative: boolean };
   maxHrSource: 'user' | 'observed' | 'default';
   decouplingRuns: number;
@@ -44,6 +46,9 @@ export function confidenceComponents(i: ConfidenceInputs): ConfidenceComponent[]
       const label = e.klass === 'half' ? 'half marathon' : e.klass === 'tenK' ? '10K' : '5K';
       pts = e.klass === 'half' && fresh ? c.raceEffort.halfFresh : e.klass === 'tenK' && fresh ? c.raceEffort.tenKFresh : c.raceEffort.older;
       why = `${e.tagged ? 'tagged' : 'HR-verified'} ${label}, ${r1(e.ageWeeks)} weeks old`;
+    } else if (i.earlierRace) {
+      pts = c.raceEffort.earlier;
+      why = `${i.earlierRace.tagged ? 'tagged' : 'HR-verified'} race ${r1(i.earlierRace.ageWeeks)} weeks old (older than the current block; used with extra uncertainty)`;
     } else if (i.lowerBoundOnly) {
       pts = c.raceEffort.lowerBoundOnly;
       why = 'only a below-threshold effort from a training run (lower bound)';

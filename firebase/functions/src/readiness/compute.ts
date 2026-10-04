@@ -2,9 +2,9 @@ import { adjustmentSigmaSeconds, applyAdjustments, buildAdjustments } from './ad
 import { combineEstimates, applyModifier, likelihood, range80 } from './combine.js';
 import { confidenceComponents, confidencePercent } from './confidence.js';
 import { READINESS_CONFIG, type ReadinessConfig } from './config.js';
-import { effortsOfRun, efficiencyPoints, estimateE1, estimateE1b, estimateE2, estimateE3, fitSpeedAtHr, lowerBoundEffort, personalExponent, selectE1Source, volumeAdjustedR } from './estimators.js';
-import { addDays, avgWeeklyKm, countRunsAtLeast, daysBetween, fullSplits, hms, inWindow, longestGapDays, median, runKm, weeksWithRuns, windowStart } from './features.js';
-import { decouplingQualifying, evaluateModifiers } from './modifiers.js';
+import { effortsOfRun, efficiencyPoints, estimateE1, estimateE1b, estimateE2, estimateE3, estimateEarlierRace, fitSpeedAtHr, lowerBoundEffort, personalExponent, selectE1Source, volumeAdjustedR, volumeBasedRepeat } from './estimators.js';
+import { addDays, avgWeeklyKm, countRunsAtLeast, daysBetween, fullSplits, hms, inWindow, longestGapDays, mean, median, runKm, weeksWithRuns, windowStart } from './features.js';
+import { decouplingQualifying, evaluateModifiers, relativeModifiers } from './modifiers.js';
 import type { ReadinessResult } from './schema.js';
 import type { Estimate, PriorMarathon, RaceEffort, ReadinessInputs, RunRaw, RunSummary } from './types.js';
 
@@ -78,7 +78,7 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
   for (const id of tagged) {
     const run = inputs.runs.find((r) => r.id === id);
     if (!run) gaps.push(`Tagged race ${id} is not among the running workouts up to ${asOf}.`);
-    else if (run.date < blockStart) gaps.push(`Tagged race ${id} (${run.date}) is older than ${w.blockWeeks} weeks and was not used.`);
+    else if (run.date < windowStart(asOf, cfg.earlier.maxAgeWeeks)) gaps.push(`Tagged race ${id} (${run.date}) is older than ${cfg.earlier.maxAgeWeeks} weeks and was not used.`);
     else if (effortsOfRun({ cfg, run, raw: inputs.raw.get(id) ?? null, tagged: true, maxHr, ageWeeks: 0 }).length === 0) gaps.push(`Tagged race ${id} could not be used (its distance is outside ${cfg.detect.taggedRangeM[0] / 1000}-${cfg.detect.taggedRangeM[1] / 1000} km or it has no duration).`);
   }
   for (const run of blockRuns) {
@@ -131,11 +131,63 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
   const e3 = estimateE3({ cfg, weeklyKm: e3Km / w.e3Weeks, paceSecPerKm: paceKm > 0 ? paceSec / paceKm : 0, weeksWithRuns: weeksWithRuns(inputs.runs, e3Start, asOf), bodyFatPct: inputs.bodyFatPct, sex: inputs.sex });
   if (e3.available && outdoor.length && outdoor.length < e3Runs.length) e3.notes.push(`${e3Runs.length - outdoor.length} treadmill run(s) were left out of the training pace (their distance counts towards weekly km).`);
 
+  const indices = (start: string, end: string) => {
+    const rs = inputs.runs.filter((r) => inWindow(r, start, end) && r.distanceM && r.movingSec);
+    const outdoorRs = rs.filter((r) => !r.indoor);
+    const pr = outdoorRs.length ? outdoorRs : rs;
+    const k = pr.reduce((n, r) => n + runKm(r), 0);
+    return { weeklyKm: rs.reduce((n, r) => n + runKm(r), 0) / w.e3Weeks, pace: k > 0 ? pr.reduce((n, r) => n + r.movingSec!, 0) / k : 0 };
+  };
+  const massAround = (date: string) => {
+    const from = addDays(date, -cfg.earlier.massWindowDays);
+    const xs = inputs.bodyMassKg.filter((m) => m.date >= from && m.date <= date).map((m) => m.kg);
+    return xs.length ? mean(xs) : null;
+  };
+
+  // ---- E1s: an earlier race (older than the current block) as personal data -------------------------------------------
+  const earlierStart = windowStart(asOf, cfg.earlier.maxAgeWeeks);
+  const earlierEfforts: RaceEffort[] = [];
+  for (const run of inputs.runs.filter((r) => r.date >= earlierStart && r.date < blockStart)) {
+    earlierEfforts.push(...effortsOfRun({ cfg, run, raw: inputs.raw.get(run.id) ?? null, tagged: tagged.has(run.id), maxHr, ageWeeks: daysBetween(run.date, asOf) / 7 }));
+  }
+  const earlierCfg = { ...cfg, e1: { ...cfg.e1, maxSourceAgeWeeks: cfg.earlier.maxAgeWeeks } };
+  const earlierSource = selectE1Source(earlierEfforts, earlierCfg);
+  let earlierR: number | null = null;
+  if (earlierSource && personalR === null && prior && rep?.representative && priorBlockEnd) {
+    // Personal exponent from the best race in the lead-up to the prior marathon, shrunk towards the default (one pair is noisy and confounded by fitness change).
+    const lead: RaceEffort[] = [];
+    for (const run of inputs.runs.filter((r) => inWindow(r, windowStart(priorBlockEnd, cfg.earlier.maxAgeWeeks), priorBlockEnd))) {
+      lead.push(...effortsOfRun({ cfg, run, raw: inputs.raw.get(run.id) ?? null, tagged: false, maxHr, ageWeeks: daysBetween(run.date, priorDate!) / 7 }));
+    }
+    const leadSrc = selectE1Source(lead.filter((x) => x.klass !== 'fiveK'), earlierCfg);
+    const pr = leadSrc ? personalExponent(cfg, prior.seconds, leadSrc.seconds, leadSrc.distanceM) : null;
+    if (pr !== null) {
+      const baseR = volumeAdjustedR(cfg, avgKm12, runs30k).r;
+      earlierR = baseR + cfg.earlier.personalRShrink * (pr - baseR);
+    }
+  }
+  let e1s: Estimate | null = null;
+  if (earlierSource) {
+    const end = addDays(earlierSource.date, -1);
+    const thenEff = fitSpeedAtHr(efficiencyPoints(analysedRaw(inputs, inputs.runs.filter((r) => inWindow(r, windowStart(end, w.efficiencyWeeks), end))), maxHr, cfg), cfg);
+    const kmThen = avgWeeklyKm(inputs.runs, end, w.durabilityWeeks);
+    const gapDays = longestGapDays(inputs.runs, addDays(earlierSource.date, 1), asOf);
+    const maintained = avgKm12 >= cfg.earlier.maintainedVolumeFraction * kmThen && gapDays <= cfg.earlier.maxGapDays;
+    const idxNow = indices(e3Start, asOf);
+    const idxThen = indices(windowStart(end, w.e3Weeks), end);
+    const volumeTimeRatio = volumeBasedRepeat({ cfg, priorSeconds: 1, nowKm: idxNow.weeklyKm, nowPace: idxNow.pace, priorKm: idxThen.weeklyKm, priorPace: idxThen.pace });
+    e1s = estimateEarlierRace({
+      cfg, source: earlierSource, personalR: personalR ?? earlierR, avgWeeklyKm: avgKm12, runs30k, now: nowEff, then: thenEff, weeklyKmThen: kmThen, maintained, gapDays,
+      volumeTimeRatio, massNow: massAround(asOf), massThen: massAround(earlierSource.date),
+    });
+    if (earlierR !== null && personalR === null) e1s.notes.push('Exponent: the runner\'s own marathon-vs-race relationship, moved halfway from the default (a single pair is noisy).');
+  }
+
   // E1b says the runner can run at least that fast: a bound, not an estimate. It only enters the average when nothing better exists;
   // otherwise it can only cap the time (it must not drag better evidence slower).
-  const e1bAsEstimate = !!e1b?.available && !e1.available && !e2.available;
+  const e1bAsEstimate = !!e1b?.available && !e1.available && !e2.available && !e1s?.available;
   if (e1b?.available && !e1bAsEstimate) e1b.notes.push('Used only as an upper bound on the finish time (the effort did not reach a max-effort heart rate), because better evidence exists.');
-  const estimates: Estimate[] = [e1, ...(e1b ? [e1b] : []), e2, e3];
+  const estimates: Estimate[] = [e1, ...(e1b ? [e1b] : []), ...(e1s ? [e1s] : []), e2, e3];
 
   // ---- Confidence (computed even when there is no score, so the user sees what is missing) -----------------------------
   const durRaw = inputs.runs.filter((r) => inWindow(r, durStart, asOf));
@@ -164,7 +216,7 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
   const minRunSec = cfg.confidence.fueling.minRunMinutes * 60;
   const carbRuns = blockRuns.filter((r) => inputs.nutrition.carbRunIds.includes(r.id) && (r.movingSec ?? 0) >= minRunSec).length;
   const components = confidenceComponents({
-    cfg, effort: source, lowerBoundOnly: !source && !!lowerBound, weeksWithRuns: weeksRun, longestGapDays: longestGapDays(inputs.runs, blockStart, asOf),
+    cfg, effort: source, lowerBoundOnly: !source && !e1s && !!lowerBound, earlierRace: !source && e1s && earlierSource ? { ageWeeks: earlierSource.ageWeeks, tagged: earlierSource.tagged } : null, weeksWithRuns: weeksRun, longestGapDays: longestGapDays(inputs.runs, blockStart, asOf),
     longRunsWithSplits: durRaw.filter((r) => runKm(r) >= cfg.confidence.longRuns.minKm && (inputs.raw.get(r.id)?.splits.length ?? 0) > 0).length,
     hrCoverage: hrFrac, priorMarathon: { present: !!prior, hasStreams: !!prior?.raw, representative: rep?.representative ?? false },
     maxHrSource: inputs.maxHr.source, decouplingRuns: decouplingQualifying(modInputs).length, fueling: { enabled: inputs.nutrition.enabled, qualifyingRuns: carbRuns }, weeksToRace,
@@ -196,7 +248,7 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
     expected_temp_c: inputs.context.expectedTempC,
   };
 
-  const combined = e1.available || e1b?.available || e2.available ? combineEstimates(estimates.filter((e) => e.name !== 'E1b_training_effort' || e1bAsEstimate), cfg, weeksToRace) : null;
+  const combined = e1.available || e1b?.available || e1s?.available || e2.available ? combineEstimates(estimates.filter((e) => e.name !== 'E1b_training_effort' || e1bAsEstimate), cfg, weeksToRace) : null;
   if (weeksRun < w.minDataWeeks || !combined) {
     if (weeksRun < w.minDataWeeks) gaps.unshift(`Only ${weeksRun} of the last ${w.blockWeeks} weeks have runs; at least ${w.minDataWeeks} are needed.`);
     else gaps.unshift('No race-quality effort (E1), training-run effort (E1b) or prior-marathon comparison (E2) is available, and the training-based estimator alone is not used.');
@@ -204,7 +256,14 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
   }
 
   // ---- Modifiers, likelihood ---------------------------------------------------------------------------------------
-  const mods = evaluateModifiers(modInputs);
+  let mods = evaluateModifiers(modInputs);
+  const e2Weight = combined.weights.find((x) => x.name === 'E2_prior_marathon')?.weight ?? 0;
+  if (prior && priorBlockEnd && e2Weight > 0) {
+    const pStart = windowStart(priorBlockEnd, w.durabilityWeeks);
+    const priorMods = evaluateModifiers({ ...modInputs, runs: inputs.runs.filter((r) => inWindow(r, pStart, priorBlockEnd)), windowStart: pStart, windowEnd: priorBlockEnd });
+    mods = relativeModifiers(mods, priorMods, e2Weight, cfg.modifiers.capPct);
+    caveats.push('Durability checks were compared with the prior marathon block, because the prior marathon carries most of the weight: only a shortfall against that block adds time to that part of the estimate.');
+  }
   for (const m of mods.results) if (m.status === 'unknown') gaps.push(`Durability check "${m.check}" is unknown: ${m.detail ?? 'no qualifying data'}.`);
   const e1bCap = e1b?.available && !e1bAsEstimate ? e1b.predictedSeconds! : null;
   const centralBase = e1bCap !== null ? Math.min(combined.centralSeconds, e1bCap) : combined.centralSeconds;
@@ -232,6 +291,20 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
 
   // ---- Benchmarks and block comparison -----------------------------------------------------------------------------
   const priorEnd = priorBlockEnd;
+  const massNow = massAround(asOf);
+  const massPrior = priorDate ? massAround(priorDate) : null;
+  if (e2.available && massNow !== null && massPrior !== null && Math.abs(massNow / massPrior - 1) >= 0.02) {
+    caveats.push(`Body mass is ${round(massNow)} kg vs ${round(massPrior)} kg at the prior marathon (${massNow < massPrior ? 'lighter' : 'heavier'}). The prior-marathon estimate compares speed at a fixed heart rate, which already includes the effect of weight, so no separate weight adjustment is added to it.`);
+  }
+  const volumeRepeatSec = prior && priorEnd ? (() => {
+    const now = indices(e3Start, asOf);
+    const then = indices(windowStart(priorEnd, w.e3Weeks), priorEnd);
+    return volumeBasedRepeat({ cfg, priorSeconds: prior.seconds, nowKm: now.weeklyKm, nowPace: now.pace, priorKm: then.weeklyKm, priorPace: then.pace });
+  })() : null;
+  if (volumeRepeatSec !== null && e2.available && Math.abs(volumeRepeatSec / e2.predictedSeconds! - 1) > 0.03) {
+    const dir = volumeRepeatSec < e2.predictedSeconds! ? 'faster' : 'slower';
+    caveats.push(`Cross-check: scaling the prior marathon by the change in training volume and pace alone gives ${hms(volumeRepeatSec)}, ${dir} than the efficiency-based repeat (${hms(e2.predictedSeconds!)}) by more than 3%. The two measure different things (volume vs aerobic efficiency); the volume figure is not averaged in.`);
+  }
   const priorDurStart = priorEnd ? windowStart(priorEnd, w.durabilityWeeks) : null;
   const priorKm12 = priorEnd ? avgWeeklyKm(inputs.runs, priorEnd, w.durabilityWeeks) : null;
   const priorRuns30 = priorEnd ? countRunsAtLeast(inputs.runs, cfg.modifiers.longRuns30k.minKm, priorDurStart!, priorEnd) : null;
@@ -256,6 +329,8 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
     weekly_km_now_vs_prior: [round(avgKm12), priorKm12 !== null ? round(priorKm12) : null] as [number, number | null],
     runs_30k_now_vs_prior: [runs30k, priorRuns30] as [number, number | null],
     speed_at_75pct_hrmax_ratio: e2res.rEff !== null ? round(e2res.rEff, 3) : null,
+    volume_based_repeat: volumeRepeatSec !== null ? hms(volumeRepeatSec) : null,
+    body_mass_kg_now_vs_prior: [massNow !== null ? round(massNow) : null, massPrior !== null ? round(massPrior) : null] as [number | null, number | null],
   };
 
   const result: ReadinessResult = {

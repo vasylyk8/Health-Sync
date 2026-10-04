@@ -59,3 +59,18 @@ summary{min-height:44px;cursor:pointer;padding:8px 0}
 .faq details:first-child{border-top:0}
 details>summary{font-weight:600}
 details>p{margin:0 0 12px}
+.progress{list-style:none;display:flex;gap:8px;padding:0;margin:0 0 16px;font-size:15px;color:var(--muted)}
+.progress li{display:flex;align-items:center;gap:8px;margin:0;padding:6px 14px 6px 6px;border:1px solid var(--line);border-radius:999px}
+.progress span{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;border:1px solid var(--line);font-size:13px}
+.progress .current{color:var(--ink);border-color:var(--ink);font-weight:600}
+.progress .current span{background:var(--ink);color:var(--background);border-color:var(--ink)}
+.progress .done span{background:var(--muted);color:var(--background);border-color:var(--muted);font-size:0}
+.progress .done span::before{content:"\2713";font-size:13px}
+#status.ok{padding:12px 16px;border-radius:16px;border:1px solid var(--ink);font-weight:500}
+#consent.locked h2,#consent.locked #permissions{opacity:.6}
+#consent .actions{position:sticky;bottom:0;margin:0 -24px;padding:12px 24px;background:var(--card);border-radius:0 0 38px 38px;flex-direction:column;align-items:stretch}
+#consent .actions button{flex:none;width:100%}
+#approve:not(:disabled){min-height:60px;font-weight:600;font-size:18px;box-shadow:0 0 0 3px var(--card),0 0 0 5px var(--ink)}
+#deny{background:transparent;min-height:44px;color:var(--muted)}
+button.link{background:transparent;min-height:44px;padding:8px 12px;color:var(--muted);text-decoration:underline}
+.center{text-align:center;margin:0}
