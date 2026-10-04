@@ -47,6 +47,16 @@ final class DailyCheckUITests: XCTestCase {
         if !output.label.contains("DAILYSEM OK") { failures.append("raw aggregation vs HealthKit statistics: " + lines("DAILYSEM")) }
         if !output.label.contains("DAILYRAW OK") { failures.append("daily pass without statistics: " + lines("DAILYRAW")) }
         if !output.label.contains("DAILYCOMPLETE OK") { failures.append("partial hours and long samples: " + lines("DAILYCOMPLETE")) }
+        for experiment in ["baseline", "shared", "larger", "parallel"] {
+            for tag in ["DAILYSEM", "DAILYRAW", "DAILYCOMPLETE"] {
+                if !all.contains(where: { $0.hasPrefix("\(tag) OK \(experiment)") }) {
+                    failures.append("\(experiment) accuracy check missing or failed: " + lines(tag))
+                }
+            }
+        }
+        if all.contains(where: { $0.hasPrefix("DAILYSEM FAIL") || $0.hasPrefix("DAILYRAW FAIL") || $0.hasPrefix("DAILYCOMPLETE FAIL") }) {
+            failures.append("an accuracy check explicitly failed")
+        }
         XCTAssertTrue(failures.isEmpty, failures.joined(separator: " || "))
     }
 }

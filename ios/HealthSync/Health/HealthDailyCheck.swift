@@ -142,22 +142,26 @@ enum DailyCheck {
             return
         }
         guard await seedShapes(m, store: store, today: today, calendar: cal) else { return }
-        let source = HealthKitSource(scope: scope)
-        do {
-            var differences: [String] = []
-            var compared = 0
-            let shapes = cal.date(byAdding: .day, value: -900, to: today)!
-            for (from, to) in [(before, cal.date(byAdding: .day, value: 2, to: day)!), (shapes, cal.date(byAdding: .day, value: 32, to: shapes)!),
-                               (cal.date(byAdding: .day, value: -11, to: today)!, Date())] {
-                let r = try await source.statisticsVersusRaw(from: from, to: to)
-                compared += r.compared
-                differences += r.differences
+        let comparisonEnd = Date()
+        for experiment in RawHistoryExperiment.allCases {
+            let source = HealthKitSource(scope: scope)
+            source.historyExperiment = experiment
+            do {
+                var differences: [String] = []
+                var compared = 0
+                let shapes = cal.date(byAdding: .day, value: -900, to: today)!
+                for (from, to) in [(before, cal.date(byAdding: .day, value: 2, to: day)!), (shapes, cal.date(byAdding: .day, value: 100, to: shapes)!),
+                                   (cal.date(byAdding: .day, value: -11, to: today)!, comparisonEnd)] {
+                    let r = try await source.statisticsVersusRaw(from: from, to: to)
+                    compared += r.compared
+                    differences += r.differences
+                }
+                m.log("DAILYSEM compared \(compared) days and hours, \(differences.count) differ")
+                for d in differences.prefix(40) { m.log("DAILYSEM DIFF \(d)") }
+                m.log(differences.isEmpty && compared > 0 ? "DAILYSEM OK \(experiment.rawValue)" : "DAILYSEM FAIL \(experiment.rawValue) raw aggregation differs from HealthKit's statistics")
+            } catch {
+                m.log("DAILYSEM FAIL \(experiment.rawValue) comparison threw: \(error)")
             }
-            m.log("DAILYSEM compared \(compared) days and hours, \(differences.count) differ")
-            for d in differences.prefix(40) { m.log("DAILYSEM DIFF \(d)") }
-            m.log(differences.isEmpty && compared > 0 ? "DAILYSEM OK" : "DAILYSEM FAIL raw aggregation differs from HealthKit's statistics")
-        } catch {
-            m.log("DAILYSEM FAIL comparison threw: \(error)")
         }
     }
 
@@ -214,6 +218,10 @@ enum DailyCheck {
             // Day 27: sound levels of 60 dB for 30 min and 90 dB for 1 min.
             try await store.save([q(.environmentalAudioExposure, 60, t(27, 9), t(27, 9.5), .decibelAWeightedSoundPressureLevel()),
                                   q(.environmentalAudioExposure, 90, t(27, 15), t(27, 15 + 1.0 / 60), .decibelAWeightedSoundPressureLevel())])
+            // Cross an exact monthly raw-query boundary and leave enough range for three parallel windows.
+            let boundary = cal.date(byAdding: .month, value: 1, to: first)!
+            try await store.save([HKQuantitySample(type: HKQuantityType(.stepCount), quantity: HKQuantity(unit: .count(), doubleValue: 600),
+                                                   start: boundary.addingTimeInterval(-1800), end: boundary.addingTimeInterval(1800))])
             return true
         } catch {
             m.log("DAILYSEM FAIL could not save the reading shapes: \(error)")
@@ -223,8 +231,9 @@ enum DailyCheck {
 
     /// The same ten days read with every statistics query coming back empty: every metric must still come out on every day,
     /// from the raw readings alone.
-    private static func checkWithoutStatistics(_ m: BenchModel, scope: SyncScope, expected: Set<String>, today: Date, calendar cal: Calendar) async {
+    private static func checkWithoutStatistics(_ m: BenchModel, scope: SyncScope, expected: Set<String>, today: Date, calendar cal: Calendar, experiment: RawHistoryExperiment) async {
         let source = HealthKitSource(scope: scope)
+        source.historyExperiment = experiment
         source.debugEmptyStatistics = true
         do {
             let records = try await source.dailyContext(from: cal.date(byAdding: .day, value: -11, to: today)!, to: Date())
@@ -238,16 +247,17 @@ enum DailyCheck {
                 if !absent.isEmpty { missingDays.append("\(day):\(absent.joined(separator: ","))") }
             }
             m.log("DAILYRAW note: \(source.dailyDiagnosticNote() ?? "-")")
-            m.log(missingDays.isEmpty ? "DAILYRAW OK" : "DAILYRAW FAIL without statistics, missing: \(missingDays.joined(separator: "; "))")
+            m.log(missingDays.isEmpty ? "DAILYRAW OK \(experiment.rawValue)" : "DAILYRAW FAIL \(experiment.rawValue) without statistics, missing: \(missingDays.joined(separator: "; "))")
         } catch {
-            m.log("DAILYRAW FAIL daily pass threw: \(error)")
+            m.log("DAILYRAW FAIL \(experiment.rawValue) daily pass threw: \(error)")
         }
     }
 
     /// Partial hourly statistics and a reading starting more than a day before the query: both previously lost data.
-    private static func checkCompleteness(_ m: BenchModel, store: HKHealthStore, scope: SyncScope, today: Date, calendar cal: Calendar) async {
+    private static func checkCompleteness(_ m: BenchModel, store: HKHealthStore, scope: SyncScope, today: Date, calendar cal: Calendar, experiment: RawHistoryExperiment) async {
         do {
             let hourly = HealthKitSource(scope: scope)
+            hourly.historyExperiment = experiment
             hourly.debugPartialHourlyStatistics = true
             let day = cal.date(byAdding: .day, value: -5, to: today)!
             let end = cal.date(byAdding: .day, value: 1, to: day)!
@@ -265,8 +275,11 @@ enum DailyCheck {
             let start = cal.date(byAdding: .hour, value: -40, to: target)!
             let finish = cal.date(byAdding: .hour, value: 10, to: target)!
             let bpm = HKUnit.count().unitDivided(by: .minute())
-            try await store.save(HKQuantitySample(type: HKQuantityType(.restingHeartRate), quantity: HKQuantity(unit: bpm, doubleValue: 51), start: start, end: finish))
+            if experiment == .baseline {
+                try await store.save(HKQuantitySample(type: HKQuantityType(.restingHeartRate), quantity: HKQuantity(unit: bpm, doubleValue: 51), start: start, end: finish))
+            }
             let raw = HealthKitSource(scope: scope)
+            raw.historyExperiment = experiment
             raw.debugEmptyStatistics = true
             let to = cal.date(byAdding: .hour, value: 12, to: target)!
             let batches = try await raw.dailyContextBatches(from: target, to: to, categories: [])
@@ -282,7 +295,7 @@ enum DailyCheck {
                 let made = try BatchWriter.make(header: header, records: batch.records, nextSeq: { Outbox.seqFloor() + 1 }, tz: TimeZone.current.identifier, device: "daily-check", appVersion: "ci")
                 for b in made { emitBatch(m, id: b.id, gz: b.gz) }
             }
-            m.log("DAILYCOMPLETE OK partial hours and long boundary readings")
+            m.log("DAILYCOMPLETE OK \(experiment.rawValue) partial hours and long boundary readings")
         } catch {
             m.log("DAILYCOMPLETE FAIL \(error)")
         }
@@ -365,10 +378,14 @@ enum DailyCheck {
             m.log("DAILYCHECK FAIL daily pass threw: \(error) · report: \(source.dailyReport)")
         }
         await checkSemantics(m, store: store, scope: scope, today: today, calendar: cal)
-        await checkWithoutStatistics(m, scope: scope, expected: expected, today: today, calendar: cal)
+        for experiment in RawHistoryExperiment.allCases {
+            await checkWithoutStatistics(m, scope: scope, expected: expected, today: today, calendar: cal, experiment: experiment)
+        }
         await dumpBatches(m, source: source, from: cal.date(byAdding: .day, value: -11, to: today)!)
         await runHistory(m, store: store, scope: scope, today: today, calendar: cal)
-        await checkCompleteness(m, store: store, scope: scope, today: today, calendar: cal)
+        for experiment in RawHistoryExperiment.allCases {
+            await checkCompleteness(m, store: store, scope: scope, today: today, calendar: cal, experiment: experiment)
+        }
         m.log("BENCH DONE")
     }
 }
