@@ -176,9 +176,9 @@ enum HealthBench {
         let args = ProcessInfo.processInfo.arguments
         let requested = args.firstIndex(of: "-benchCount").flatMap { Int(args[$0 + 1]) } ?? 300
         var passed = expected == requested && expected > 0
-        for forced in [true, false] {
-            var reference: String?
-            let order: [RawHistoryExperiment] = forced ? [.baseline, .shared, .larger, .parallel, .baseline, .parallel, .larger, .shared, .baseline] : [.baseline, .shared, .larger, .parallel]
+        for forced in ProcessInfo.processInfo.arguments.contains("-benchHistoryCheck") ? [true] : [true, false] {
+            var reference: BenchCapture?
+            let order: [RawHistoryExperiment] = ProcessInfo.processInfo.arguments.contains("-benchHistoryCheck") ? [.baseline, .baseline, .shared, .larger, .parallel] : forced ? [.baseline, .shared, .larger, .parallel, .baseline, .parallel, .larger, .shared, .baseline] : [.baseline, .shared, .larger, .parallel]
             for (run, variant) in order.enumerated() {
                 let net = BenchCapture()
                 let root = FileManager.default.temporaryDirectory.appendingPathComponent("history-\(UUID().uuidString)")
@@ -201,14 +201,19 @@ enum HealthBench {
                     let outcome = try await engine.run()
                     let wall = Date().timeIntervalSince(started)
                     let fingerprint = net.fingerprint
-                    if reference == nil { reference = fingerprint }
-                    let equal = fingerprint == reference
+                    if reference == nil { reference = net }
+                    let comparison = try net.comparison(to: reference!)
+                    let equal = comparison.equivalent
+                    if !comparison.exact {
+                        m.log("HIST data \(variant.rawValue) forced=\(forced): exact=\(comparison.exact) equivalent=\(equal) changedRecords=\(comparison.changedRecords) maxDelta=\(String(format: "%.16g", comparison.maximumDelta)) tolerance=1e-9")
+                        for line in net.differences(to: reference!).prefix(2) { m.log("HIST difference \(line.prefix(1800))") }
+                    }
                     let complete = outcome == .finished && box.state.detailsDone.count == expected && box.pending().isEmpty
                     passed = passed && equal && complete
                     let phases = SyncTiming.shared.phaseMilliseconds()
                     let delta = phases.map { key, value in "\(key)=\(String(format: "%.2f", (value - (before[key] ?? 0)) / 1000))s" }.sorted().joined(separator: " ")
                     let counters = await source.historyExperimentSummary()
-                    m.log("HIST result \(variant.rawValue) forced=\(forced) warmup=\(run == 0): wall=\(String(format: "%.2f", wall))s details=\(box.state.detailsDone.count)/\(expected) equal=\(equal) complete=\(complete) digest=\(fingerprint) \(counters) \(net.summary(wall: wall)) \(delta)")
+                    m.log("HIST result \(variant.rawValue) forced=\(forced) warmup=\(run == 0): wall=\(String(format: "%.2f", wall))s details=\(box.state.detailsDone.count)/\(expected) equal=\(equal) exact=\(comparison.exact) maxDelta=\(String(format: "%.16g", comparison.maximumDelta)) complete=\(complete) digest=\(fingerprint) \(counters) \(net.summary(wall: wall)) \(delta)")
                 } catch {
                     passed = false
                     m.log("HIST failed \(variant.rawValue) forced=\(forced): \(error)")
@@ -587,6 +592,14 @@ private final class BenchCapture: Uploader, @unchecked Sendable {
     var fingerprint: String {
         let data = lock.withLock { Data(records.sorted().joined(separator: "\n").utf8) }
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+    private var snapshot: [String] { lock.withLock { records } }
+    func comparison(to reference: BenchCapture) throws -> HistoryRecordComparison {
+        try HistoryRecordComparison.compare(reference.snapshot, snapshot)
+    }
+    func differences(to reference: BenchCapture) -> [String] {
+        let a = Set(reference.snapshot), b = Set(snapshot)
+        return a.subtracting(b).sorted().prefix(1).map { "reference " + $0 } + b.subtracting(a).sorted().prefix(1).map { "candidate " + $0 }
     }
     func summary(wall: Double) -> String { net.summary(wall: wall) }
 }

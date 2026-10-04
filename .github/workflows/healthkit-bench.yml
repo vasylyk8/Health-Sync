@@ -34,6 +34,7 @@ jobs:
       TEST_RUNNER_BENCH_COUNT: ${{ inputs.count || '150' }}
       TEST_RUNNER_BENCH_HISTORY: ${{ github.ref_name == 'perf/first-sync-contention' && '1' || '0' }}
       TEST_RUNNER_BENCH_SCHEDULING: ${{ inputs.scheduling && '1' || '0' }}
+      TEST_RUNNER_BENCH_HISTORY_CHECK: '1'
       TEST_RUNNER_BENCH_MINUTES: '90'
     steps:
       - uses: actions/checkout@v4

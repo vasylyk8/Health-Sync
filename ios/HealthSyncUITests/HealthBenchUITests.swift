@@ -11,6 +11,7 @@ final class HealthBenchUITests: XCTestCase {
         let scheduling = ProcessInfo.processInfo.environment["BENCH_SCHEDULING"] == "1"
         app.launchArguments = ["-healthBench", "-benchCount", count]
         if history { app.launchArguments += ["-benchHistory", "-benchHeavy", "24"] }
+        if history && ProcessInfo.processInfo.environment["BENCH_HISTORY_CHECK"] == "1" { app.launchArguments += ["-benchHistoryCheck"] }
         if scheduling && !history { app.launchArguments += ["-benchScheduling", "-benchHeavy", "24"] }
         app.launch()
 

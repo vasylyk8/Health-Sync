@@ -3,6 +3,22 @@ import XCTest
 @testable import HealthSync
 
 final class RawHistoryExperimentTests: XCTestCase {
+    func testDiagnosticDistinguishesRoundoffFromMissingOrChangedData() throws {
+        let a = ["_daily:{\"k\":\"day\",\"day\":\"2026-01-01\",\"m\":{\"steps\":123.456789012345}}"]
+        let nearby = ["_daily:{\"k\":\"day\",\"day\":\"2026-01-01\",\"m\":{\"steps\":123.456789012346}}"]
+        let roundoff = try HistoryRecordComparison.compare(a, nearby)
+        XCTAssertFalse(roundoff.exact)
+        XCTAssertTrue(roundoff.equivalent)
+        XCTAssertGreaterThan(roundoff.maximumDelta, 0)
+        XCTAssertLessThan(roundoff.maximumDelta, 1e-9)
+        XCTAssertFalse(try HistoryRecordComparison.compare(a, []).equivalent)
+        XCTAssertFalse(try HistoryRecordComparison.compare(a + a, a).equivalent)
+        XCTAssertFalse(try HistoryRecordComparison.compare(a, [a[0].replacingOccurrences(of: "123.456789012345", with: "123.4568")]).equivalent)
+        XCTAssertFalse(try HistoryRecordComparison.compare(a, [a[0].replacingOccurrences(of: "2026-01-01", with: "2026-01-02")]).equivalent)
+        XCTAssertFalse(try HistoryRecordComparison.compare(["_wstream:{\"wid\":\"w1\",\"t\":[1000],\"v\":[50]}"], ["_wstream:{\"wid\":\"w1\",\"t\":[1001],\"v\":[50]}"]).equivalent)
+        XCTAssertFalse(try HistoryRecordComparison.compare(["_event:{\"ok\":true}"], ["_event:{\"ok\":1}"]).equivalent)
+    }
+
     private var key: RawHistoryKey { RawHistoryKey(type: "steps", unit: "count", scale: 1, from: Date(timeIntervalSince1970: 0), to: Date(timeIntervalSince1970: 100), calendar: "gregorian", timeZone: "UTC") }
     private var value: RawHistorySummary { RawHistorySummary(daily: ["sum": [("1970-01-01", 123)]], hourly: []) }
 
