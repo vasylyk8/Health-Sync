@@ -169,6 +169,13 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
       0,
       null,
     ],
+    "runs_read_in_detail": {
+      "current_window": [
+        25,
+        25,
+      ],
+      "prior_window": null,
+    },
     "speed_at_75pct_hrmax_ratio": null,
     "speed_at_marathon_effort_ratio": null,
     "volume_based_repeat": null,
@@ -360,6 +367,9 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
   ],
   "prediction": {
     "central": "4:32:22",
+    "central_before_durability": "4:27:01",
+    "durability_adjustment_pct": 2,
+    "probability_before_durability": 0.042,
     "range_80": [
       "4:01:07",
       "5:03:36",
@@ -441,6 +451,13 @@ exports[`well-prepared runner, tagged half marathon, race in 14 days > matches t
       6,
       null,
     ],
+    "runs_read_in_detail": {
+      "current_window": [
+        25,
+        25,
+      ],
+      "prior_window": null,
+    },
     "speed_at_75pct_hrmax_ratio": null,
     "speed_at_marathon_effort_ratio": null,
     "volume_based_repeat": null,
@@ -627,6 +644,9 @@ exports[`well-prepared runner, tagged half marathon, race in 14 days > matches t
   ],
   "prediction": {
     "central": "3:44:06",
+    "central_before_durability": "3:44:06",
+    "durability_adjustment_pct": 0,
+    "probability_before_durability": 0.537,
     "range_80": [
       "3:31:44",
       "3:56:28",

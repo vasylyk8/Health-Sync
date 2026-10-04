@@ -277,6 +277,9 @@ const base = {
     steadyRunsPerBlock: 12,
     /** Steady runs read for the block before an earlier race. */
     earlierSteadyRuns: 6,
+    /** Runs of at least this length (km) in the comparison windows are all read, up to comparisonWindowRuns per window. */
+    comparisonMinKm: 8,
+    comparisonWindowRuns: 30,
     /** Long runs and possible max efforts of the current block; the prior block's long runs. */
     longRunsCurrent: 12,
     maxEffortsCurrent: 8,
