@@ -33,8 +33,9 @@ struct RawReading: Equatable, Sendable {
 
 /// Daily and hourly values computed from raw readings, for the days and hours Apple Health's own statistics leave out
 /// (a restored iOS 27 iPhone returned empty statistics for every year that ended in the past, while the readings were there).
-/// It follows HealthKit's statistics: a discrete reading counts in every bucket its time span touches, a series reading
-/// weighs as many values as it holds, a cumulative reading is spread over its span by time. Cumulative readings from
+/// It follows HealthKit's statistics (measured in the simulator by the daily check): a discrete reading counts in the one
+/// bucket holding most of its time span, a series reading weighs as many values as it holds, a cumulative reading is spread
+/// over its span by time. Cumulative readings from
 /// several sources are never added together: per hour the largest source wins, like Apple Health's per-interval source
 /// priority, so a Watch and an iPhone that both counted the same walk count it once.
 struct SampleAggregator {
@@ -73,20 +74,17 @@ struct SampleAggregator {
     }
 
     private mutating func addDiscrete(_ r: RawReading) {
-        guard r.min.isFinite, r.max.isFinite, r.last.isFinite else { return }
-        let component: Calendar.Component = granularity == .day ? .day : .hour
-        for bucket in buckets(component, start: r.start, end: r.end) {
-            var acc = discrete[bucket] ?? Discrete()
-            acc.sum += r.value * Double(r.count)
-            acc.weight += r.count
-            acc.min = Swift.min(acc.min, r.min)
-            acc.max = Swift.max(acc.max, r.max)
-            if r.end >= acc.lastAt {
-                acc.lastAt = r.end
-                acc.last = r.last
-            }
-            discrete[bucket] = acc
+        guard r.min.isFinite, r.max.isFinite, r.last.isFinite, let bucket = discreteBucket(r) else { return }
+        var acc = discrete[bucket] ?? Discrete()
+        acc.sum += r.value * Double(r.count)
+        acc.weight += r.count
+        acc.min = Swift.min(acc.min, r.min)
+        acc.max = Swift.max(acc.max, r.max)
+        if r.end >= acc.lastAt {
+            acc.lastAt = r.end
+            acc.last = r.last
         }
+        discrete[bucket] = acc
     }
 
     private mutating func addCumulative(_ r: RawReading) {
@@ -103,6 +101,26 @@ struct SampleAggregator {
             guard hi > lo else { continue }
             hours[hour, default: [:]][r.source, default: 0] += r.value * hi.timeIntervalSince(lo) / span
         }
+    }
+
+    /// The one bucket a discrete reading counts in: the one holding most of its time span, the one it starts in when that is
+    /// a tie (HealthKit's daily statistics count a 22:00-02:00 reading on the day it starts; Apple Health shows the Watch's
+    /// resting heart rate written 23:55-23:50 on the second day). Nil when that bucket is outside [from, to).
+    private func discreteBucket(_ r: RawReading) -> Date? {
+        let component: Calendar.Component = granularity == .day ? .day : .hour
+        guard var best = calendar.dateInterval(of: component, for: r.start) else { return nil }
+        if r.end > r.start {
+            var longest = Swift.min(best.end, r.end).timeIntervalSince(r.start)
+            var cursor = best.end
+            while cursor < r.end, let next = calendar.dateInterval(of: component, for: cursor) {
+                let covered = Swift.min(next.end, r.end).timeIntervalSince(next.start)
+                if covered > longest { longest = covered; best = next }
+                cursor = next.end
+            }
+        }
+        let first = calendar.dateInterval(of: component, for: from)?.start ?? from
+        guard best.start >= first, best.start < to else { return nil }
+        return best.start
     }
 
     /// Starts of the buckets that the span [start, end) touches, inside [from, to). A reading without duration touches the

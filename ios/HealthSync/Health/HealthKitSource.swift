@@ -1040,6 +1040,18 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         return (compared, out)
     }
 
+    /// Daily check only: HealthKit's daily statistics and the raw aggregation of one core metric, one line per day.
+    func statisticsAndRaw(metricKey: String, from: Date, to: Date) async throws -> [String] {
+        guard let metric = scope.dailyMetrics.first(where: { $0.key == metricKey }), case .quantity(let type, let unit, let agg, let scale) = metric.kind else { return [] }
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: from)
+        let range = HKQuery.predicateForSamples(withStart: start, end: to, options: [])
+        let stats = Dictionary(try await dailyStatisticsOnce(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal,
+                                                             predicate: range, options: Self.statisticsOptions(agg)), uniquingKeysWith: { a, _ in a })
+        let raw = Dictionary(try await rawDailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal), uniquingKeysWith: { a, _ in a })
+        return Set(stats.keys).union(raw.keys).sorted().map { "\(metricKey) \($0) statistics=\(Self.text(stats[$0])) raw=\(Self.text(raw[$0]))" }
+    }
+
     private static func text(_ v: Double?) -> String { v.map { String(format: "%.4f", $0) } ?? "none" }
     private static func text(_ b: HourBucket?) -> String {
         guard let b else { return "none" }

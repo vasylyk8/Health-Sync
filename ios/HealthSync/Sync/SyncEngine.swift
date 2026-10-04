@@ -365,7 +365,7 @@ actor SyncEngine {
     /// 11: accept every HealthKit source the user authorized; source is no longer an exclusion rule.
     /// 12: collect daily reads sequentially; the device reported completions without retaining their result slots.
     /// 13: days Apple Health's statistics leave out are filled from the raw readings for every metric (steps, energy and heart
-    ///     rate came back empty for every past year on a restored iPhone); a reading that crosses midnight counts on both days.
+    ///     rate came back empty for every past year on a restored iPhone); a reading counts on the day holding most of it.
     static let dailyVersion = 13
 
     private func dailyContext() async throws {

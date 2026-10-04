@@ -38,6 +38,12 @@ final class SampleAggregationTests: XCTestCase {
         XCTAssertEqual(a.daily(.avg).map(\.0), ["2026-05-11"])
     }
 
+    func testDiscreteReadingSplitEvenlyAcrossMidnightCountsOnTheDayItStarts() {
+        var a = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: false)
+        a.add(RawReading(start: at(2026, 5, 11, 22), end: at(2026, 5, 12, 2), value: 14, source: "s"))
+        XCTAssertEqual(a.daily(.avg).map(\.0), ["2026-05-11"])
+    }
+
     func testSeriesReadingWeighsAsManyValuesAsItHolds() {
         var a = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: false)
         a.add(RawReading(start: at(2026, 5, 3, 8), end: at(2026, 5, 3, 8), value: 60, source: "w"))

@@ -141,6 +141,7 @@ enum DailyCheck {
             m.log("DAILYSEM FAIL could not save readings: \(error)")
             return
         }
+        await experiment(m, store: store, scope: scope, today: today, calendar: cal)
         let source = HealthKitSource(scope: scope)
         do {
             var differences: [String] = []
@@ -155,6 +156,58 @@ enum DailyCheck {
             m.log(differences.isEmpty && compared > 0 ? "DAILYSEM OK" : "DAILYSEM FAIL raw aggregation differs from HealthKit's statistics")
         } catch {
             m.log("DAILYSEM FAIL comparison threw: \(error)")
+        }
+    }
+
+    /// Measures (logs, does not judge) how HealthKit's daily average weighs heart-rate readings of different shapes, and on
+    /// which day it counts a reading that lies mostly in the next day. One shape per day, about 900 days back.
+    private static func experiment(_ m: BenchModel, store: HKHealthStore, scope: SyncScope, today: Date, calendar cal: Calendar) async {
+        let bpm = HKUnit.count().unitDivided(by: .minute())
+        let first = cal.date(byAdding: .day, value: -900, to: today)!
+        func day(_ i: Int) -> Date { cal.date(byAdding: .day, value: i, to: first)! }
+        func hr(_ v: Double, _ start: Date, _ seconds: Double = 0) -> HKQuantitySample {
+            HKQuantitySample(type: HKQuantityType(.heartRate), quantity: HKQuantity(unit: bpm, doubleValue: v), start: start, end: start.addingTimeInterval(seconds))
+        }
+        func series(_ values: [Double], at start: Date, every step: Double, end: Double) async throws {
+            let b = HKQuantitySeriesSampleBuilder(healthStore: store, quantityType: HKQuantityType(.heartRate), startDate: start, device: nil)
+            for (i, v) in values.enumerated() { try b.insert(HKQuantity(unit: bpm, doubleValue: v), at: start.addingTimeInterval(Double(i) * step)) }
+            _ = try await b.finishSeries(metadata: nil, endDate: start.addingTimeInterval(end))
+        }
+        let ten = (0 ..< 10).map { Double(100 + 10 * $0) }
+        do {
+            // Day 0: single 60 at 08:00 + series of ten (100...190) 10 s apart, 100 s long.
+            try await store.save([hr(60, day(0).addingTimeInterval(8 * 3600))])
+            try await series(ten, at: day(0).addingTimeInterval(12 * 3600), every: 10, end: 100)
+            // Day 1: the same series 1 s apart, 10 s long.
+            try await store.save([hr(60, day(1).addingTimeInterval(8 * 3600))])
+            try await series(ten, at: day(1).addingTimeInterval(12 * 3600), every: 1, end: 10)
+            // Day 2: the same series 60 s apart, 600 s long.
+            try await store.save([hr(60, day(2).addingTimeInterval(8 * 3600))])
+            try await series(ten, at: day(2).addingTimeInterval(12 * 3600), every: 60, end: 600)
+            // Day 3: series of two (100, 190) 10 s apart, 20 s long.
+            try await store.save([hr(60, day(3).addingTimeInterval(8 * 3600))])
+            try await series([100, 190], at: day(3).addingTimeInterval(12 * 3600), every: 10, end: 20)
+            // Day 4: single 60 (instant) + single 100 lasting 100 s.
+            try await store.save([hr(60, day(4).addingTimeInterval(8 * 3600)), hr(100, day(4).addingTimeInterval(12 * 3600), 100)])
+            // Day 5: single 60 (instant) + single 100 (instant).
+            try await store.save([hr(60, day(5).addingTimeInterval(8 * 3600)), hr(100, day(5).addingTimeInterval(12 * 3600))])
+            // Day 6: single 60 lasting 60 s + single 100 (instant).
+            try await store.save([hr(60, day(6).addingTimeInterval(8 * 3600), 60), hr(100, day(6).addingTimeInterval(12 * 3600))])
+            // Day 7: single 60 lasting 600 s + single 100 lasting 60 s.
+            try await store.save([hr(60, day(7).addingTimeInterval(8 * 3600), 600), hr(100, day(7).addingTimeInterval(12 * 3600), 60)])
+            // Days 9-10: a respiratory-rate reading from 23:00 to 05:00, mostly on day 10.
+            try await store.save([HKQuantitySample(type: HKQuantityType(.respiratoryRate), quantity: HKQuantity(unit: bpm, doubleValue: 16),
+                                                   start: day(9).addingTimeInterval(23 * 3600), end: day(10).addingTimeInterval(5 * 3600))])
+            // Days 12-13: a resting-heart-rate reading from 23:55 to 23:50 the next day (as the Watch writes them).
+            try await store.save([HKQuantitySample(type: HKQuantityType(.restingHeartRate), quantity: HKQuantity(unit: bpm, doubleValue: 50),
+                                                   start: day(12).addingTimeInterval(23 * 3600 + 55 * 60), end: day(13).addingTimeInterval(23 * 3600 + 50 * 60))])
+        } catch {
+            m.log("DAILYEXP could not save readings: \(error)")
+            return
+        }
+        let source = HealthKitSource(scope: scope)
+        for key in ["hrAvg", "hrMin", "hrMax", "respiratoryRate", "restingHr"] {
+            for line in (try? await source.statisticsAndRaw(metricKey: key, from: day(0), to: day(15))) ?? ["\(key) failed"] { m.log("DAILYEXP \(line)") }
         }
     }
 
