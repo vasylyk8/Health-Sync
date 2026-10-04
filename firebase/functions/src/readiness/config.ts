@@ -143,6 +143,21 @@ const base = {
       /** Runs recorded hotter than this (degC) raise HR for a given pace and are left out of the fit. */
       maxTempC: 22,
     },
+    /**
+     * The same comparison at marathon effort: splits of steady runs at 82-92% of max HR (long runs, marathon-pace work), speed
+     * predicted at 87%. It measures what the 75% comparison cannot (efficiency at race effort, in the long runs of each block).
+     * The two ratios are blended; a gap between them widens the estimate.
+     */
+    marathonEffort: {
+      hrBand: [0.82, 0.92] as [number, number],
+      predictAt: 0.87,
+      minSplits: 15,
+      minHrSd: 0.015,
+      /** Weight of the marathon-effort ratio when both ratios exist. */
+      blend: 0.5,
+      disagreementPct: 3,
+      disagreementSigmaAdd: 1.0,
+    },
     /** Pace spikes beyond this factor of the median split pace are GPS dropouts and dropped. */
     gpsDropoutFactor: 2,
   },
