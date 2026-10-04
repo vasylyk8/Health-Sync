@@ -370,7 +370,11 @@ actor SyncEngine {
     ///     resting energy written at each weigh-in had been taken instead of the Watch's).
     /// 15: cumulative readings merged per 5 minutes with the Watch first (steps 0.7% from HealthKit's own totals instead of
     ///     1.3% by the largest Apple device per hour, measured on a real iPhone).
-    static let dailyVersion = 15
+    /// 16: an iPhone cumulative reading within 5 minutes of a Watch reading is left out (steps 0.2% from HealthKit's totals
+    ///     instead of 0.7%; older years had been 1-3% high); noise notifications read under the identifier HealthKit
+    ///     resolves (none had been read); time in bed without an in-bed record is the time asleep or awake, not first to
+    ///     last segment (24 h on a night with naps).
+    static let dailyVersion = 16
 
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }
@@ -469,7 +473,8 @@ actor SyncEngine {
     ///     for whole years had been left out after repeated statistics errors.
     /// 11: a statistics query failing with "invalid argument" (whole years of hourly heart rate on a restored iPhone) is
     ///     filled from the raw readings instead of the series being left out; steps merged as in daily version 15.
-    static let hourlyVersion = 11
+    /// 12: steps merged as in daily version 16.
+    static let hourlyVersion = 12
 
     private func hourlyHistory() async throws {
         guard !scope.hourly.isEmpty else { return }

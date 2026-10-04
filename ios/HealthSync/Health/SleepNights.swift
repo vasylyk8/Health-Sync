@@ -82,13 +82,11 @@ enum SleepNights {
             let awakeMin = minutes(chosen, [awake])
             if awakeMin > 0 { m["sleepAwakeMin"] = .double(round1(awakeMin)) }
 
-            // In-bed time may come from another source (the phone); fall back to the span of the night.
+            // In-bed time may come from another source (the phone or a sleep app). Without one, the time asleep or awake:
+            // first to last segment would count the day between an evening nap and an afternoon nap (24 h on a real night).
             let inBedMin = minutes(segs, [inBed])
             let asleepOrAwake = chosen.filter { asleepValues.contains($0.value) || $0.value == awake }
-            var inBedTotal = inBedMin
-            if inBedTotal == 0, let first = asleepOrAwake.map(\.start).min(), let last = asleepOrAwake.map(\.end).max() {
-                inBedTotal = last.timeIntervalSince(first) / 60
-            }
+            let inBedTotal = inBedMin > 0 ? inBedMin : minutes(asleepOrAwake, asleepValues.union([awake]))
             if inBedTotal > 0 { m["sleepInBedMin"] = .double(round1(inBedTotal)) }
 
             let starts = segs.filter { $0.value == inBed || asleepOrAwake.contains($0) }.map(\.start)
