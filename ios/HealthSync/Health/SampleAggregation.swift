@@ -13,7 +13,7 @@ struct RawReading: Equatable, Sendable {
     var count: Int
     /// Bundle identifier of the app or device that wrote the reading.
     var source: String
-    /// Written by an Apple Watch (used only to measure alternative merge rules against HealthKit's).
+    /// Written by an Apple Watch: for cumulative types the Watch's own count wins where it has one.
     var watch = false
 
     /// A single value (count 1).
@@ -46,11 +46,12 @@ struct RawReading: Equatable, Sendable {
 ///   side, overlaps split in the middle, and count it in every bucket its span touches (the Watch's resting heart rate
 ///   written 23:55-23:50 counts on both days);
 /// - sound levels average as energy (10^(dB/10)) weighted by duration, an equivalent continuous level;
-/// - a cumulative reading is spread over its span by time, and readings from several sources are never added together:
-///   per hour, if Apple's own devices recorded anything, the larger of them counts (a Watch and an iPhone that both
-///   counted the same walk count it once) and other apps are left out, as Apple Health does by default (a scale app's
-///   whole-day resting energy written at a weigh-in is not added to the Watch's); an hour only other apps recorded counts
-///   their largest.
+/// - a cumulative reading is spread over its span by time into 5-minute slots, and readings from several sources are
+///   never added together. Per slot the Watch counts where it recorded (the largest Watch), else the larger of Apple's other
+///   devices (the iPhone), else, only in an hour none of Apple's devices recorded, the largest other app. So a Watch and an
+///   iPhone that both counted the same walk count it once, and a scale app's whole-day resting energy written at a
+///   weigh-in is not added to the Watch's. Measured on a real iPhone against HealthKit's daily totals (82 days): steps
+///   0.7% median / 3.7% worst day (largest Apple device per hour: 1.3 / 7.4%), active energy 0.0%.
 struct SampleAggregator {
     enum Granularity { case day, hour }
     enum Style { case cumulative, arithmetic, timeWeighted, equivalentLevel }
@@ -86,26 +87,17 @@ struct SampleAggregator {
     }
 
     private var discrete: [Date: Discrete] = [:]
-    /// Cumulative amount per hour start, per source.
-    private var hours: [Date: [String: Double]] = [:]
-    /// Cumulative amount per 5-minute slot, per source, and which sources are Apple Watches: only when `measureVariants`.
+    /// Cumulative amount per 5-minute slot, per source, and which sources are Apple Watches.
     private var slots: [Date: [String: Double]] = [:]
     private var watches: Set<String> = []
-    let measureVariants: Bool
+    static let slotLength: TimeInterval = 300
 
-    init(calendar: Calendar, from: Date, to: Date, style: Style, granularity: Granularity, measureVariants: Bool = false) {
+    init(calendar: Calendar, from: Date, to: Date, style: Style, granularity: Granularity) {
         self.calendar = calendar
         self.from = from
         self.to = to
         self.style = style
         self.granularity = granularity
-        self.measureVariants = measureVariants
-    }
-
-    /// One hour's (or slot's) amount from the per-source amounts: Apple's devices first, the largest of them.
-    static func merged(_ sources: [String: Double]) -> Double {
-        let apple = sources.filter { $0.key.hasPrefix("com.apple.health") }
-        return (apple.isEmpty ? sources : apple).values.max() ?? 0
     }
 
     mutating func add(_ r: RawReading) {
@@ -134,48 +126,41 @@ struct SampleAggregator {
         }
     }
 
+    /// Adds a cumulative reading to its 5-minute slots, spread over its span by time; a reading without duration goes to
+    /// the slot it is in. Only the part inside [from, to) counts.
     private mutating func addCumulative(_ r: RawReading) {
-        // Copies, so the closures and the in-out bucket maps do not access `self` at the same time.
-        let cal = calendar, lower = from, upper = to
-        Self.spread(r, into: &hours, from: lower, to: upper) { cal.dateInterval(of: .hour, for: $0) }
-        guard measureVariants else { return }
         if r.watch { watches.insert(r.source) }
-        Self.spread(r, into: &slots, from: lower, to: upper) { date in
-            let start = Date(timeIntervalSince1970: (date.timeIntervalSince1970 / 300).rounded(.down) * 300)
-            return DateInterval(start: start, duration: 300)
-        }
-    }
-
-    /// Adds a cumulative reading to `buckets`, spread over the buckets its span covers by time.
-    private static func spread(_ r: RawReading, into buckets: inout [Date: [String: Double]], from: Date, to: Date,
-                               bucket: (Date) -> DateInterval?) {
+        func slot(_ date: Date) -> Date { Date(timeIntervalSince1970: (date.timeIntervalSince1970 / Self.slotLength).rounded(.down) * Self.slotLength) }
         let span = r.end.timeIntervalSince(r.start)
         if span <= 0 {
-            guard r.start >= from, r.start < to, let b = bucket(r.start)?.start else { return }
-            buckets[b, default: [:]][r.source, default: 0] += r.value
+            guard r.start >= from, r.start < to else { return }
+            slots[slot(r.start), default: [:]][r.source, default: 0] += r.value
             return
         }
-        var cursor = r.start
-        while cursor < r.end, let interval = bucket(cursor) {
-            let lo = Swift.max(interval.start, r.start, from)
-            let hi = Swift.min(interval.end, r.end, to)
-            if hi > lo { buckets[interval.start, default: [:]][r.source, default: 0] += r.value * hi.timeIntervalSince(lo) / span }
-            cursor = interval.end
+        var cursor = slot(r.start)
+        while cursor < r.end {
+            let next = cursor.addingTimeInterval(Self.slotLength)
+            let lo = Swift.max(cursor, r.start, from)
+            let hi = Swift.min(next, r.end, to)
+            if hi > lo { slots[cursor, default: [:]][r.source, default: 0] += r.value * hi.timeIntervalSince(lo) / span }
+            cursor = next
         }
     }
 
-    /// Daily totals by two other merge rules, to measure against HealthKit's statistics where those work: "a5" Apple's
-    /// devices first, largest per 5 minutes; "w5" the Watch first, then the rest by the same rule, per 5 minutes.
-    func dailyVariants() -> [String: [(String, Double)]] {
-        var a5: [String: Double] = [:]
-        var w5: [String: Double] = [:]
-        for (slot, sources) in slots {
-            let day = SleepNights.dayKey(slot, calendar: calendar)
-            a5[day, default: 0] += Self.merged(sources)
+    private static func isApple(_ source: String) -> Bool { source.hasPrefix("com.apple.health") }
+
+    /// Each slot's amount after merging its sources (see the type's comment), with the slot's start.
+    private func mergedSlots() -> [(Date, Double)] {
+        func hour(_ slot: Date) -> Date { calendar.dateInterval(of: .hour, for: slot)?.start ?? slot }
+        var appleHours = Set<Date>()
+        for (slot, sources) in slots where sources.keys.contains(where: Self.isApple) { appleHours.insert(hour(slot)) }
+        return slots.map { slot, sources -> (Date, Double) in
             let watch = sources.filter { watches.contains($0.key) }
-            w5[day, default: 0] += watch.isEmpty ? Self.merged(sources) : (watch.values.max() ?? 0)
+            if let v = watch.values.max() { return (slot, v) }
+            let apple = sources.filter { Self.isApple($0.key) }
+            if let v = apple.values.max() { return (slot, v) }
+            return (slot, appleHours.contains(hour(slot)) ? 0 : (sources.values.max() ?? 0))
         }
-        return ["a5": a5.keys.sorted().map { ($0, a5[$0]!) }, "w5": w5.keys.sorted().map { ($0, w5[$0]!) }]
     }
 
     private var component: Calendar.Component { granularity == .day ? .day : .hour }
@@ -244,9 +229,7 @@ struct SampleAggregator {
     func daily(_ agg: DailyAgg) -> [(String, Double)] {
         if style == .cumulative {
             var days: [String: Double] = [:]
-            for (hour, sources) in hours {
-                days[SleepNights.dayKey(hour, calendar: calendar), default: 0] += Self.merged(sources)
-            }
+            for (slot, v) in mergedSlots() { days[SleepNights.dayKey(slot, calendar: calendar), default: 0] += v }
             return days.keys.sorted().map { ($0, days[$0]!) }
         }
         // Day buckets map one to one onto days; hour buckets (not used for daily values) would be merged per day.
@@ -267,7 +250,9 @@ struct SampleAggregator {
     /// average (`v`), minimum (`lo`) and maximum (`hi`), each only when asked for.
     func hourly(avg: Bool, min: Bool, max: Bool) -> [HourBucket] {
         if style == .cumulative {
-            return hours.keys.sorted().map { HourBucket(t: $0.msValue, v: Self.merged(hours[$0]!), lo: nil, hi: nil) }
+            var hours: [Date: Double] = [:]
+            for (slot, v) in mergedSlots() { hours[calendar.dateInterval(of: .hour, for: slot)?.start ?? slot, default: 0] += v }
+            return hours.keys.sorted().map { HourBucket(t: $0.msValue, v: hours[$0]!, lo: nil, hi: nil) }
         }
         return discrete.keys.sorted().compactMap { hour in
             guard let acc = discrete[hour] else { return nil }
