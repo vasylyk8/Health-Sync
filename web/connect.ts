@@ -7,13 +7,13 @@ const approve = document.querySelector<HTMLButtonElement>('#approve')!;
 const deny = document.querySelector<HTMLButtonElement>('#deny')!;
 const request = new URL(location.href).searchParams.get('request');
 const descriptions: Record<string, string> = {
-  'health:workouts:read': 'Workouts and detailed measurements, including heart rate, pace, power, and cadence.',
-  'health:daily:read': 'Daily summaries, including sleep, HRV, body measurements, nutrition, mood, and cycle data you sync.',
-  'health:events:read': 'Timed nutrition entries you opted to sync.',
-  'health:profile:read': 'Personal health profile you opted to sync: age, date of birth, biological sex, wheelchair use, and activity mode.',
-  'health:routes:read': 'Workout GPS routes, with the first and last 300 metres hidden.',
+  'health:workouts:read': 'Workouts: heart rate, pace, power, cadence.',
+  'health:daily:read': 'Daily summaries: sleep, HRV, body measurements, nutrition, mood, cycle.',
+  'health:events:read': 'Timed nutrition entries, if you sync them.',
+  'health:profile:read': 'Health profile, if you sync it: age, date of birth, sex, wheelchair use, activity mode.',
+  'health:routes:read': 'GPS routes, with the first and last 300 m hidden.',
   'health:routes:full': 'Exact workout start/end locations, only when you explicitly request them.',
-  offline_access: 'Keep this assistant connected until you disconnect it or authorization expires.',
+  offline_access: 'Stay connected until you disconnect or access expires.',
 };
 const fullRoutes = document.querySelector<HTMLInputElement>('#full-routes')!;
 
