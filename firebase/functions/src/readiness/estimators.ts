@@ -17,6 +17,17 @@ export const nominalM = (cfg: ReadinessConfig, key: StdDistanceKey): number => c
 /** T_target = T_src x (D_target / D_src)^R. */
 export const convertTime = (tSrc: number, dSrc: number, r: number, targetM: number): number => tSrc * (targetM / dSrc) ** r;
 
+/**
+ * A source time expressed as a marathon time. From the half marathon on, R covers the whole jump (the half x 2.19 finding); from a
+ * shorter source the Riegel exponent first carries the time up to the half, where it is well calibrated, and R carries it from there.
+ * (One exponent over a 5K or 10K to marathon jump overstates the fade by a large margin.)
+ */
+export function toMarathon(cfg: ReadinessConfig, tSrc: number, dSrc: number, r: number): number {
+  const half = cfg.stdDistancesM.half;
+  if (dSrc >= half) return convertTime(tSrc, dSrc, r, cfg.marathonM);
+  return convertTime(convertTime(tSrc, dSrc, cfg.e1.belowHalfExponent, half), half, r, cfg.marathonM);
+}
+
 /** Default exponent adjusted for training volume: high volume with several 30 km runs is lower, low volume higher. */
 export function volumeAdjustedR(cfg: ReadinessConfig, avgWeeklyKm: number, runs30k: number): { r: number; adjustment: number } {
   const v = cfg.e1.volume;
@@ -27,7 +38,11 @@ export function volumeAdjustedR(cfg: ReadinessConfig, avgWeeklyKm: number, runs3
 /** The runner's own exponent from a marathon and a max-effort shorter race in the same block. */
 export function personalExponent(cfg: ReadinessConfig, marathonSec: number, srcSec: number, srcM: number): number | null {
   if (!(marathonSec > 0 && srcSec > 0 && srcM > 0 && srcM < cfg.marathonM)) return null;
-  const r = Math.log(marathonSec / srcSec) / Math.log(cfg.marathonM / srcM);
+  // Same two-step shape as toMarathon: a shorter source is first expressed as a half-marathon time.
+  const half = cfg.stdDistancesM.half;
+  const halfSec = srcM < half ? convertTime(srcSec, srcM, cfg.e1.belowHalfExponent, half) : srcSec;
+  const halfM = Math.max(srcM, half);
+  const r = Math.log(marathonSec / halfSec) / Math.log(cfg.marathonM / halfM);
   if (!Number.isFinite(r)) return null;
   return Math.min(cfg.e1.rClamp[1], Math.max(cfg.e1.rClamp[0], r));
 }
@@ -61,8 +76,14 @@ export function effortsOfRun(args: { cfg: ReadinessConfig; run: { id: string; da
   if (!raw) return [];
   const out: RaceEffort[] = [];
   for (const [k] of KEY_BY_NOMINAL) {
-    const eff = raw.efforts.find((e) => e.distanceM === nominalM(cfg, k));
-    if (eff) out.push(mk(k, eff.distanceM, eff.movingSec, raw.hrUnreliable ? null : eff.avgHr, true));
+    const nom = nominalM(cfg, k);
+    const eff = raw.efforts.find((e) => e.distanceM === nom);
+    if (!eff) continue;
+    const e = mk(k, eff.distanceM, eff.movingSec, raw.hrUnreliable ? null : eff.avgHr, true);
+    // Only a workout that is about the effort's distance can be a max effort; a stretch inside a longer run is training
+    // (a runner whose marathon-pace heart rate is already ~89% of max passes any heart-rate test inside a long run).
+    const raceLike = run.distanceM !== null && run.distanceM <= nom * (1 + cfg.detect.taggedNearestTolerance);
+    out.push(raceLike ? e : { ...e, qualifies: false });
   }
   return out;
 }
@@ -80,7 +101,7 @@ export function selectE1Source(efforts: RaceEffort[], cfg: ReadinessConfig): Rac
 /** The fastest implied marathon among efforts that failed the HR test (a floor on fitness, not an estimate). */
 export function lowerBoundEffort(efforts: RaceEffort[], cfg: ReadinessConfig, r: number): RaceEffort | null {
   const ok = efforts.filter((e) => !e.qualifies && e.ageWeeks <= cfg.e1.maxSourceAgeWeeks);
-  return ok.sort((a, b) => convertTime(a.seconds, a.distanceM, r, cfg.marathonM) - convertTime(b.seconds, b.distanceM, r, cfg.marathonM))[0] ?? null;
+  return ok.sort((a, b) => toMarathon(cfg, a.seconds, a.distanceM, r) - toMarathon(cfg, b.seconds, b.distanceM, r))[0] ?? null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -89,7 +110,7 @@ export function lowerBoundEffort(efforts: RaceEffort[], cfg: ReadinessConfig, r:
 export function estimateE1(args: { cfg: ReadinessConfig; source: RaceEffort | null; personalR: number | null; avgWeeklyKm: number; runs30k: number; lowerBound?: RaceEffort | null }): Estimate {
   const { cfg, source, personalR } = args;
   if (!source) {
-    const lb = args.lowerBound ? convertTime(args.lowerBound.seconds, args.lowerBound.distanceM, personalR ?? cfg.e1.rDefault, cfg.marathonM) : null;
+    const lb = args.lowerBound ? toMarathon(cfg, args.lowerBound.seconds, args.lowerBound.distanceM, personalR ?? cfg.e1.rDefault) : null;
     return {
       name: 'E1_race_conversion', available: false, predictedSeconds: null, sigmaPct: null,
       inputs: lb !== null ? { lower_bound_only: { workout_id: args.lowerBound!.workoutId, effort_inferred: false, implied_marathon: hms(lb), note: 'A best effort from a training run that did not reach the heart-rate threshold of a max effort: the runner can run at least this fast, not necessarily that this is their limit.' } } : {},
@@ -102,7 +123,7 @@ export function estimateE1(args: { cfg: ReadinessConfig; source: RaceEffort | nu
   // An effort run in the heat understates fitness: express it as it would have been at a mild temperature.
   const heatPct = source.tempC !== null ? heatPenaltyPct(source.tempC, cfg) : 0;
   const seconds = source.seconds / (1 + heatPct / 100);
-  const predicted = convertTime(seconds, source.distanceM, r, cfg.marathonM);
+  const predicted = toMarathon(cfg, seconds, source.distanceM, r);
   const s = cfg.e1.sigmaPct;
   let sigma = source.klass === 'half' ? (source.ageWeeks <= cfg.e1.halfFreshWeeks ? s.halfUnder8w : s.half8to16w) : source.klass === 'tenK' ? s.tenK : s.fiveK;
   if (personalR !== null) sigma += cfg.e1.personalRSigmaDelta;
@@ -140,7 +161,7 @@ export function estimateE1b(args: { cfg: ReadinessConfig; effort: RaceEffort | n
   ];
   if (heatPct > 0) notes.push(`Run at ${round1(effort.tempC!)} degC; time reduced by ${heatPct.toFixed(1)}% to express fitness at a mild temperature (heuristic).`);
   return {
-    ...base, available: true, predictedSeconds: convertTime(seconds, effort.distanceM, r, cfg.marathonM), sigmaPct: cfg.e1.sigmaPct.trainingRun,
+    ...base, available: true, predictedSeconds: toMarathon(cfg, seconds, effort.distanceM, r), sigmaPct: cfg.e1.sigmaPct.trainingRun,
     inputs: {
       workout_ids: [effort.workoutId], source_distance_m: effort.distanceM, source_time: hms(effort.seconds), source_age_weeks: round1(effort.ageWeeks),
       below_max_effort_threshold: true, hr_fraction: effort.hrFraction !== null ? Math.round(effort.hrFraction * 100) / 100 : null, R: Math.round(r * 1000) / 1000, R_source: args.personalR !== null ? 'personal' : vol.adjustment !== 0 ? 'volume_adjusted' : 'default',

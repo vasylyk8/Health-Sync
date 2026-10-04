@@ -131,6 +131,10 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
   const e3 = estimateE3({ cfg, weeklyKm: e3Km / w.e3Weeks, paceSecPerKm: paceKm > 0 ? paceSec / paceKm : 0, weeksWithRuns: weeksWithRuns(inputs.runs, e3Start, asOf), bodyFatPct: inputs.bodyFatPct, sex: inputs.sex });
   if (e3.available && outdoor.length && outdoor.length < e3Runs.length) e3.notes.push(`${e3Runs.length - outdoor.length} treadmill run(s) were left out of the training pace (their distance counts towards weekly km).`);
 
+  // E1b says the runner can run at least that fast: a bound, not an estimate. It only enters the average when nothing better exists;
+  // otherwise it can only cap the time (it must not drag better evidence slower).
+  const e1bAsEstimate = !!e1b?.available && !e1.available && !e2.available;
+  if (e1b?.available && !e1bAsEstimate) e1b.notes.push('Used only as an upper bound on the finish time (the effort did not reach a max-effort heart rate), because better evidence exists.');
   const estimates: Estimate[] = [e1, ...(e1b ? [e1b] : []), e2, e3];
 
   // ---- Confidence (computed even when there is no score, so the user sees what is missing) -----------------------------
@@ -192,7 +196,7 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
     expected_temp_c: inputs.context.expectedTempC,
   };
 
-  const combined = e1.available || e1b?.available || e2.available ? combineEstimates(estimates, cfg, weeksToRace) : null;
+  const combined = e1.available || e1b?.available || e2.available ? combineEstimates(estimates.filter((e) => e.name !== 'E1b_training_effort' || e1bAsEstimate), cfg, weeksToRace) : null;
   if (weeksRun < w.minDataWeeks || !combined) {
     if (weeksRun < w.minDataWeeks) gaps.unshift(`Only ${weeksRun} of the last ${w.blockWeeks} weeks have runs; at least ${w.minDataWeeks} are needed.`);
     else gaps.unshift('No race-quality effort (E1), training-run effort (E1b) or prior-marathon comparison (E2) is available, and the training-based estimator alone is not used.');
@@ -202,7 +206,10 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
   // ---- Modifiers, likelihood ---------------------------------------------------------------------------------------
   const mods = evaluateModifiers(modInputs);
   for (const m of mods.results) if (m.status === 'unknown') gaps.push(`Durability check "${m.check}" is unknown: ${m.detail ?? 'no qualifying data'}.`);
-  const centralMod = applyModifier(combined.centralSeconds, mods.cappedPct);
+  const e1bCap = e1b?.available && !e1bAsEstimate ? e1b.predictedSeconds! : null;
+  const centralBase = e1bCap !== null ? Math.min(combined.centralSeconds, e1bCap) : combined.centralSeconds;
+  if (e1bCap !== null && e1bCap < combined.centralSeconds) caveats.push('The best training-run effort capped the central estimate: the runner can run at least that fast.');
+  const centralMod = applyModifier(centralBase, mods.cappedPct);
   // Context adjustments (course, expected heat, shoes what-if) move the central estimate and widen sigma, because they are uncertain too.
   const adjs = buildAdjustments(inputs.context, cfg);
   const centralFinal = applyAdjustments(centralMod, adjs);
@@ -215,6 +222,7 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
   const [lo, hi] = range80(centralFinal, sigma, cfg);
   if (mods.totalPct > mods.cappedPct) caveats.push(`Durability modifiers total ${mods.totalPct}%; capped at ${mods.cappedPct}%.`);
   if (prior && prior.seconds <= inputs.goalSeconds) caveats.push(`A prior marathon (${prior.run.date}, ${hms(prior.seconds)}) is at or under the goal time.`);
+  if (combined.disagreementSeconds >= 300) caveats.push(`The estimators disagree by about ${Math.round(combined.disagreementSeconds / 60)} minutes, so the uncertainty was widened.`);
   if (combined.sigmaFloorApplied) caveats.push('The estimators share one runner, so the combined uncertainty was held at 85% of the best single estimator.');
 
   const est = estimates.map((e) => ({

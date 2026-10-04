@@ -11,7 +11,7 @@ Code: `firebase/functions/src/readiness/`. The computation (`compute.ts`) is pur
 | Step | File | What |
 |---|---|---|
 | Extraction | `extract.ts` | Run summaries for 36 months + the prior block (duplicates from two sources removed); raw streams (splits, best efforts, HR drift) only for a shortlist, within a 28 s soft time budget. Reuses `loadType`, `findWorkout`-style loading, `loadStream`, `distanceOf`, and the pure functions of `query/calc.ts`; no MCP tool calls. |
-| Estimators | `estimators.ts` | E1 race conversion (`T x (42195/D)^R`, R = log2(2.19) adjusted for volume, or a personal exponent); E1b the best effort inside a training run when no race-quality effort exists (conservative, sigma 9%); E2 prior-marathon repeat adjusted by speed at 75% HRmax; E3 Tanda & Knechtle (2013). |
+| Estimators | `estimators.ts` | E1 race conversion (`T x (42195/D)^R`, R = log2(2.19) adjusted for volume, or a personal exponent; 10K/5K sources are first converted to a half-marathon equivalent with a milder exponent of 1.06, so short races do not over-penalise); only a tagged race, or an untagged run of race distance (not a segment inside a longer run) at race heart rate, qualifies as a source; E1b the best effort inside a training run, used only as an upper bound on the central estimate when E1 or E2 exist, and as a (sigma 12%) estimator only when neither does; E2 prior-marathon repeat adjusted by speed at 75% HRmax; E3 Tanda & Knechtle (2013). |
 | Durability | `modifiers.ts` | Four heuristic checks adding up to +5% to the predicted time. |
 | Context | `adjust.ts` | Optional course profile, expected race-day temperature and a super-shoes what-if. Small heuristic percentages that also widen sigma. |
 | Combination | `combine.ts` | Inverse-variance mean, correlation floor (0.85 x best sigma), race-day term, normal CDF -> score. |
@@ -26,6 +26,7 @@ Every tunable number lives in `config.ts` (`READINESS_CONFIG`). Modifier sizes, 
 - `as_of_date` bounds every read: nothing after that local date is used (tested). It defaults to today.
 - Inputs: `race_workout_ids` (user-tagged tune-up races, the strongest input), `max_hr` (a measured value beats an observed one, which beats an age formula, which beats a flat 190 bpm; defaults are disclosed and lower confidence), `goal_time` (what-if), `prior_marathon_workout_id` (`"none"` disables).
 - Profile (age, sex) and nutrition events are read only if the category is on in the app **and** the connection holds `health:profile:read` / `health:events:read`; otherwise they are listed as gaps. Unlogged nutrition lowers confidence only, it is never treated as zero fueling.
+- Estimators that disagree widen the uncertainty: their weighted spread is added in quadrature to the combined sigma (`combine.disagreementFactor`).
 - No score is returned (`insufficient_data`) when fewer than 6 of the last 16 weeks have runs, or when neither a race-quality effort (E1) nor a prior-marathon comparison (E2) exists. The training-based estimator is never used alone.
 - Not supported: heart-rate cadence-lock detection (no cadence stream is guaranteed); only implausible or flat HR traces are flagged. Weather checks need the recording app to have stored temperature (Apple Watch does).
 

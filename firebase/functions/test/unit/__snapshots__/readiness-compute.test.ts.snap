@@ -178,6 +178,7 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
     "Race-day weather is not modelled (pass expected_temp_c to include heat).",
     "No course profile was given, so the course is treated as flat (pass course for a rolling or hilly course).",
     "Race-day fueling, pacing and crowd congestion are not modelled; the race-day uncertainty term covers typical effects.",
+    "The estimators disagree by about 20 minutes, so the uncertainty was widened.",
     "The estimators share one runner, so the combined uncertainty was held at 85% of the best single estimator.",
   ],
   "confidence": {
@@ -275,9 +276,9 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
         "Source is a race the runner tagged.",
         "Exponent adjusted +0.02 for volume (41 km/week, 0 runs of 30 km or more).",
       ],
-      "predicted": "5:04:08",
+      "predicted": "4:44:10",
       "sigma_pct": 5,
-      "weight": 0.555,
+      "weight": 0.588,
     },
     {
       "available": false,
@@ -304,13 +305,13 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
       ],
       "predicted": "4:02:32",
       "sigma_pct": 7,
-      "weight": 0.445,
+      "weight": 0.412,
     },
   ],
   "likelihood": {
     "label": "very unlikely",
-    "probability": 0,
-    "score_0_10": 0,
+    "probability": 0.026,
+    "score_0_10": 0.3,
   },
   "mode": "race_window",
   "modifiers": [
@@ -351,12 +352,12 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
     },
   ],
   "prediction": {
-    "central": "4:42:15",
+    "central": "4:32:22",
     "range_80": [
-      "4:24:13",
-      "5:00:16",
+      "4:01:07",
+      "5:03:36",
     ],
-    "sigma_pct": 4.98,
+    "sigma_pct": 8.95,
   },
   "race": {
     "date": "2024-07-13",
@@ -569,7 +570,7 @@ exports[`well-prepared runner, tagged half marathon, race in 14 days > matches t
   ],
   "likelihood": {
     "label": "toss-up",
-    "probability": 0.543,
+    "probability": 0.537,
     "score_0_10": 5.4,
   },
   "mode": "race_window",
@@ -613,10 +614,10 @@ exports[`well-prepared runner, tagged half marathon, race in 14 days > matches t
   "prediction": {
     "central": "3:44:06",
     "range_80": [
-      "3:33:25",
-      "3:54:46",
+      "3:31:44",
+      "3:56:28",
     ],
-    "sigma_pct": 3.72,
+    "sigma_pct": 4.31,
   },
   "race": {
     "date": "2024-07-13",
