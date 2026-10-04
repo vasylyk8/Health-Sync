@@ -463,7 +463,9 @@ actor SyncEngine {
     /// 7: recognize every reserved Apple bundle identifier in the source filter.
     /// 8: accept every authorized source for hourly HRV and its raw fallback.
     /// 9: hours of days the statistics leave out are filled from the raw readings for every series (heart rate, steps).
-    static let hourlyVersion = 9
+    /// 10: a statistics query that fails (not only one that comes back empty) is filled from the raw readings; heart rate
+    ///     for whole years had been left out after repeated statistics errors.
+    static let hourlyVersion = 10
 
     private func hourlyHistory() async throws {
         guard !scope.hourly.isEmpty else { return }
