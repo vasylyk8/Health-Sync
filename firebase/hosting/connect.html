@@ -2,21 +2,21 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Connect KROK</title><link rel="stylesheet" href="/style.css"><script type="module" src="/connect.js"></script></head>
 <body><header class="top"><a class="brand" href="/"><img src="/icon.png" alt="" width="32" height="32">KROK</a><nav aria-label="Main"><a href="/mcp-docs">Connect</a><a href="/support">Support</a><a href="/privacy">Privacy</a></nav></header>
-<main><h1>Connect your KROK account</h1><p id="status" role="status" aria-live="polite">Loading sign-in…</p>
-<section id="iphone-setup" class="card" aria-labelledby="iphone-setup-title"><h2 id="iphone-setup-title">New to KROK? Start on your iPhone.</h2>
-<p>KROK requires its iPhone app to sync the Apple Health data you choose.</p>
-<p><button class="action" type="button" disabled data-krok-download="pending">App Store link coming soon</button></p>
-<ol><li>Install KROK on your iPhone.</li><li>Open KROK, connect Apple Health, sign in with Apple, and let your data sync.</li><li>Return to your assistant and connect KROK using the same Apple Account.</li></ol>
-<p>Already have KROK set up? Continue with sign-in below.</p>
-<p>If this connection expires while you set up the app, start a new connection in your assistant.</p></section>
+<main><h1>Connect KROK to your assistant</h1><p id="status" role="status" aria-live="polite">Loading sign-in…</p>
+
 <button id="sign-in" type="button" hidden>Sign in with Apple</button>
 <button id="switch-account" type="button" hidden>Use a different account</button>
-<section id="consent" hidden><h2>Allow <span id="assistant">your assistant</span> to read your data?</h2>
+<section id="consent" class="card" hidden><h2>Allow <span id="assistant">your assistant</span> to read your data?</h2>
 <p id="client"></p><ul id="permissions"></ul>
 <p id="full-route-option" hidden><label><input id="full-routes" type="checkbox"> Also allow exact start/end locations when I request them.</label></p>
 <p>Access is read-only. Your assistant processes the data it requests under its own terms. You can disconnect it or delete your server data in KROK at any time.</p>
-<p><button id="approve" type="button" disabled>Allow access</button> <button id="deny" type="button">Cancel</button></p>
-<details><summary>Directory reviewer access</summary><form id="reviewer-form"><p><label>Email <input id="reviewer-email" type="email" autocomplete="username" required></label></p>
+<p class="actions"><button id="approve" type="button" disabled>Allow access</button><button id="deny" type="button">Cancel</button></p>
+<details class="reviewer"><summary>Directory reviewer access</summary><form id="reviewer-form"><p><label>Email <input id="reviewer-email" type="email" autocomplete="username" required></label></p>
 <p><label>Password <input id="reviewer-password" type="password" autocomplete="current-password" required></label></p><button type="submit">Sign in to review account</button></form></details>
-</section><p><a href="/privacy">Privacy policy</a> · <a href="/mcp-docs">Connection instructions</a></p></main>
+</section><section id="iphone-setup" class="card" aria-labelledby="iphone-setup-title"><h2 id="iphone-setup-title">New to KROK? Start on your iPhone.</h2>
+<p>KROK requires its iPhone app to sync the Apple Health data you choose.</p>
+<ol class="steps"><li><strong>Install KROK</strong> on your iPhone.</li><li><strong>Connect Apple Health</strong> and sign in with Apple, then let your data sync.</li><li><strong>Come back to your assistant</strong> and connect KROK using the same Apple Account.</li></ol>
+<p><button class="action" type="button" disabled data-krok-download="pending">App Store link coming soon</button></p>
+<p class="small">Already set up? Sign in above. If this connection expires while you set up the app, start a new one in your assistant.</p></section>
+<p class="small"><a href="/privacy">Privacy policy</a> · <a href="/mcp-docs">Connection instructions</a></p></main>
 <footer class="foot">© 2ndOp Inc · <a href="/support">Support</a> · <a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms</a></footer></body></html>
