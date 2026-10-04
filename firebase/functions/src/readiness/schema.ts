@@ -25,6 +25,7 @@ export const readinessShape = {
   modifiers: z.array(z.object({
     check: z.string(), value: z.number().nullable(), benchmark: z.string(), applied_pct: z.number(), status: z.enum(['met', 'not_met', 'unknown']), evidence, detail: z.string().optional(),
   })).optional(),
+  adjustments: z.array(z.object({ name: z.string(), pct: z.number().describe('percent of the finish time, positive = slower'), evidence, detail: z.string() })).optional(),
   benchmarks: z.array(z.object({ metric: z.string(), value: z.number().nullable(), context: z.string(), evidence })).optional(),
   block_comparison: z.object({
     prior_marathon: z.object({ workout_id: z.string(), date: z.string(), time: hms, representative: z.boolean() }).nullable(),
@@ -37,6 +38,8 @@ export const readinessShape = {
     max_hr: z.number(), max_hr_source: z.enum(['user', 'observed', 'default']), max_hr_note: z.string().nullable(),
     body_fat_source: z.enum(['health', 'default']), sex_source: z.enum(['profile', 'unknown']),
     goal_time_source: z.enum(['race_goal', 'parameter']),
+    course: z.enum(['flat', 'rolling', 'hilly']).nullable(),
+    expected_temp_c: z.number().nullable(),
   }).optional(),
   caveats: z.array(z.string()),
   /** Only with detail "full". */

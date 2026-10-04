@@ -43,7 +43,7 @@ export function raw(id: string, km: number, o: Partial<RunRaw> & { split?: Split
   const movingSec = splits.reduce((n, s) => n + s.moving_seconds, 0);
   return {
     id, distanceSource: 'DistanceWalkingRunning', splits, hrCoverage: 1, hrUnreliable: false, decouplingPct: 3, efforts: [], movingSec, distanceM: km * 1000,
-    gainPerKm: 0, halves: [movingSec / 2, movingSec / 2], rawComplete: true, ...o,
+    gainPerKm: 0, halves: [movingSec / 2, movingSec / 2], rawComplete: true, tempC: null, ...o,
   };
 }
 
@@ -53,7 +53,7 @@ export function inputs(o: Partial<ReadinessInputs> & { runs?: RunSummary[] } = {
   return {
     asOf: '2024-06-29', tz: 'UTC', race: { id: 'chicago-marathon-2024', name: 'Chicago Marathon', date: '2024-07-13', daysUntil: 14 }, goalSeconds: 13_500,
     maxHr: { value: 190, source: 'user' }, sex: 'male', bodyFatPct: 14, runs: [], raw: new Map(), rawSkipped: [], taggedRaceIds: [], priorMarathon: null, priorDisabled: false,
-    nutrition: { enabled: true, carbRunIds: [] }, gaps: [], notes: [], ...o,
+    nutrition: { enabled: true, carbRunIds: [] }, context: { course: null, expectedTempC: null, newSuperShoes: false }, gaps: [], notes: [], ...o,
   };
 }
 

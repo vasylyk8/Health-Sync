@@ -5,6 +5,8 @@ exports[`sparse data > returns insufficient_data without a score when fewer than
   "as_of": "2024-06-29",
   "assumptions": {
     "body_fat_source": "health",
+    "course": null,
+    "expected_temp_c": null,
     "goal_time_source": "race_goal",
     "max_hr": 190,
     "max_hr_note": null,
@@ -106,9 +108,12 @@ exports[`sparse data > returns insufficient_data without a score when fewer than
 
 exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] = `
 {
+  "adjustments": [],
   "as_of": "2024-06-29",
   "assumptions": {
     "body_fat_source": "health",
+    "course": null,
+    "expected_temp_c": null,
     "goal_time_source": "race_goal",
     "max_hr": 190,
     "max_hr_note": null,
@@ -135,10 +140,16 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
       "value": 0,
     },
     {
-      "context": "no runs recorded before the block",
+      "context": "context only, not used in the estimate: no runs recorded before the block",
       "evidence": "moderate",
       "metric": "avg_weekly_km_base_52wk",
       "value": null,
+    },
+    {
+      "context": "of 0 runs of 90 minutes or more in the block; not logged does not mean not eaten (context only)",
+      "evidence": "weak",
+      "metric": "long_runs_with_carbs_logged",
+      "value": 0,
     },
     {
       "context": "of 16",
@@ -164,6 +175,9 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
     "The likelihood is a modelled probability of finishing at or under the goal time given the recorded data. It is not a guarantee, a medical assessment or a training prescription.",
     "Confidence describes how complete and trustworthy the data is. It is reported separately and does not change the likelihood.",
     "Modifier sizes, sigmas and confidence weights are heuristics until calibrated by backtest.",
+    "Race-day weather is not modelled (pass expected_temp_c to include heat).",
+    "No course profile was given, so the course is treated as flat (pass course for a rolling or hilly course).",
+    "Race-day fueling, pacing and crowd congestion are not modelled; the race-day uncertainty term covers typical effects.",
     "The estimators share one runner, so the combined uncertainty was held at 85% of the best single estimator.",
   ],
   "confidence": {
@@ -358,9 +372,12 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
 
 exports[`well-prepared runner, tagged half marathon, race in 14 days > matches the snapshot 1`] = `
 {
+  "adjustments": [],
   "as_of": "2024-06-29",
   "assumptions": {
     "body_fat_source": "health",
+    "course": null,
+    "expected_temp_c": null,
     "goal_time_source": "race_goal",
     "max_hr": 190,
     "max_hr_note": null,
@@ -387,10 +404,16 @@ exports[`well-prepared runner, tagged half marathon, race in 14 days > matches t
       "value": 6,
     },
     {
-      "context": "no runs recorded before the block",
+      "context": "context only, not used in the estimate: no runs recorded before the block",
       "evidence": "moderate",
       "metric": "avg_weekly_km_base_52wk",
       "value": null,
+    },
+    {
+      "context": "of 16 runs of 90 minutes or more in the block; not logged does not mean not eaten (context only)",
+      "evidence": "weak",
+      "metric": "long_runs_with_carbs_logged",
+      "value": 0,
     },
     {
       "context": "of 16",
@@ -416,6 +439,9 @@ exports[`well-prepared runner, tagged half marathon, race in 14 days > matches t
     "The likelihood is a modelled probability of finishing at or under the goal time given the recorded data. It is not a guarantee, a medical assessment or a training prescription.",
     "Confidence describes how complete and trustworthy the data is. It is reported separately and does not change the likelihood.",
     "Modifier sizes, sigmas and confidence weights are heuristics until calibrated by backtest.",
+    "Race-day weather is not modelled (pass expected_temp_c to include heat).",
+    "No course profile was given, so the course is treated as flat (pass course for a rolling or hilly course).",
+    "Race-day fueling, pacing and crowd congestion are not modelled; the race-day uncertainty term covers typical effects.",
   ],
   "confidence": {
     "components": [

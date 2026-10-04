@@ -146,7 +146,7 @@ describe('durability modifiers', () => {
 
 // ---------------------------------------------------------------------------------------------
 
-const eff = (klass: RaceEffort['klass'], ageWeeks: number, tagged = false): RaceEffort => ({ workoutId: 'x', date: '2024-06-01', ageWeeks, distanceM: 21_097.5, seconds: 5_700, hrFraction: 0.9, tagged, effortInferred: !tagged, qualifies: true, klass });
+const eff = (klass: RaceEffort['klass'], ageWeeks: number, tagged = false): RaceEffort => ({ workoutId: 'x', date: '2024-06-01', ageWeeks, distanceM: 21_097.5, seconds: 5_700, hrFraction: 0.9, tagged, effortInferred: !tagged, qualifies: true, klass, tempC: null });
 const full: ConfidenceInputs = {
   cfg, effort: eff('half', 3), lowerBoundOnly: false, weeksWithRuns: 14, longestGapDays: 4, longRunsWithSplits: 4, hrCoverage: { fraction: 0.95, rawRuns: 20, summaryRuns: 10 },
   priorMarathon: { present: true, hasStreams: true, representative: true }, maxHrSource: 'user', decouplingRuns: 3, fueling: { enabled: true, qualifyingRuns: 3 }, weeksToRace: 2,

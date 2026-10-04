@@ -18,6 +18,12 @@ export interface AssessArgs {
   distance_source?: DistanceSource;
   timezone?: string;
   detail?: 'summary' | 'full';
+  /** Course profile of the race (default: no adjustment, i.e. treated as flat). */
+  course?: 'flat' | 'rolling' | 'hilly';
+  /** Expected race-day air temperature in degC (default: not modelled). */
+  expected_temp_c?: number;
+  /** What-if: carbon-plated shoes not worn for the source efforts. */
+  new_super_shoes?: boolean;
 }
 
 /** Not exposed through MCP: lets tests and the backtest supply a race that is not among the runner's entered goals, and tune the config. */
@@ -54,6 +60,8 @@ export async function assessRaceReadiness(deps: QueryDeps, args: AssessArgs, o: 
   const asOf = args.as_of_date ? parseDate(args.as_of_date, 'as_of_date') : today;
   if (asOf > today) throw new ToolError('bad_request', 'as_of_date cannot be in the future.');
   const goalOverride = args.goal_time !== undefined ? parseGoalTime(args.goal_time) : null;
+  if (args.expected_temp_c !== undefined && !(args.expected_temp_c >= -30 && args.expected_temp_c <= 50)) throw new ToolError('bad_request', 'expected_temp_c must be an air temperature in degrees Celsius between -30 and 50.');
+  if (args.course !== undefined && !['flat', 'rolling', 'hilly'].includes(args.course)) throw new ToolError('bad_request', 'course must be flat, rolling or hilly.');
   const tagged = [...new Set(args.race_workout_ids ?? [])];
   if (tagged.length > cfg.maxTaggedRaces || tagged.some((id) => !ID_RE.test(id))) throw new ToolError('bad_request', `race_workout_ids must be up to ${cfg.maxTaggedRaces} workout ids returned by get_workouts.`);
   if (args.prior_marathon_workout_id !== undefined && args.prior_marathon_workout_id !== 'none' && !ID_RE.test(args.prior_marathon_workout_id)) throw new ToolError('bad_request', 'prior_marathon_workout_id must be a workout id returned by get_workouts, or "none".');
@@ -83,7 +91,7 @@ export async function assessRaceReadiness(deps: QueryDeps, args: AssessArgs, o: 
   // ---- Extraction and computation ----------------------------------------------------------------------------------
   const { inputs, coverage, complete } = await gatherInputs(deps, {
     tz, asOf, race: { id: race.raceId, name: race.raceName, date: race.raceDate, daysUntil: race.daysUntilRace }, goalSeconds,
-    maxHr: args.max_hr, raceWorkoutIds: tagged, priorMarathonId: args.prior_marathon_workout_id, distanceSource: args.distance_source ?? 'auto', cfg, clock: o.clock,
+    maxHr: args.max_hr, raceWorkoutIds: tagged, context: { course: args.course ?? null, expectedTempC: args.expected_temp_c ?? null, newSuperShoes: args.new_super_shoes === true }, priorMarathonId: args.prior_marathon_workout_id, distanceSource: args.distance_source ?? 'auto', cfg, clock: o.clock,
     allowProfile: !o.scopes || o.scopes.includes('health:profile:read'),
     allowNutrition: !o.scopes || o.scopes.includes('health:events:read'),
   });

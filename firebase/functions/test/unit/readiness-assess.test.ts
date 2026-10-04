@@ -74,11 +74,39 @@ describe('assess_race_readiness end to end', () => {
     expect(JSON.stringify((later.estimators as { predicted: string }[])[0])).not.toEqual(JSON.stringify((before.estimators as { predicted: string }[])[0]));
   });
 
-  it('with an earlier as_of_date the later race does not exist yet', async () => {
+  it('with an earlier as_of_date the later race does not exist yet: only training-run efforts remain, scored roughly', async () => {
     const r = await ask({ as_of_date: '2024-05-25', race_workout_ids: [HM_ID] });
-    expect(r.status).toBe('insufficient_data');
     expect(JSON.stringify(r.data_gaps)).toContain(`Tagged race ${HM_ID} is not among the running workouts up to 2024-05-25`);
-    expect(r.likelihood).toBeUndefined();
+    const est = r.estimators as { name: string; available: boolean; inputs: Record<string, unknown> }[];
+    expect(est.find((e) => e.name === 'E1_race_conversion')!.available).toBe(false);
+    expect(est.find((e) => e.name === 'E1b_training_effort')).toMatchObject({ available: true, inputs: { below_max_effort_threshold: true } });
+    expect(JSON.stringify(r.caveats)).toContain('No race-quality effort was found');
+    // The race of 8 June is not in the data yet: no estimator may point at it.
+    expect(JSON.stringify(r.estimators)).not.toContain(HM_ID);
+    expect((r.confidence as { components: { name: string; points: number }[] }).components.find((c) => c.name === 'race_effort')!.points).toBe(5);
+  });
+
+  it('applies course, expected heat and the shoes what-if, lists them, and widens the range', async () => {
+    const base = await ask({ race_workout_ids: [HM_ID] });
+    const adj = await ask({ race_workout_ids: [HM_ID], course: 'hilly', expected_temp_c: 25, new_super_shoes: true });
+    const sec = (t: string) => t.split(':').reduce((n, x) => n * 60 + Number(x), 0);
+    // +2.5% (hilly) +4% (25 degC: 10 degC over 15 x 0.4) -1% (shoes): about +5.6%.
+    const ratio = sec((adj.prediction as { central: string }).central) / sec((base.prediction as { central: string }).central);
+    expect(ratio).toBeCloseTo(1.025 * 1.04 * 0.99, 2);
+    expect((adj.adjustments as { name: string; pct: number }[]).map((a) => [a.name, a.pct])).toEqual([['course', 2.5], ['expected_race_day_heat', 4], ['super_shoes_what_if', -1]]);
+    expect((adj.prediction as { sigma_pct: number }).sigma_pct).toBeGreaterThan((base.prediction as { sigma_pct: number }).sigma_pct);
+    expect((adj.likelihood as { score_0_10: number }).score_0_10).toBeLessThan((base.likelihood as { score_0_10: number }).score_0_10);
+    expect(adj.assumptions).toMatchObject({ course: 'hilly', expected_temp_c: 25 });
+    expect(adj.caveats as string[]).not.toEqual(expect.arrayContaining([expect.stringContaining('Race-day weather is not modelled')]));
+    expect(base.adjustments).toEqual([]);
+    expect(base.caveats as string[]).toEqual(expect.arrayContaining([expect.stringContaining('Race-day weather is not modelled'), expect.stringContaining('treated as flat'), expect.stringContaining('fueling, pacing and crowd')]));
+  });
+
+  it('a flat course and a mild day change nothing but are recorded', async () => {
+    const base = await ask({ race_workout_ids: [HM_ID] });
+    const flat = await ask({ race_workout_ids: [HM_ID], course: 'flat', expected_temp_c: 12 });
+    expect(flat.prediction).toEqual(base.prediction);
+    expect((flat.adjustments as { pct: number }[]).map((a) => a.pct)).toEqual([0, 0]);
   });
 
   it('removes a duplicate recording of the same run and says so', async () => {
@@ -167,6 +195,8 @@ describe('statuses and validation', () => {
     await expect(ask({ race_workout_ids: Array.from({ length: 11 }, (_, i) => `workout-${i}-aa`) })).rejects.toThrow(/up to 10/);
     await expect(ask({ prior_marathon_workout_id: 'a/b' })).rejects.toThrow(/prior_marathon/);
     await expect(ask({ timezone: 'Mars/Base' })).rejects.toThrow(/timezone/);
+    await expect(ask({ expected_temp_c: 99 })).rejects.toThrow(/expected_temp_c/);
+    await expect(ask({ course: 'mountain' as never })).rejects.toThrow(/course/);
   });
   it('parses goal times', () => {
     expect(parseGoalTime('3:45:00')).toBe(13_500);
@@ -190,7 +220,7 @@ describe('MCP registration', () => {
     expect(tool.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     expect(tool.description).toMatch(/not a guarantee, medical assessment, or training prescription/);
     expect(tool.description).toMatch(/more than 6 weeks away/);
-    expect(Object.keys(tool.inputSchema.properties ?? {}).sort()).toEqual(['as_of_date', 'detail', 'distance_source', 'goal_time', 'max_hr', 'prior_marathon_workout_id', 'race_id', 'race_workout_ids', 'timezone']);
+    expect(Object.keys(tool.inputSchema.properties ?? {}).sort()).toEqual(['as_of_date', 'course', 'detail', 'distance_source', 'expected_temp_c', 'goal_time', 'max_hr', 'new_super_shoes', 'prior_marathon_workout_id', 'race_id', 'race_workout_ids', 'timezone']);
   });
   it('answers through the real endpoint with output that validates against the declared schema', async () => {
     const r = await s.call('assess_race_readiness', { as_of_date: AS_OF, max_hr: 190, race_workout_ids: [HM_ID] });

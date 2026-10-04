@@ -101,7 +101,7 @@ describe('sparse data', () => {
     const t = trainingBlock({ asOf: AS_OF, weeks: 16 });
     const out = computeReadiness(inputs({ runs: t.runs, raw: new Map() }), cfg);
     expect(out.status).toBe('insufficient_data');
-    expect(out.data_gaps[0]).toContain('E1');
+    expect(out.data_gaps[0]).toContain('E1b');
     expect(out.estimators).toBeUndefined();
   });
 });
@@ -126,8 +126,13 @@ describe('edge cases', () => {
     expect(tagged.status).toBe('ok');
     expect(tagged.confidence!.components.find((c) => c.name === 'hr_coverage')!.points).toBe(0);
     expect(tagged.modifiers!.find((m) => m.check === 'long_run_decoupling')!.status).toBe('unknown');
-    // The same runner without the tag has no race-quality effort: no E1 and no E2 -> no score.
-    expect(computeReadiness(inputs({ runs: runsNoHr, raw: noHr }), cfg).status).toBe('insufficient_data');
+    // The same runner without the tag has no race-quality effort: only a rough estimate from the best training-run effort.
+    const untagged = computeReadiness(inputs({ runs: runsNoHr, raw: noHr }), cfg);
+    expect(untagged.status).toBe('ok');
+    expect(untagged.estimators!.find((e) => e.name === 'E1_race_conversion')!.available).toBe(false);
+    expect(untagged.estimators!.find((e) => e.name === 'E1b_training_effort')).toMatchObject({ available: true, sigma_pct: 9 });
+    expect(untagged.caveats.join(' ')).toContain('No race-quality effort was found');
+    expect(untagged.confidence!.components.find((c) => c.name === 'race_effort')!.points).toBe(5);
   });
   it('notes when a prior marathon already beat the goal and still computes', () => {
     const base = wellPrepared();
@@ -239,5 +244,66 @@ describe('with a prior marathon', () => {
     expect(mk({ paces: (i) => (i % 4 === 0 ? 560 : 320) }).reasons.join(' ')).toContain('walk-heavy');
     expect(mk({ halves: [7_100, 6_500], hr: 130 }).reasons[0]).toContain('pacing duty');
     expect(mk({ halves: [7_100, 6_500], hr: 170 }).representative).toBe(true); // negative split at a high effort is fine
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Context adjustments and training-run efforts
+
+describe('context adjustments', () => {
+  const base = () => wellPrepared();
+  const sec = (t: string) => t.split(':').reduce((n, x) => n * 60 + Number(x), 0);
+  const central = (ctx: Partial<ReturnType<typeof base>['context']>) => sec(computeReadiness({ ...base(), context: { ...base().context, ...ctx } }, cfg).prediction!.central);
+
+  it('moves the central estimate by the stated percentages and lists each adjustment', () => {
+    const plain = central({});
+    expect(central({ course: 'rolling' }) / plain).toBeCloseTo(1.01, 3);
+    expect(central({ course: 'hilly' }) / plain).toBeCloseTo(1.025, 3);
+    expect(central({ expectedTempC: 25 }) / plain).toBeCloseTo(1.04, 3);
+    expect(central({ expectedTempC: 40 }) / plain).toBeCloseTo(1.08, 3); // capped at 8%
+    expect(central({ newSuperShoes: true }) / plain).toBeCloseTo(0.99, 3);
+    expect(central({ expectedTempC: 10 })).toBe(plain);
+    const out = computeReadiness({ ...base(), context: { course: 'hilly', expectedTempC: 25, newSuperShoes: true } }, cfg);
+    expect(out.adjustments!.map((a) => [a.name, a.pct, a.evidence])).toEqual([['course', 2.5, 'weak'], ['expected_race_day_heat', 4, 'weak'], ['super_shoes_what_if', -1, 'weak']]);
+    expect(readinessSchema.safeParse(out).success).toBe(true);
+  });
+  it('widens sigma for each adjustment, the shoes what-if most (its sigma equals its size)', () => {
+    const sigma = (ctx: Partial<ReturnType<typeof base>['context']>) => computeReadiness({ ...base(), context: { ...base().context, ...ctx } }, cfg).prediction!.sigma_pct;
+    const plain = sigma({});
+    expect(sigma({ course: 'hilly' })).toBeGreaterThan(plain);
+    expect(sigma({ newSuperShoes: true })).toBeGreaterThan(plain);
+    expect(sigma({ course: 'flat' })).toBe(plain);
+  });
+  it('says what was not modelled when nothing was given', () => {
+    const out = computeReadiness(base(), cfg);
+    expect(out.adjustments).toEqual([]);
+    expect(out.caveats.join(' ')).toMatch(/weather is not modelled.*treated as flat.*fueling, pacing and crowd/s);
+  });
+  it('shows fueling as context only and never moves the prediction', () => {
+    const a = computeReadiness({ ...base(), nutrition: { enabled: true, carbRunIds: ['long-6-0'] } }, cfg);
+    expect(a.benchmarks!.find((b) => b.metric === 'long_runs_with_carbs_logged')).toMatchObject({ evidence: 'weak' });
+    expect(a.prediction).toEqual(computeReadiness(base(), cfg).prediction);
+  });
+  it('labels the 52-week base as context that is not used in the estimate', () => {
+    expect(computeReadiness(base(), cfg).benchmarks!.find((b) => b.metric === 'avg_weekly_km_base_52wk')!.context).toContain('not used in the estimate');
+  });
+});
+
+describe('heat in the source efforts', () => {
+  it('expresses a tagged half run in 25 degC at a mild temperature (4% faster time) and says so', () => {
+    const b = wellPrepared();
+    const hotRuns = b.runs.map((r) => (r.id === 'hm-race1' ? { ...r, tempC: 25 } : r));
+    const hot = computeReadiness({ ...b, runs: hotRuns }, cfg);
+    const cool = computeReadiness(b, cfg);
+    const e1 = (o: typeof hot) => o.estimators!.find((e) => e.name === 'E1_race_conversion')!;
+    // 13 600 s / 1.04 = 13 077 s = 3:37:57
+    expect(e1(cool).predicted).toBe('3:46:40');
+    expect(e1(hot).predicted).toBe('3:37:57');
+    expect(e1(hot).inputs).toMatchObject({ heat_adjusted_pct: 4 });
+    expect(e1(hot).notes.join(' ')).toContain('mild temperature');
+  });
+  it('leaves a source with unknown temperature alone', () => {
+    const e1 = computeReadiness(wellPrepared(), cfg).estimators!.find((e) => e.name === 'E1_race_conversion')!;
+    expect(e1.inputs).not.toHaveProperty('heat_adjusted_pct');
   });
 });

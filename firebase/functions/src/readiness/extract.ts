@@ -103,7 +103,7 @@ export function cleanHeartRate(hr: LoadedStream, maxHr: number, cfg: ReadinessCo
   return { v, unreliable: total === 0 || dropped / total > 0.05 || spikes / total > 0.02 || flat };
 }
 
-export async function analyseRun(deps: QueryDeps, c: DuckDBConnection, dir: string, row: WorkoutRow, doc: WorkoutDataDoc, man: TypeManifest | null, budget: { bytes: number }, o: { cfg: ReadinessConfig; maxHr: number; distanceSource: DistanceSource; targetsM: number[]; indoor: boolean }): Promise<RunAnalysis> {
+export async function analyseRun(deps: QueryDeps, c: DuckDBConnection, dir: string, row: WorkoutRow, doc: WorkoutDataDoc, man: TypeManifest | null, budget: { bytes: number }, o: { cfg: ReadinessConfig; maxHr: number; distanceSource: DistanceSource; targetsM: number[]; indoor: boolean; tempC: number | null }): Promise<RunAnalysis> {
   if (Object.keys(doc.streams).length === 0) return { ok: false, reason: 'no raw data synced yet' };
   // DuckDB caches parquet metadata by path: every run's stream files need a path of their own (the one-workout tools never meet this).
   const wdir = join(dir, `run-${row.id}`);
@@ -152,7 +152,7 @@ export async function analyseRun(deps: QueryDeps, c: DuckDBConnection, dir: stri
     ok: true,
     raw: {
       id: row.id, distanceSource: used, splits: kept, hrCoverage, hrUnreliable: cleaned?.unreliable ?? false, decouplingPct: cleaned?.unreliable ? null : decoupling,
-      efforts, movingSec, distanceM: total, gainPerKm, halves: firstHalf === null ? null : [firstHalf, movingSec - firstHalf], rawComplete: rawStatus(doc) === 'complete',
+      efforts, movingSec, distanceM: total, gainPerKm, halves: firstHalf === null ? null : [firstHalf, movingSec - firstHalf], rawComplete: rawStatus(doc) === 'complete', tempC: o.tempC,
     },
   };
 }
@@ -180,6 +180,7 @@ export interface GatherArgs {
   priorMarathonId?: string | null;
   distanceSource: DistanceSource;
   cfg: ReadinessConfig;
+  context: ReadinessInputs['context'];
   /** The connection may read profile / nutrition events (OAuth scopes); false skips them with a disclosed gap. */
   allowProfile: boolean;
   allowNutrition: boolean;
@@ -287,7 +288,7 @@ export async function gatherInputs(deps: QueryDeps, a: GatherArgs): Promise<{ in
       }
       const isPrior = priorRun?.id === s.id;
       const targets = [cfg.stdDistancesM.fiveK, cfg.stdDistancesM.tenK, cfg.stdDistancesM.half, ...(isPrior ? [cfg.marathonM] : [])];
-      const res = await analyseRun(deps, c, dir, row, doc, loaded.man, budget, { cfg, maxHr: maxHr.value, distanceSource: a.distanceSource, targetsM: targets, indoor: runs.find((r) => r.id === s.id)?.indoor ?? false });
+      const res = await analyseRun(deps, c, dir, row, doc, loaded.man, budget, { cfg, maxHr: maxHr.value, distanceSource: a.distanceSource, targetsM: targets, indoor: runs.find((r) => r.id === s.id)?.indoor ?? false, tempC: runs.find((r) => r.id === s.id)?.tempC ?? null });
       if (res.ok) raw.set(s.id, res.raw);
       else skipped.push({ id: s.id, reason: res.reason });
     }
@@ -320,7 +321,7 @@ export async function gatherInputs(deps: QueryDeps, a: GatherArgs): Promise<{ in
     if (daysBetween(a.asOf, a.race.date) < 0) gaps.push('The race date is before as_of_date.');
     const inputs: ReadinessInputs = {
       asOf: a.asOf, tz: a.tz, race: a.race, goalSeconds: a.goalSeconds, maxHr, sex, bodyFatPct, runs, raw, rawSkipped: skipped,
-      taggedRaceIds: a.raceWorkoutIds, priorMarathon: prior, priorDisabled, nutrition, gaps, notes,
+      taggedRaceIds: a.raceWorkoutIds, priorMarathon: prior, priorDisabled, nutrition, context: a.context, gaps, notes,
     };
     return { inputs, coverage, complete };
   });

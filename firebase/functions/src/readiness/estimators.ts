@@ -1,4 +1,5 @@
 import type { ReadinessConfig } from './config.js';
+import { heatPenaltyPct } from './adjust.js';
 import { cv, fullSplits, hms, mean, sd } from './features.js';
 import type { Estimate, RaceEffort, RunRaw, StdDistanceKey } from './types.js';
 
@@ -40,11 +41,11 @@ const hrThreshold = (cfg: ReadinessConfig, key: StdDistanceKey): number => (key 
  * Race-quality efforts of one analysed run. A tagged race is accepted as it is; otherwise an effort counts as a max effort only
  * when its average heart rate reaches the threshold for its distance (a best effort inside an easy run does not).
  */
-export function effortsOfRun(args: { cfg: ReadinessConfig; run: { id: string; date: string; distanceM: number | null; movingSec: number | null }; raw: RunRaw | null; tagged: boolean; maxHr: number; ageWeeks: number }): RaceEffort[] {
+export function effortsOfRun(args: { cfg: ReadinessConfig; run: { id: string; date: string; distanceM: number | null; movingSec: number | null; tempC?: number | null }; raw: RunRaw | null; tagged: boolean; maxHr: number; ageWeeks: number }): RaceEffort[] {
   const { cfg, run, raw, tagged, maxHr, ageWeeks } = args;
   const mk = (klass: StdDistanceKey, distanceM: number, seconds: number, avgHr: number | null, inferred: boolean): RaceEffort => {
     const hrFraction = avgHr !== null && maxHr > 0 ? avgHr / maxHr : null;
-    return { workoutId: run.id, date: run.date, ageWeeks, distanceM, seconds, hrFraction, tagged, effortInferred: inferred, qualifies: tagged || (hrFraction !== null && hrFraction >= hrThreshold(cfg, klass)), klass };
+    return { workoutId: run.id, date: run.date, ageWeeks, distanceM, seconds, hrFraction, tagged, effortInferred: inferred, qualifies: tagged || (hrFraction !== null && hrFraction >= hrThreshold(cfg, klass)), klass, tempC: run.tempC ?? null };
   };
   if (tagged) {
     const d = run.distanceM;
@@ -98,19 +99,52 @@ export function estimateE1(args: { cfg: ReadinessConfig; source: RaceEffort | nu
   const vol = volumeAdjustedR(cfg, args.avgWeeklyKm, args.runs30k);
   const r = personalR ?? vol.r;
   const rSource = personalR !== null ? 'personal' : vol.adjustment !== 0 ? 'volume_adjusted' : 'default';
-  const predicted = convertTime(source.seconds, source.distanceM, r, cfg.marathonM);
+  // An effort run in the heat understates fitness: express it as it would have been at a mild temperature.
+  const heatPct = source.tempC !== null ? heatPenaltyPct(source.tempC, cfg) : 0;
+  const seconds = source.seconds / (1 + heatPct / 100);
+  const predicted = convertTime(seconds, source.distanceM, r, cfg.marathonM);
   const s = cfg.e1.sigmaPct;
   let sigma = source.klass === 'half' ? (source.ageWeeks <= cfg.e1.halfFreshWeeks ? s.halfUnder8w : s.half8to16w) : source.klass === 'tenK' ? s.tenK : s.fiveK;
   if (personalR !== null) sigma += cfg.e1.personalRSigmaDelta;
   const notes: string[] = [];
   if (source.tagged) notes.push('Source is a race the runner tagged.');
   else notes.push(`Source is an inferred max effort (average HR ${source.hrFraction !== null ? Math.round(source.hrFraction * 100) + '% of max' : 'unknown'}).`);
+  if (heatPct > 0) notes.push(`The source effort was run at ${round1(source.tempC!)} degC; its time was reduced by ${heatPct.toFixed(1)}% to express fitness at a mild temperature (heuristic).`);
   if (rSource === 'volume_adjusted') notes.push(`Exponent adjusted ${vol.adjustment > 0 ? '+' : ''}${vol.adjustment} for volume (${Math.round(args.avgWeeklyKm)} km/week, ${args.runs30k} runs of 30 km or more).`);
   return {
     name: 'E1_race_conversion', available: true, predictedSeconds: predicted, sigmaPct: sigma,
     inputs: {
       workout_ids: [source.workoutId], source_distance_m: source.distanceM, source_time: hms(source.seconds), source_age_weeks: Math.round(source.ageWeeks * 10) / 10,
-      effort_inferred: source.effortInferred, R: Math.round(r * 1000) / 1000, R_source: rSource,
+      effort_inferred: source.effortInferred, R: Math.round(r * 1000) / 1000, R_source: rSource, ...(heatPct > 0 ? { heat_adjusted_pct: Math.round(heatPct * 10) / 10 } : {}),
+    },
+    notes,
+  };
+}
+
+const round1 = (x: number) => Math.round(x * 10) / 10;
+
+/**
+ * E1b: when no race-quality effort exists, the best effort inside a training run (below the heart-rate level of a max effort)
+ * still says something: the runner can run at least this fast. It is used as a conservative, wide-sigma estimate, never as a floor.
+ */
+export function estimateE1b(args: { cfg: ReadinessConfig; effort: RaceEffort | null; personalR: number | null; avgWeeklyKm: number; runs30k: number }): Estimate {
+  const { cfg, effort } = args;
+  const base = { name: 'E1b_training_effort', predictedSeconds: null, sigmaPct: null };
+  if (!effort) return { ...base, available: false, inputs: {}, notes: ['No usable effort inside a training run in the last 16 weeks.'] };
+  const vol = volumeAdjustedR(cfg, args.avgWeeklyKm, args.runs30k);
+  const r = args.personalR ?? vol.r;
+  const heatPct = effort.tempC !== null ? heatPenaltyPct(effort.tempC, cfg) : 0;
+  const seconds = effort.seconds / (1 + heatPct / 100);
+  const notes = [
+    `Best effort found inside a training run${effort.hrFraction !== null ? `, at ${Math.round(effort.hrFraction * 100)}% of max HR` : ' (no usable heart rate)'}; it did not reach the heart-rate level of a max effort, so it likely understates what a race would give. Treated as a conservative, uncertain estimate.`,
+  ];
+  if (heatPct > 0) notes.push(`Run at ${round1(effort.tempC!)} degC; time reduced by ${heatPct.toFixed(1)}% to express fitness at a mild temperature (heuristic).`);
+  return {
+    ...base, available: true, predictedSeconds: convertTime(seconds, effort.distanceM, r, cfg.marathonM), sigmaPct: cfg.e1.sigmaPct.trainingRun,
+    inputs: {
+      workout_ids: [effort.workoutId], source_distance_m: effort.distanceM, source_time: hms(effort.seconds), source_age_weeks: round1(effort.ageWeeks),
+      below_max_effort_threshold: true, hr_fraction: effort.hrFraction !== null ? Math.round(effort.hrFraction * 100) / 100 : null, R: Math.round(r * 1000) / 1000, R_source: args.personalR !== null ? 'personal' : vol.adjustment !== 0 ? 'volume_adjusted' : 'default',
+      ...(heatPct > 0 ? { heat_adjusted_pct: round1(heatPct) } : {}),
     },
     notes,
   };
@@ -130,6 +164,7 @@ export function efficiencyPoints(runs: RunRaw[], maxHr: number, cfg: ReadinessCo
   const out: EfficiencyPoint[] = [];
   for (const run of runs) {
     if (run.hrUnreliable || run.hrCoverage === null) continue;
+    if (run.tempC !== null && run.tempC >= e.maxTempC) continue;
     if (run.gainPerKm === null || run.gainPerKm >= e.maxGainPerKm) continue;
     const full = fullSplits(run.splits).slice(e.skipFirstKm ? 1 : 0);
     const paceCv = cv(full.map((s) => s.pace_seconds_per_unit));

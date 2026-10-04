@@ -66,7 +66,7 @@ const base = {
       lowDelta: 0.02,
     },
     /** Absolute sigma (% of predicted time) by source. */
-    sigmaPct: { halfUnder8w: 3.5, half8to16w: 5.0, tenK: 5.0, fiveK: 7.0 },
+    sigmaPct: { halfUnder8w: 3.5, half8to16w: 5.0, tenK: 5.0, fiveK: 7.0, /** E1b: best effort inside a training run that did not reach the max-effort HR level. */ trainingRun: 9.0 },
     personalRSigmaDelta: -1.0,
     /** Inferred max effort: average HR of the effort window as a fraction of HRmax. */
     effortHrFraction: { half: 0.88, tenK: 0.9, fiveK: 0.9 },
@@ -104,6 +104,8 @@ const base = {
       minHrSd: 0.02,
       /** The first kilometre is warm-up (HR lags pace); heuristic. */
       skipFirstKm: true,
+      /** Runs recorded hotter than this (degC) raise HR for a given pace and are left out of the fit. */
+      maxTempC: 22,
     },
     /** Pace spikes beyond this factor of the median split pace are GPS dropouts and dropped. */
     gpsDropoutFactor: 2,
@@ -159,6 +161,20 @@ const base = {
       maxHrFraction: 0.9,
       penaltyPct: 1,
     },
+  },
+
+  /**
+   * Context adjustments (percent of the finish time, positive = slower). All are heuristics with weak evidence: each also widens
+   * sigma by `sigmaFraction` x its size, in quadrature, because the adjustment itself is uncertain.
+   */
+  adjust: {
+    /** Heat slows marathoners (Ely et al. 2007), slower runners more. Air temperature above refC costs pctPerC per degree, capped. */
+    heat: { refC: 15, pctPerC: 0.4, capPct: 8 },
+    /** Course profile of the target race relative to flat. Source efforts are assumed to be on roughly flat terrain. */
+    course: { flat: 0, rolling: 1.0, hilly: 2.5 },
+    /** What-if: carbon-plated shoes not worn for the source efforts. Population averages are about 1%; individual response varies widely. */
+    superShoesPct: -1.0,
+    sigmaFraction: { heat: 0.5, course: 0.5, shoes: 1.0 },
   },
 
   likelihood: {

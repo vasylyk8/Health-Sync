@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { READINESS_CONFIG as cfg, withConfig } from '../../src/readiness/config.js';
 import {
-  classOf, convertTime, efficiencyPoints, effortsOfRun, estimateE1, estimateE2, estimateE3, fitSpeedAtHr, lowerBoundEffort, personalExponent, selectE1Source, volumeAdjustedR,
+  classOf, convertTime, efficiencyPoints, effortsOfRun, estimateE1, estimateE1b, estimateE2, estimateE3, fitSpeedAtHr, lowerBoundEffort, personalExponent, selectE1Source, volumeAdjustedR,
   type EfficiencyPoint,
 } from '../../src/readiness/estimators.js';
+import { adjustmentSigmaSeconds, applyAdjustments, buildAdjustments, heatPenaltyPct } from '../../src/readiness/adjust.js';
 import { hms } from '../../src/readiness/features.js';
 import type { RaceEffort } from '../../src/readiness/types.js';
 import { effort, raw, run } from '../helpers/readiness.js';
@@ -76,7 +77,7 @@ describe('race efforts', () => {
 });
 
 describe('E1 source selection and estimate', () => {
-  const e = (klass: RaceEffort['klass'], ageWeeks: number, qualifies = true, seconds = 5_000): RaceEffort => ({ workoutId: `${klass}${ageWeeks}`, date: '2024-06-01', ageWeeks, distanceM: klass === 'half' ? HM : klass === 'tenK' ? 10_000 : 5_000, seconds, hrFraction: 0.9, tagged: false, effortInferred: true, qualifies, klass });
+  const e = (klass: RaceEffort['klass'], ageWeeks: number, qualifies = true, seconds = 5_000): RaceEffort => ({ workoutId: `${klass}${ageWeeks}`, date: '2024-06-01', ageWeeks, distanceM: klass === 'half' ? HM : klass === 'tenK' ? 10_000 : 5_000, seconds, hrFraction: 0.9, tagged: false, effortInferred: true, qualifies, klass, tempC: null });
 
   it('prefers the most recent half marathon, then 10K, then 5K, within 16 weeks', () => {
     expect(selectE1Source([e('tenK', 1), e('half', 10), e('half', 4), e('fiveK', 0)], cfg)?.workoutId).toBe('half4');
@@ -191,5 +192,70 @@ describe('config', () => {
     expect(tuned.e1.rClamp).toEqual([1.04, 1.22]);
     expect(tuned.combine.raceDaySigmaPct).toBe(3);
     expect(cfg.e1.rDefault).toBeCloseTo(1.13093, 5);
+  });
+});
+
+describe('E1b: best effort inside a training run', () => {
+  const eff = (o: Partial<RaceEffort> = {}): RaceEffort => ({ workoutId: 'long-run-1', date: '2024-06-01', ageWeeks: 4, distanceM: HM, seconds: 7_065, hrFraction: 0.84, tagged: false, effortInferred: true, qualifies: false, klass: 'half', tempC: null, ...o });
+
+  it('converts the effort like E1 but with a wide sigma and an honest note', () => {
+    const e = estimateE1b({ cfg, effort: eff(), personalR: null, avgWeeklyKm: 70, runs30k: 3 });
+    expect(e.name).toBe('E1b_training_effort');
+    expect(e.available).toBe(true);
+    expect(e.sigmaPct).toBe(9);
+    expect(e.predictedSeconds).toBeCloseTo(7_065 * 2.19, 4); // 1:57:45 half -> 15 472 s
+    expect(hms(e.predictedSeconds!)).toBe('4:17:52');
+    expect(e.inputs).toMatchObject({ below_max_effort_threshold: true, hr_fraction: 0.84, R_source: 'default', source_time: '1:57:45' });
+    expect(e.notes[0]).toMatch(/did not reach the heart-rate level of a max effort.*conservative/);
+  });
+  it('is unavailable without an effort and handles a missing heart rate', () => {
+    expect(estimateE1b({ cfg, effort: null, personalR: null, avgWeeklyKm: 70, runs30k: 3 }).available).toBe(false);
+    const noHr = estimateE1b({ cfg, effort: eff({ hrFraction: null }), personalR: null, avgWeeklyKm: 70, runs30k: 3 });
+    expect(noHr.available).toBe(true);
+    expect(noHr.notes[0]).toContain('no usable heart rate');
+  });
+  it('uses the personal or volume-adjusted exponent like E1', () => {
+    expect(estimateE1b({ cfg, effort: eff(), personalR: 1.15, avgWeeklyKm: 70, runs30k: 3 }).inputs).toMatchObject({ R_source: 'personal', R: 1.15 });
+    expect(estimateE1b({ cfg, effort: eff(), personalR: null, avgWeeklyKm: 40, runs30k: 0 }).inputs).toMatchObject({ R_source: 'volume_adjusted' });
+  });
+  it('expresses a hot effort at a mild temperature, in E1 and E1b alike', () => {
+    const hot = eff({ tempC: 25 });
+    expect(estimateE1b({ cfg, effort: hot, personalR: null, avgWeeklyKm: 70, runs30k: 3 }).predictedSeconds).toBeCloseTo((7_065 / 1.04) * 2.19, 4);
+    expect(estimateE1({ cfg, source: { ...hot, qualifies: true }, personalR: null, avgWeeklyKm: 70, runs30k: 3 }).predictedSeconds).toBeCloseTo((7_065 / 1.04) * 2.19, 4);
+  });
+  it('carries the run temperature into the efforts it builds', () => {
+    const r = run('hmrace1', '2024-06-08', 21.3, 270);
+    const out = effortsOfRun({ cfg, run: { ...r, tempC: 21 }, raw: raw('hmrace1', 21.3, { efforts: [effort(HM, 5_700, 170)] }), tagged: false, maxHr: 190, ageWeeks: 3 });
+    expect(out[0]!.tempC).toBe(21);
+  });
+});
+
+describe('heat in the efficiency fit', () => {
+  it('leaves runs recorded at 22 degC or hotter out of the fit', () => {
+    const mk = (tempC: number | null) => raw('x', 10, { split: { pace: (i) => 330 + (i % 2) * 4, hr: (i) => 135 + i, gain: 3 }, tempC });
+    expect(efficiencyPoints([mk(null)], 190, cfg)).toHaveLength(9);
+    expect(efficiencyPoints([mk(21.9)], 190, cfg)).toHaveLength(9);
+    expect(efficiencyPoints([mk(22)], 190, cfg)).toHaveLength(0);
+  });
+});
+
+describe('adjustments', () => {
+  it('heat costs 0.4% per degree above 15, capped at 8%', () => {
+    expect([10, 15, 20, 25, 30, 35, 45].map((t) => heatPenaltyPct(t, cfg))).toEqual([0, 0, 2, 4, 6, 8, 8]);
+  });
+  it('builds only the adjustments that were asked for', () => {
+    const none = { course: null, expectedTempC: null, newSuperShoes: false };
+    expect(buildAdjustments(none, cfg)).toEqual([]);
+    const all = buildAdjustments({ course: 'rolling', expectedTempC: 20, newSuperShoes: true }, cfg);
+    expect(all.map((a) => [a.name, a.pct, a.sigmaPct])).toEqual([['course', 1, 0.5], ['expected_race_day_heat', 2, 1], ['super_shoes_what_if', -1, 1]]);
+    expect(buildAdjustments({ ...none, course: 'flat' }, cfg)[0]).toMatchObject({ pct: 0 });
+  });
+  it('multiplies the percentages and adds their uncertainty in quadrature', () => {
+    const adjs = buildAdjustments({ course: 'hilly', expectedTempC: 25, newSuperShoes: true }, cfg);
+    expect(applyAdjustments(12_000, adjs)).toBeCloseTo(12_000 * 1.025 * 1.04 * 0.99, 6);
+    // sigma: 1.25%, 2%, 1% of 12 000 s = 150, 240, 120 -> sqrt(150^2 + 240^2 + 120^2) = 309.8 s
+    expect(adjustmentSigmaSeconds(12_000, adjs)).toBeCloseTo(Math.sqrt(150 ** 2 + 240 ** 2 + 120 ** 2), 6);
+    expect(applyAdjustments(12_000, [])).toBe(12_000);
+    expect(adjustmentSigmaSeconds(12_000, [])).toBe(0);
   });
 });

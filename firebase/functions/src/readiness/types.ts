@@ -46,6 +46,8 @@ export interface RunRaw {
   /** Moving seconds of the first / second half of the distance. */
   halves: [number, number] | null;
   rawComplete: boolean;
+  /** Recorded workout temperature (degC), when the recording app stored weather. */
+  tempC: number | null;
 }
 
 export interface PriorMarathon {
@@ -83,6 +85,8 @@ export interface ReadinessInputs {
   /** The prior marathon was explicitly disabled ("none"). */
   priorDisabled: boolean;
   nutrition: { enabled: boolean; carbRunIds: string[] };
+  /** What the caller knows about race day; each adjusts the prediction only when given. */
+  context: { course: 'flat' | 'rolling' | 'hilly' | null; expectedTempC: number | null; newSuperShoes: boolean };
   /** Gaps the extraction already knows about (missing categories, truncation, duplicates removed...). */
   gaps: string[];
   /** Extraction notes worth showing to the user. */
@@ -111,6 +115,8 @@ export interface RaceEffort {
   effortInferred: boolean;
   qualifies: boolean;
   klass: StdDistanceKey;
+  /** Recorded temperature of the run the effort came from (degC). */
+  tempC: number | null;
 }
 
 export interface ModifierResult {
@@ -129,4 +135,13 @@ export interface ConfidenceComponent {
   max: number;
   status: 'full' | 'partial' | 'none' | 'unknown';
   reason: string;
+}
+
+export interface Adjustment {
+  name: 'course' | 'expected_race_day_heat' | 'super_shoes_what_if';
+  /** Percent of the finish time; positive = slower. */
+  pct: number;
+  /** Percent of the finish time added to sigma, in quadrature. */
+  sigmaPct: number;
+  detail: string;
 }

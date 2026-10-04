@@ -1,7 +1,8 @@
+import { adjustmentSigmaSeconds, applyAdjustments, buildAdjustments } from './adjust.js';
 import { combineEstimates, applyModifier, likelihood, range80 } from './combine.js';
 import { confidenceComponents, confidencePercent } from './confidence.js';
 import { READINESS_CONFIG, type ReadinessConfig } from './config.js';
-import { effortsOfRun, efficiencyPoints, estimateE1, estimateE2, estimateE3, fitSpeedAtHr, lowerBoundEffort, personalExponent, selectE1Source, volumeAdjustedR } from './estimators.js';
+import { effortsOfRun, efficiencyPoints, estimateE1, estimateE1b, estimateE2, estimateE3, fitSpeedAtHr, lowerBoundEffort, personalExponent, selectE1Source, volumeAdjustedR } from './estimators.js';
 import { addDays, avgWeeklyKm, countRunsAtLeast, daysBetween, fullSplits, hms, inWindow, longestGapDays, median, runKm, weeksWithRuns, windowStart } from './features.js';
 import { decouplingQualifying, evaluateModifiers } from './modifiers.js';
 import type { ReadinessResult } from './schema.js';
@@ -104,6 +105,12 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
   const e1 = estimateE1({ cfg, source, personalR, avgWeeklyKm: avgKm12, runs30k, lowerBound });
   if (personalNote) e1.notes.push(personalNote);
   if (personalR !== null) e1.notes.push('Exponent derived from the prior marathon and a max-effort race in the same block.');
+  const sourceRaw = source ? inputs.raw.get(source.workoutId) : undefined;
+  if (e1.available && sourceRaw && sourceRaw.gainPerKm !== null && sourceRaw.gainPerKm >= cfg.e2.efficiency.maxGainPerKm) {
+    e1.notes.push(`The source effort was on hilly terrain (${round(sourceRaw.gainPerKm)} m of climbing per km), so it likely understates flat-course fitness; no terrain correction is applied to sources.`);
+  }
+  // No race-quality effort: the best effort inside a training run is a conservative, wide estimate rather than a floor.
+  const e1b = source ? null : estimateE1b({ cfg, effort: lowerBound, personalR, avgWeeklyKm: avgKm12, runs30k });
 
   // ---- E2: efficiency-adjusted repeat of the prior marathon -------------------------------------------------------
   const nowEff = fitSpeedAtHr(efficiencyPoints(analysedRaw(inputs, inputs.runs.filter((r) => inWindow(r, windowStart(asOf, w.efficiencyWeeks), asOf))), maxHr, cfg), cfg);
@@ -124,7 +131,7 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
   const e3 = estimateE3({ cfg, weeklyKm: e3Km / w.e3Weeks, paceSecPerKm: paceKm > 0 ? paceSec / paceKm : 0, weeksWithRuns: weeksWithRuns(inputs.runs, e3Start, asOf), bodyFatPct: inputs.bodyFatPct, sex: inputs.sex });
   if (e3.available && outdoor.length && outdoor.length < e3Runs.length) e3.notes.push(`${e3Runs.length - outdoor.length} treadmill run(s) were left out of the training pace (their distance counts towards weekly km).`);
 
-  const estimates: Estimate[] = [e1, e2, e3];
+  const estimates: Estimate[] = [e1, ...(e1b ? [e1b] : []), e2, e3];
 
   // ---- Confidence (computed even when there is no score, so the user sees what is missing) -----------------------------
   const durRaw = inputs.runs.filter((r) => inWindow(r, durStart, asOf));
@@ -181,20 +188,29 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
     body_fat_source: inputs.bodyFatPct === null ? ('default' as const) : ('health' as const),
     sex_source: inputs.sex === null ? ('unknown' as const) : ('profile' as const),
     goal_time_source: 'race_goal' as const,
+    course: inputs.context.course,
+    expected_temp_c: inputs.context.expectedTempC,
   };
 
-  const combined = e1.available || e2.available ? combineEstimates(estimates, cfg, weeksToRace) : null;
+  const combined = e1.available || e1b?.available || e2.available ? combineEstimates(estimates, cfg, weeksToRace) : null;
   if (weeksRun < w.minDataWeeks || !combined) {
     if (weeksRun < w.minDataWeeks) gaps.unshift(`Only ${weeksRun} of the last ${w.blockWeeks} weeks have runs; at least ${w.minDataWeeks} are needed.`);
-    else gaps.unshift('Neither a race-quality effort (E1) nor a prior-marathon comparison (E2) is available, and the training-based estimator alone is not used.');
+    else gaps.unshift('No race-quality effort (E1), training-run effort (E1b) or prior-marathon comparison (E2) is available, and the training-based estimator alone is not used.');
     return { status: 'insufficient_data', as_of: asOf, mode, race, confidence, data_gaps: dedupe(gaps), assumptions, caveats };
   }
 
   // ---- Modifiers, likelihood ---------------------------------------------------------------------------------------
   const mods = evaluateModifiers(modInputs);
   for (const m of mods.results) if (m.status === 'unknown') gaps.push(`Durability check "${m.check}" is unknown: ${m.detail ?? 'no qualifying data'}.`);
-  const centralFinal = applyModifier(combined.centralSeconds, mods.cappedPct);
-  const sigma = combined.sigmaTotalSeconds;
+  const centralMod = applyModifier(combined.centralSeconds, mods.cappedPct);
+  // Context adjustments (course, expected heat, shoes what-if) move the central estimate and widen sigma, because they are uncertain too.
+  const adjs = buildAdjustments(inputs.context, cfg);
+  const centralFinal = applyAdjustments(centralMod, adjs);
+  const sigma = Math.sqrt(combined.sigmaTotalSeconds ** 2 + adjustmentSigmaSeconds(centralMod, adjs) ** 2);
+  if (e1b?.available) caveats.push('No race-quality effort was found: the estimate rests on the best effort inside a training run and on training volume. Treat it as rough; a recent race or a hard half-marathon or 10K effort would sharpen it a lot.');
+  if (inputs.context.expectedTempC === null) caveats.push('Race-day weather is not modelled (pass expected_temp_c to include heat).');
+  if (inputs.context.course === null) caveats.push('No course profile was given, so the course is treated as flat (pass course for a rolling or hilly course).');
+  caveats.push('Race-day fueling, pacing and crowd congestion are not modelled; the race-day uncertainty term covers typical effects.');
   const lk = likelihood(inputs.goalSeconds, centralFinal, sigma, cfg);
   const [lo, hi] = range80(centralFinal, sigma, cfg);
   if (mods.totalPct > mods.cappedPct) caveats.push(`Durability modifiers total ${mods.totalPct}%; capped at ${mods.cappedPct}%.`);
@@ -223,7 +239,8 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
     { metric: 'avg_weekly_km_12wk', value: round(avgKm12), context: priorKm12 !== null ? `prior marathon block: ${round(priorKm12)}` : 'no prior marathon block', evidence: 'moderate' as const },
     { metric: 'longest_run_km_12wk', value: round(longest), context: 'a longest run of 25 km or more is associated with faster marathon finishes (PMC7496388)', evidence: 'moderate' as const },
     { metric: 'runs_30km_or_more_12wk', value: runs30k, context: priorRuns30 !== null ? `prior marathon block: ${priorRuns30}` : 'no prior marathon block', evidence: 'moderate' as const },
-    { metric: 'avg_weekly_km_base_52wk', value: baseRuns.length ? round(avgWeeklyKm(inputs.runs, baseEnd, baseWeeksUsed)) : null, context: baseRuns.length ? `mean over the ${baseWeeksUsed} week(s) of history before the ${w.blockWeeks}-week block (up to ${w.baseWeeks})` : 'no runs recorded before the block', evidence: 'moderate' as const },
+    { metric: 'avg_weekly_km_base_52wk', value: baseRuns.length ? round(avgWeeklyKm(inputs.runs, baseEnd, baseWeeksUsed)) : null, context: baseRuns.length ? `context only, not used in the estimate: mean over the ${baseWeeksUsed} week(s) of history before the ${w.blockWeeks}-week block (up to ${w.baseWeeks})` : 'context only, not used in the estimate: no runs recorded before the block', evidence: 'moderate' as const },
+    { metric: 'long_runs_with_carbs_logged', value: inputs.nutrition.enabled ? carbRuns : null, context: inputs.nutrition.enabled ? `of ${blockRuns.filter((r) => (r.movingSec ?? 0) >= minRunSec).length} runs of ${cfg.confidence.fueling.minRunMinutes} minutes or more in the block; not logged does not mean not eaten (context only)` : 'nutrition data is off or not granted (context only)', evidence: 'weak' as const },
     { metric: 'weeks_with_runs_16wk', value: weeksRun, context: `of ${w.blockWeeks}`, evidence: 'weak' as const },
   ];
   const block_comparison = {
@@ -239,6 +256,7 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
     prediction: { central: hms(centralFinal), range_80: [hms(lo), hms(hi)], sigma_pct: round((sigma / centralFinal) * 100, 2) },
     confidence, estimators: est,
     modifiers: mods.results.map((m) => ({ check: m.check, value: m.value, benchmark: m.benchmark, applied_pct: m.appliedPct, status: m.status, evidence: m.evidence, ...(m.detail ? { detail: m.detail } : {}) })),
+    adjustments: adjs.map((a) => ({ name: a.name, pct: round(a.pct, 2), evidence: 'weak' as const, detail: a.detail })),
     benchmarks, block_comparison, data_gaps: dedupe(gaps), assumptions, caveats,
   };
   if (detail === 'full') result.workouts = workoutTable(inputs);

@@ -11,8 +11,9 @@ Code: `firebase/functions/src/readiness/`. The computation (`compute.ts`) is pur
 | Step | File | What |
 |---|---|---|
 | Extraction | `extract.ts` | Run summaries for 36 months + the prior block (duplicates from two sources removed); raw streams (splits, best efforts, HR drift) only for a shortlist, within a 28 s soft time budget. Reuses `loadType`, `findWorkout`-style loading, `loadStream`, `distanceOf`, and the pure functions of `query/calc.ts`; no MCP tool calls. |
-| Estimators | `estimators.ts` | E1 race conversion (`T x (42195/D)^R`, R = log2(2.19) adjusted for volume, or a personal exponent), E2 prior-marathon repeat adjusted by speed at 75% HRmax, E3 Tanda & Knechtle (2013). |
+| Estimators | `estimators.ts` | E1 race conversion (`T x (42195/D)^R`, R = log2(2.19) adjusted for volume, or a personal exponent); E1b the best effort inside a training run when no race-quality effort exists (conservative, sigma 9%); E2 prior-marathon repeat adjusted by speed at 75% HRmax; E3 Tanda & Knechtle (2013). |
 | Durability | `modifiers.ts` | Four heuristic checks adding up to +5% to the predicted time. |
+| Context | `adjust.ts` | Optional course profile, expected race-day temperature and a super-shoes what-if. Small heuristic percentages that also widen sigma. |
 | Combination | `combine.ts` | Inverse-variance mean, correlation floor (0.85 x best sigma), race-day term, normal CDF -> score. |
 | Confidence | `confidence.ts` | Nine components out of 100. Reported separately; never changes the score. |
 | Output | `schema.ts` | Zod schema = the MCP `outputSchema`. |
@@ -27,6 +28,18 @@ Every tunable number lives in `config.ts` (`READINESS_CONFIG`). Modifier sizes, 
 - Profile (age, sex) and nutrition events are read only if the category is on in the app **and** the connection holds `health:profile:read` / `health:events:read`; otherwise they are listed as gaps. Unlogged nutrition lowers confidence only, it is never treated as zero fueling.
 - No score is returned (`insufficient_data`) when fewer than 6 of the last 16 weeks have runs, or when neither a race-quality effort (E1) nor a prior-marathon comparison (E2) exists. The training-based estimator is never used alone.
 - Not supported: heart-rate cadence-lock detection (no cadence stream is guaranteed); only implausible or flat HR traces are flagged. Weather checks need the recording app to have stored temperature (Apple Watch does).
+
+## Race-day context (marathon only)
+
+| Input | Effect | Notes |
+|---|---|---|
+| `course` = flat / rolling / hilly | 0 / +1% / +2.5% | Default: treated as flat. Source efforts are assumed to be on roughly flat terrain; a hilly source is flagged but not corrected. |
+| `expected_temp_c` | +0.4% per degree above 15 degC, capped at 8% | Heat slows marathoners, slower runners more ([Ely et al. 2007](https://experts.umn.edu/en/publications/impact-of-weather-on-marathon-running-performance/)). Never fetched from a forecast: pass what the user says. |
+| `new_super_shoes` | -1% (what-if) | Population averages are about 1%, individual response varies from a loss to a large gain; Apple Health does not record shoes. Use only if the shoes were not worn for the source efforts, or the gain is counted twice. |
+| Heat in the source efforts | time expressed at a mild temperature | Uses the run's recorded temperature (Apple Watch); hot runs are also excluded from the efficiency fit. |
+| Fueling, crowds | not modelled | Fueling is reported as context (carbs logged on long runs) and in confidence only; unlogged does not mean unfueled. Crowds are covered by the 2% race-day term. |
+
+Every adjustment is labelled weak evidence, listed in `adjustments`, and adds to sigma (its size x 0.5, the shoes what-if x 1.0) in quadrature. The 52-week base volume is shown as context only and is not used in the estimate.
 
 ## Backtest
 
