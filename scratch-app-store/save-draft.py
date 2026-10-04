@@ -1,5 +1,6 @@
 """Save public listing metadata only; never attach a build or submit a version."""
 import json
+import hashlib
 import re
 import subprocess
 import sys
@@ -32,7 +33,12 @@ class Apple:
                 return json.load(response)
         except urllib.error.HTTPError as error:
             # Neither request headers nor credential-bearing error bodies enter logs.
-            raise RuntimeError(f'Apple API HTTP {error.code} on {method} {path.split("?")[0]}') from None
+            try:
+                errors = json.loads(error.read()).get('errors', [])
+                details = '; '.join(str(e.get('code', '')) + ': ' + str(e.get('detail', e.get('title', ''))) for e in errors)
+            except Exception:
+                details = 'No structured error'
+            raise RuntimeError(f'Apple API HTTP {error.code} on {method} {path.split("?")[0]}: {details[:1200]}') from None
 
     def many(self, path):
         result = []
@@ -119,8 +125,13 @@ def save(api, payload, output):
     localize('appStoreVersionLocalizations', 'appStoreVersions', version['id'],
              before['localizations'], payload['versionLocalization'])
     if info:
-        localize('appInfoLocalizations', 'appInfos', info['id'],
-                 before['appInfoLocalizations'], payload['appInfo'])
+        try:
+            localize('appInfoLocalizations', 'appInfos', info['id'],
+                     before['appInfoLocalizations'], payload['appInfo'])
+        except RuntimeError as error:
+            if not str(error).startswith('Apple API HTTP 409'):
+                raise
+            results['skipped'].append(str(error))
     else:
         results['skipped'].append('App-wide metadata: editable app-info state not confirmed')
     state = api.call('GET', f'appStoreVersions/{version["id"]}')['data']
@@ -129,7 +140,13 @@ def save(api, payload, output):
     results['version'] = state
     (output / 'after.json').write_text(json.dumps(results, indent=2))
     print(json.dumps({'appId': app['id'], 'versionId': version['id'],
-                      'state': state['attributes']['appStoreState'], 'skipped': results['skipped']}))
+        'versionString': state['attributes']['versionString'],
+        'state': state['attributes']['appStoreState'], 'releaseType': state['attributes']['releaseType'],
+        'verified': [{'type': item['type'], 'fields': {
+            key: {'sha256': hashlib.sha256(value.encode()).hexdigest(), 'characters': len(value)}
+            if key == 'description' else value for key, value in item['attributes'].items()
+            if key in {**payload['appInfo'], **payload['versionLocalization']}}}
+            for item in results['verified']], 'skipped': results['skipped']}))
 
 
 if __name__ == '__main__':
