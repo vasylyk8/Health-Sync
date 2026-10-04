@@ -186,6 +186,11 @@ final class SyncTiming: @unchecked Sendable {
         }
     }
 
+    /// Cumulative phase totals; benchmarks take before/after deltas to avoid mixing separate syncs.
+    func phaseMilliseconds() -> [String: Double] {
+        lock.withLock { stats.filter { $0.key.hasPrefix("phase.") }.mapValues(\.totalMs) }
+    }
+
     /// Logs (and every 30 s persists) the running summary. Call after each group of workouts.
     func checkpoint(_ label: String) {
         let text: String = lock.withLock {

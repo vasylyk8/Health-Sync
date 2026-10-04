@@ -1,5 +1,6 @@
 #if DEBUG
 import CoreLocation
+import CryptoKit
 import HealthKit
 import SwiftUI
 import os
@@ -64,7 +65,7 @@ enum HealthBench {
         let count = args.firstIndex(of: "-benchCount").flatMap { Int(args[$0 + 1]) } ?? 300
         let store = HKHealthStore()
         let scope = HealthTypes.scope(HealthTypes.loadCoverage())
-        let share = HealthLab.shareTypes
+        let share = HealthLab.shareTypes.union([HKQuantityType(.restingHeartRate), HKQuantityType(.heartRateVariabilitySDNN)])
         let read = HealthTypes.readPermissions(for: scope).union(share)
         m.log("authorizing")
         // One request only: a second permission request right after a first one never answers in the
@@ -77,10 +78,22 @@ enum HealthBench {
             return
         }
         m.log("authorized")
+        let history = args.contains("-benchHistory")
         let heavy = args.firstIndex(of: "-benchHeavy").flatMap { Int(args[$0 + 1]) } ?? 60
         let light = max(0, count - heavy)
-        await HealthLab.seed(store, heavy: heavy, light: light, m)
+        await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: history || args.contains("-benchScheduling") ? 9 : 1.3, heavyStride: history ? 6 : 1, m)
         await seedBackground(store, count: 100_000, m)
+        if history {
+            await seedHistoryDetails(store, m)
+            await historyComparison(scope, m)
+            m.log("BENCH DONE")
+            return
+        }
+        if args.contains("-benchScheduling") {
+            await schedulingComparison(scope, m)
+            m.log("BENCH DONE")
+            return
+        }
         if args.contains("-benchLab") { await HealthLab.run(store, scope: scope, m) }
         // The in-app speed test, exactly as on a phone (its rows are logged as they appear).
         let printed = BenchCounter()
@@ -105,6 +118,144 @@ enum HealthBench {
             await engineRun(scope, m, label: "\(pipelined ? "B pipelined" : "A one group at a time") · \(rate) MB/s per upload\(cap.map { ", \($0) MB/s total" } ?? "")", config: config, uploader: net)
         }
         m.log("BENCH DONE")
+    }
+
+    /// Fresh local outboxes over identical HealthKit data. No production account or network access.
+    /// Reverse the order in the second half to expose warming/order effects instead of calling them a speedup.
+    private static func schedulingComparison(_ scope: SyncScope, _ m: BenchModel) async {
+        let at = Date()
+        let expected = (try? await HealthKitSource(scope: scope).workoutIndex().count) ?? 0
+        var reference: String?
+        var passed = expected > 0
+        for variant in ["baseline", "bounded", "coordinated", "coordinated", "bounded", "baseline"] {
+            var config = SyncEngine.Config()
+            config.detailReadConcurrency = variant == "baseline" ? 24 : 4
+            config.serializeHistoryReads = variant == "coordinated"
+            config.detailQueryMaxConcurrency = variant == "baseline" ? 96 : 32
+            let net = BenchCapture()
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("scheduling-\(UUID().uuidString)")
+            let box = Outbox(root: root)
+            let source = HealthKitSource(scope: scope)
+            let engine = SyncEngine(source: source, uploader: net, outbox: box, scope: scope, config: config, now: { at })
+            let before = SyncTiming.shared.phaseMilliseconds()
+            let started = Date()
+            let watcher = Task { @MainActor in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(15))
+                    if Task.isCancelled { break }
+                    let p = await engine.progress
+                    m.log("SCHED running \(variant): \(Int(Date().timeIntervalSince(started)))s details \(p.detailsDone)/\(p.detailsTotal)")
+                }
+            }
+            do {
+                let outcome = try await engine.run()
+                let wall = Date().timeIntervalSince(started)
+                let fingerprint = net.fingerprint
+                if reference == nil { reference = fingerprint }
+                let equal = fingerprint == reference
+                let complete = outcome == .finished && box.state.detailsDone.count == expected && box.pending().isEmpty
+                passed = passed && equal && complete
+                let phases = SyncTiming.shared.phaseMilliseconds().mapValues { $0 / 1000 }
+                let delta = phases.map { key, value in "\(key)=\(String(format: "%.2f", value - (before[key] ?? 0) / 1000))s" }.sorted().joined(separator: " ")
+                m.log("SCHED result \(variant): wall=\(String(format: "%.2f", wall))s details=\(box.state.detailsDone.count)/\(expected) equal=\(equal) complete=\(complete) digest=\(fingerprint) \(net.summary(wall: wall)) \(delta)")
+            } catch {
+                passed = false
+                m.log("SCHED failed \(variant): \(error)")
+            }
+            watcher.cancel()
+            await watcher.value
+            try? FileManager.default.removeItem(at: root)
+        }
+        m.log(passed ? "SCHED CHECK OK" : "SCHED CHECK FAILED")
+    }
+
+    /// Each hypothesis alone, with fixed data/time and fresh outboxes. Warm-up is excluded from timing comparisons.
+    private static func historyComparison(_ scope: SyncScope, _ m: BenchModel) async {
+        let at = Date()
+        let expected = (try? await HealthKitSource(scope: scope).workoutIndex().count) ?? 0
+        let args = ProcessInfo.processInfo.arguments
+        let requested = args.firstIndex(of: "-benchCount").flatMap { Int(args[$0 + 1]) } ?? 300
+        var passed = expected == requested && expected > 0
+        for forced in ProcessInfo.processInfo.arguments.contains("-benchHistoryCheck") ? [true] : [true, false] {
+            var reference: BenchCapture?
+            let order: [RawHistoryExperiment] = ProcessInfo.processInfo.arguments.contains("-benchHistoryCheck") ? [.baseline, .baseline, .shared, .larger, .parallel] : forced ? [.baseline, .shared, .larger, .parallel, .baseline, .parallel, .larger, .shared, .baseline] : [.baseline, .shared, .larger, .parallel]
+            for (run, variant) in order.enumerated() {
+                let net = BenchCapture()
+                let root = FileManager.default.temporaryDirectory.appendingPathComponent("history-\(UUID().uuidString)")
+                let box = Outbox(root: root)
+                let source = HealthKitSource(scope: scope)
+                source.historyExperiment = variant
+                source.debugFailingStatistics = forced
+                let engine = SyncEngine(source: source, uploader: net, outbox: box, scope: scope, now: { at })
+                let before = SyncTiming.shared.phaseMilliseconds()
+                let started = Date()
+                let watcher = Task { @MainActor in
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(20))
+                        if Task.isCancelled { break }
+                        let p = await engine.progress
+                        m.log("HIST running \(variant.rawValue) forced=\(forced): \(Int(Date().timeIntervalSince(started)))s details \(p.detailsDone)/\(p.detailsTotal)")
+                    }
+                }
+                do {
+                    let outcome = try await engine.run()
+                    let wall = Date().timeIntervalSince(started)
+                    let fingerprint = net.fingerprint
+                    if reference == nil { reference = net }
+                    let comparison = try net.comparison(to: reference!)
+                    let equal = comparison.equivalent
+                    if !comparison.exact {
+                        m.log("HIST data \(variant.rawValue) forced=\(forced): exact=\(comparison.exact) equivalent=\(equal) changedRecords=\(comparison.changedRecords) maxDelta=\(String(format: "%.16g", comparison.maximumDelta)) tolerance=1e-9")
+                        for line in net.differences(to: reference!).prefix(2) { m.log("HIST difference \(line.prefix(1800))") }
+                    }
+                    let complete = outcome == .finished && box.state.detailsDone.count == expected && box.pending().isEmpty
+                    passed = passed && equal && complete
+                    let phases = SyncTiming.shared.phaseMilliseconds()
+                    let delta = phases.map { key, value in "\(key)=\(String(format: "%.2f", (value - (before[key] ?? 0)) / 1000))s" }.sorted().joined(separator: " ")
+                    let counters = await source.historyExperimentSummary()
+                    m.log("HIST result \(variant.rawValue) forced=\(forced) warmup=\(run == 0): wall=\(String(format: "%.2f", wall))s details=\(box.state.detailsDone.count)/\(expected) equal=\(equal) exact=\(comparison.exact) maxDelta=\(String(format: "%.16g", comparison.maximumDelta)) complete=\(complete) digest=\(fingerprint) \(counters) \(net.summary(wall: wall)) \(delta)")
+                } catch {
+                    passed = false
+                    m.log("HIST failed \(variant.rawValue) forced=\(forced): \(error)")
+                }
+                watcher.cancel()
+                await watcher.value
+                try? FileManager.default.removeItem(at: root)
+            }
+        }
+        m.log(passed ? "HIST CHECK OK" : "HIST CHECK FAILED")
+    }
+
+    /// Sparse recovery metrics through the workout history and long samples crossing a query boundary.
+    private static func seedHistoryDetails(_ store: HKHealthStore, _ m: BenchModel) async {
+        let workouts = await allWorkouts(store)
+        guard let oldest = workouts.first?.startDate else { return }
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: oldest)
+        let bpm = HKUnit.count().unitDivided(by: .minute())
+        var samples: [HKSample] = []
+        var day = start
+        var index = 0
+        while day < Date() {
+            let t = day.addingTimeInterval(9 * 3600)
+            samples.append(HKQuantitySample(type: HKQuantityType(.restingHeartRate), quantity: HKQuantity(unit: bpm, doubleValue: Double(45 + index % 20)), start: t, end: t.addingTimeInterval(1800)))
+            samples.append(HKQuantitySample(type: HKQuantityType(.heartRateVariabilitySDNN), quantity: HKQuantity(unit: .secondUnit(with: .milli), doubleValue: Double(30 + index % 60)), start: t, end: t))
+            day = cal.date(byAdding: .day, value: 1, to: day)!
+            index += 1
+        }
+        let boundary = cal.date(byAdding: .month, value: 3, to: start.addingTimeInterval(-300))!
+        samples += [
+            HKQuantitySample(type: HKQuantityType(.stepCount), quantity: HKQuantity(unit: .count(), doubleValue: 4321), start: boundary.addingTimeInterval(-2 * 86400), end: boundary.addingTimeInterval(86400)),
+            HKQuantitySample(type: HKQuantityType(.heartRate), quantity: HKQuantity(unit: bpm, doubleValue: 72), start: boundary.addingTimeInterval(-2 * 86400), end: boundary.addingTimeInterval(3600)),
+        ]
+        do {
+            var i = 0
+            while i < samples.count {
+                try await store.save(Array(samples[i..<min(i + 1000, samples.count)]))
+                i += 1000
+            }
+            m.log("history recovery/boundaries: seeded \(samples.count) samples")
+        } catch { m.log("HIST seed failed: \(error)") }
     }
 
     /// Reads every workout the way the app does (per-workout queries, many at once) and reports the rate.
@@ -421,6 +572,36 @@ final class SimNet: Uploader, @unchecked Sendable {
             String(format: "· %d uploads, %.1f MB, %.1f in flight on average (peak %d)", uploads, Double(bytes) / 1_000_000, busy / max(wall, 0.001), peak)
         }
     }
+}
+
+/// Canonical multiset of every synthetic record, preserving duplicates and ignoring only batch headers.
+private final class BenchCapture: Uploader, @unchecked Sendable {
+    private let net = SimNet(perUploadMBs: 0.6, capMBs: 0.6)
+    private let lock = NSLock()
+    private var records: [String] = []
+    func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {
+        guard let raw = Gzip.decompress(gz), let text = String(data: raw, encoding: .utf8) else { throw NSError(domain: "BenchCapture", code: 1) }
+        let lines = try text.split(separator: "\n").dropFirst().map { line -> String in
+            let object = try JSONSerialization.jsonObject(with: Data(line.utf8))
+            let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+            return typeId + ":" + String(decoding: data, as: UTF8.self)
+        }
+        try await net.upload(batchId: batchId, gz: gz, sha256: sha256, typeId: typeId)
+        lock.withLock { records.append(contentsOf: lines) }
+    }
+    var fingerprint: String {
+        let data = lock.withLock { Data(records.sorted().joined(separator: "\n").utf8) }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+    private var snapshot: [String] { lock.withLock { records } }
+    func comparison(to reference: BenchCapture) throws -> HistoryRecordComparison {
+        try HistoryRecordComparison.compare(reference.snapshot, snapshot)
+    }
+    func differences(to reference: BenchCapture) -> [String] {
+        let a = Set(reference.snapshot), b = Set(snapshot)
+        return a.subtracting(b).sorted().prefix(1).map { "reference " + $0 } + b.subtracting(a).sorted().prefix(1).map { "candidate " + $0 }
+    }
+    func summary(wall: Double) -> String { net.summary(wall: wall) }
 }
 
 /// How many speed-test rows were already logged.

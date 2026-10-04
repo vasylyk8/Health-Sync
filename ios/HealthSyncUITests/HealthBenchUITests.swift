@@ -7,7 +7,12 @@ final class HealthBenchUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         let count = ProcessInfo.processInfo.environment["BENCH_COUNT"] ?? "300"
+        let history = ProcessInfo.processInfo.environment["BENCH_HISTORY"] == "1"
+        let scheduling = ProcessInfo.processInfo.environment["BENCH_SCHEDULING"] == "1"
         app.launchArguments = ["-healthBench", "-benchCount", count]
+        if history { app.launchArguments += ["-benchHistory", "-benchHeavy", "24"] }
+        if history && ProcessInfo.processInfo.environment["BENCH_HISTORY_CHECK"] == "1" { app.launchArguments += ["-benchHistoryCheck"] }
+        if scheduling && !history { app.launchArguments += ["-benchScheduling", "-benchHeavy", "24"] }
         app.launch()
 
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -40,5 +45,12 @@ final class HealthBenchUITests: XCTestCase {
         shot.lifetime = .keepAlways
         add(shot)
         XCTAssertTrue(output.label.contains("BENCH DONE"), "benchmark did not finish")
+        if history {
+            XCTAssertTrue(output.label.contains("HIST CHECK OK"), "history experiment changed data or failed: " + output.label)
+            XCTAssertTrue(output.label.contains(", 0 failures,"), "workout seed must complete without errors")
+            XCTAssertFalse(output.label.contains("HIST seed failed"))
+            XCTAssertFalse(output.label.contains("background save error"))
+        }
+        if scheduling && !history { XCTAssertTrue(output.label.contains("SCHED CHECK OK"), "scheduling changed data or failed: " + output.label) }
     }
 }

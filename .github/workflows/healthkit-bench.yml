@@ -3,15 +3,22 @@
 name: healthkit-bench
 on:
   push:
-    branches: ['claude/laughing-knuth-5lkgy7']
-    paths: ['.github/workflows/healthkit-bench.yml', 'ios/HealthSync/Health/HealthBench.swift', 'ios/HealthSyncUITests/HealthBenchUITests.swift']
+    branches: ['claude/laughing-knuth-5lkgy7', 'perf/first-sync-contention']
+    paths: ['.github/workflows/healthkit-bench.yml', 'ios/HealthSync/Health/**', 'ios/HealthSyncUITests/HealthBenchUITests.swift', 'ios/HealthSync/Sync/**', 'ios/HealthSync/Support/SyncTiming.swift']
   workflow_dispatch:
     inputs:
       count:
         description: Number of synthetic workouts
         default: '300'
+      scheduling:
+        description: Compare first-sync scheduling with identical data
+        type: boolean
+        default: false
 permissions:
   contents: read
+concurrency:
+  group: healthkit-bench-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   bench:
     runs-on: macos-latest
@@ -24,7 +31,10 @@ jobs:
       APPLE_TEAM_ID: ''
       PUBLIC_BASE_URL: https://krok-1d60a.web.app
       SIM_DEVICE: iPhone 17 Pro
-      TEST_RUNNER_BENCH_COUNT: ${{ inputs.count || '300' }}
+      TEST_RUNNER_BENCH_COUNT: ${{ inputs.count || '150' }}
+      TEST_RUNNER_BENCH_HISTORY: ${{ github.ref_name == 'perf/first-sync-contention' && '1' || '0' }}
+      TEST_RUNNER_BENCH_SCHEDULING: ${{ inputs.scheduling && '1' || '0' }}
+      TEST_RUNNER_BENCH_HISTORY_CHECK: '1'
       TEST_RUNNER_BENCH_MINUTES: '90'
     steps:
       - uses: actions/checkout@v4
