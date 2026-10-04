@@ -37,3 +37,14 @@ summary{min-height:44px;cursor:pointer;padding:8px 0}
 
 @media (max-width:480px){.hero{font-size:36px}.card{padding-inline:20px}.top nav{gap:14px}}
 .skip{position:absolute;left:-999px;top:0;background:var(--ink);color:var(--background);padding:8px 12px;border-radius:0 0 16px 0;z-index:10}.skip:focus{left:0}
+.top nav a[href="/mcp-docs"]{font-weight:600}
+.paths{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:0 0 8px}
+.paths .card{margin:0;display:flex;flex-direction:column}
+.paths h2{margin-top:16px;font-size:20px}
+.paths .card p:last-child{margin-top:auto}
+.small{font-size:15px;color:var(--muted)}
+.chips{list-style:none;padding:0;display:flex;flex-wrap:wrap;gap:8px}
+.chips li{margin:0;padding:8px 16px;border:1px solid var(--line);border-radius:999px;font-size:15px}
+.steps{padding-left:22px}
+.steps li{margin:10px 0}
+@media (max-width:600px){.paths{grid-template-columns:1fr}}
