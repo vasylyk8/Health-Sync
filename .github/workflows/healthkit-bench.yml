@@ -4,7 +4,7 @@ name: healthkit-bench
 on:
   push:
     branches: ['claude/laughing-knuth-5lkgy7', 'perf/first-sync-contention']
-    paths: ['.github/workflows/healthkit-bench.yml', 'ios/HealthSync/Health/HealthBench.swift', 'ios/HealthSyncUITests/HealthBenchUITests.swift']
+    paths: ['.github/workflows/healthkit-bench.yml', 'ios/HealthSync/Health/HealthBench.swift', 'ios/HealthSyncUITests/HealthBenchUITests.swift', 'ios/HealthSync/Sync/**', 'ios/HealthSync/Support/SyncTiming.swift']
   workflow_dispatch:
     inputs:
       count:
@@ -12,6 +12,9 @@ on:
         default: '150'
 permissions:
   contents: read
+concurrency:
+  group: healthkit-bench-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   bench:
     runs-on: macos-latest

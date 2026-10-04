@@ -41,7 +41,7 @@ private final class SchedulingSource: HealthSource, @unchecked Sendable {
     }
     var queryConcurrency: Int { lock.withLock { queryLimit } }
     func setQueryConcurrency(_ n: Int) { lock.withLock { queryLimit = n; limits.append(n) } }
-    var snapshot: (history: Int, details: Int, limits: [Int]) { lock.withLock { (maximumHistory, maximumDetails, limits) } }
+    var snapshot: (history: Int, details: Int, limits: [Int], active: Int) { lock.withLock { (maximumHistory, maximumDetails, limits, detailActive) } }
 }
 
 final class SyncSchedulingTests: XCTestCase {
@@ -78,6 +78,25 @@ final class SyncSchedulingTests: XCTestCase {
         XCTAssertEqual(s.queryConcurrency, 80, "restore the source's query limit after detail reading")
         XCTAssertTrue(s.snapshot.limits.dropLast().allSatisfy { $0 <= 32 })
     }
+    func testFailedDetailUploadDrainsPrefetchAndCanResume() async throws {
+        let s = fixture()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let box = Outbox(root: root)
+        var config = SyncEngine.Config()
+        config.detailGroupSize = 4
+        let engine = SyncEngine(source: s, uploader: DetailFailUploader(), outbox: box, scope: scope, config: config)
+        do { _ = try await engine.run(); XCTFail("offline upload must fail") } catch is DetailFailUploader.Offline {}
+        XCTAssertEqual(s.snapshot.active, 0, "prefetched HealthKit reads must stop before the run returns")
+        XCTAssertEqual(s.queryConcurrency, 80)
+        XCTAssertFalse(box.pending().isEmpty)
+        let resumed = SyncEngine(source: s, uploader: RecordingUploader(), outbox: box, scope: scope, config: config)
+        let outcome = try await resumed.run()
+        XCTAssertEqual(outcome, .finished)
+        XCTAssertEqual(box.state.detailsDone.count, 60)
+        XCTAssertTrue(box.pending().isEmpty)
+    }
+
     func testDailyFailureStillUploadsHourlyHistoryAndWorkoutDetails() async throws {
         let s = fixture(), up = RecordingUploader()
         s.failDaily = true
@@ -89,5 +108,12 @@ final class SyncSchedulingTests: XCTestCase {
         XCTAssertNil(box.state.dailyFullAt)
         XCTAssertNotNil(box.state.hourlyAt)
         XCTAssertEqual(box.state.detailsDone.count, 60)
+    }
+}
+
+private struct DetailFailUploader: Uploader {
+    struct Offline: Error {}
+    func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {
+        if typeId == HealthTypes.streamId { throw Offline() }
     }
 }

@@ -723,7 +723,11 @@ actor SyncEngine {
         } catch {
             // Stop the uploads still running; what they did not finish stays in the outbox for the next run.
             sending.forEach { $0.cancel() }
+            reads.values.forEach { $0.cancel() }
             for task in sending { _ = try? await task.value }
+            // Drain prefetched reads before restoring query limits or allowing another sync to start.
+            for task in reads.values { _ = await task.result }
+            reads.removeAll()
             throw error
         }
     }
