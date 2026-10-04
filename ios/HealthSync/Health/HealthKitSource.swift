@@ -571,7 +571,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             (dailyFallbacks.sorted().joined(separator: ","),
              dailyFills.keys.sorted().map { "\($0):\(dailyFills[$0]!)" }.joined(separator: ","),
              dailyCalibration.keys.sorted().map { "\($0):\(dailyCalibration[$0]!)" }.joined(separator: ","),
-             dailyStatisticsErrors.keys.sorted().map { "\($0):\(dailyStatisticsErrors[$0]!)" }.joined(separator: ","))
+             // Error code x number of metrics (the note has to keep room for fill=).
+             Dictionary(grouping: dailyStatisticsErrors.values, by: { $0 }).map { "\($0.key)x\($0.value.count)" }.sorted().joined(separator: ","))
         }
         let counts = metrics.indices.filter { Self.sentinelKeys.contains(metrics[$0].key) }
             .map { "\(metrics[$0].key)=\((perMetric[$0] ?? []).count)" }.joined(separator: ",")
