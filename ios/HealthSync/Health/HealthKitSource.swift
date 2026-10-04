@@ -742,7 +742,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     private func rawDailyStatistics(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date,
                                     calendar: Calendar) async throws -> [(String, Double)] {
-        var aggregator = SampleAggregator(calendar: calendar, from: from, to: to, cumulative: type.aggregationStyle == .cumulative, granularity: .day)
+        var aggregator = SampleAggregator(calendar: calendar, from: from, to: to, style: Self.aggregationStyle(type), granularity: .day)
         try await forEachRawReading(type, unit: unit, scale: scale, from: from, to: to) { aggregator.add($0) }
         return aggregator.daily(agg)
     }
@@ -762,6 +762,17 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
                 if let reading = Self.reading(sample, unit: unit, scale: scale) { body(reading) }
             }
             cursor = next
+        }
+    }
+
+    /// How HealthKit's own statistics combine readings of this type (heart rate is time-weighted, sound levels are
+    /// averaged as energy), so the raw aggregation does the same.
+    private static func aggregationStyle(_ type: HKQuantityType) -> SampleAggregator.Style {
+        switch type.aggregationStyle {
+        case .cumulative: return .cumulative
+        case .discreteTemporallyWeighted: return .timeWeighted
+        case .discreteEquivalentContinuousLevel: return .equivalentLevel
+        default: return .arithmetic
         }
     }
 
@@ -1040,18 +1051,6 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         return (compared, out)
     }
 
-    /// Daily check only: HealthKit's daily statistics and the raw aggregation of one core metric, one line per day.
-    func statisticsAndRaw(metricKey: String, from: Date, to: Date) async throws -> [String] {
-        guard let metric = scope.dailyMetrics.first(where: { $0.key == metricKey }), case .quantity(let type, let unit, let agg, let scale) = metric.kind else { return [] }
-        let cal = Calendar.current
-        let start = cal.startOfDay(for: from)
-        let range = HKQuery.predicateForSamples(withStart: start, end: to, options: [])
-        let stats = Dictionary(try await dailyStatisticsOnce(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal,
-                                                             predicate: range, options: Self.statisticsOptions(agg)), uniquingKeysWith: { a, _ in a })
-        let raw = Dictionary(try await rawDailyStatistics(type, unit: unit, agg: agg, scale: scale, from: start, to: to, calendar: cal), uniquingKeysWith: { a, _ in a })
-        return Set(stats.keys).union(raw.keys).sorted().map { "\(metricKey) \($0) statistics=\(Self.text(stats[$0])) raw=\(Self.text(raw[$0]))" }
-    }
-
     private static func text(_ v: Double?) -> String { v.map { String(format: "%.4f", $0) } ?? "none" }
     private static func text(_ b: HourBucket?) -> String {
         guard let b else { return "none" }
@@ -1060,7 +1059,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     #endif
 
     private func rawHourlyBuckets(_ metric: HourlyMetric, from: Date, to: Date) async throws -> [HourBucket] {
-        var aggregator = SampleAggregator(calendar: Calendar.current, from: from, to: to, cumulative: metric.cumulative, granularity: .hour)
+        var aggregator = SampleAggregator(calendar: Calendar.current, from: from, to: to, style: Self.aggregationStyle(metric.type), granularity: .hour)
         try await forEachRawReading(metric.type, unit: metric.unit, scale: 1, from: from, to: to) { aggregator.add($0) }
         return aggregator.hourly(avg: metric.cols.contains("avg"), min: metric.cols.contains("min"), max: metric.cols.contains("max"))
     }

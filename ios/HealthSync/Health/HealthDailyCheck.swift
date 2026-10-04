@@ -141,12 +141,14 @@ enum DailyCheck {
             m.log("DAILYSEM FAIL could not save readings: \(error)")
             return
         }
-        await experiment(m, store: store, scope: scope, today: today, calendar: cal)
+        guard await seedShapes(m, store: store, today: today, calendar: cal) else { return }
         let source = HealthKitSource(scope: scope)
         do {
             var differences: [String] = []
             var compared = 0
-            for (from, to) in [(before, cal.date(byAdding: .day, value: 2, to: day)!), (cal.date(byAdding: .day, value: -11, to: today)!, Date())] {
+            let shapes = cal.date(byAdding: .day, value: -900, to: today)!
+            for (from, to) in [(before, cal.date(byAdding: .day, value: 2, to: day)!), (shapes, cal.date(byAdding: .day, value: 32, to: shapes)!),
+                               (cal.date(byAdding: .day, value: -11, to: today)!, Date())] {
                 let r = try await source.statisticsVersusRaw(from: from, to: to)
                 compared += r.compared
                 differences += r.differences
@@ -159,9 +161,10 @@ enum DailyCheck {
         }
     }
 
-    /// Measures (logs, does not judge) how HealthKit's daily average weighs heart-rate readings of different shapes, and on
-    /// which day it counts a reading that lies mostly in the next day. One shape per day, about 900 days back.
-    private static func experiment(_ m: BenchModel, store: HKHealthStore, scope: SyncScope, today: Date, calendar cal: Calendar) async {
+    /// Reading shapes whose daily values depend on HealthKit's rules: heart-rate readings with and without a duration and
+    /// series readings of several spacings (time-weighted average), readings that cross midnight by different amounts,
+    /// sound levels of different durations. One shape per day (or pair of days), about 900 days back.
+    private static func seedShapes(_ m: BenchModel, store: HKHealthStore, today: Date, calendar cal: Calendar) async -> Bool {
         let bpm = HKUnit.count().unitDivided(by: .minute())
         let first = cal.date(byAdding: .day, value: -900, to: today)!
         func day(_ i: Int) -> Date { cal.date(byAdding: .day, value: i, to: first)! }
@@ -173,6 +176,10 @@ enum DailyCheck {
             for (i, v) in values.enumerated() { try b.insert(HKQuantity(unit: bpm, doubleValue: v), at: start.addingTimeInterval(Double(i) * step)) }
             _ = try await b.finishSeries(metadata: nil, endDate: start.addingTimeInterval(end))
         }
+        func q(_ id: HKQuantityTypeIdentifier, _ v: Double, _ start: Date, _ end: Date, _ unit: HKUnit = HKUnit.count().unitDivided(by: .minute())) -> HKQuantitySample {
+            HKQuantitySample(type: HKQuantityType(id), quantity: HKQuantity(unit: unit, doubleValue: v), start: start, end: end)
+        }
+        func t(_ d: Int, _ hours: Double) -> Date { day(d).addingTimeInterval(hours * 3600) }
         let ten = (0 ..< 10).map { Double(100 + 10 * $0) }
         do {
             // Day 0: single 60 at 08:00 + series of ten (100...190) 10 s apart, 100 s long.
@@ -201,13 +208,16 @@ enum DailyCheck {
             // Days 12-13: a resting-heart-rate reading from 23:55 to 23:50 the next day (as the Watch writes them).
             try await store.save([HKQuantitySample(type: HKQuantityType(.restingHeartRate), quantity: HKQuantity(unit: bpm, doubleValue: 50),
                                                    start: day(12).addingTimeInterval(23 * 3600 + 55 * 60), end: day(13).addingTimeInterval(23 * 3600 + 50 * 60))])
+            // Readings that reach into the next day by 20 h, 8 h, 13 h and 11 h.
+            try await store.save([q(.respiratoryRate, 15, t(15, 20), t(16, 20)), q(.restingHeartRate, 55, t(18, 18), t(19, 8)),
+                                  q(.respiratoryRate, 17, t(21, 12), t(22, 13)), q(.respiratoryRate, 18, t(24, 13), t(25, 11))])
+            // Day 27: sound levels of 60 dB for 30 min and 90 dB for 1 min.
+            try await store.save([q(.environmentalAudioExposure, 60, t(27, 9), t(27, 9.5), .decibelAWeightedSoundPressureLevel()),
+                                  q(.environmentalAudioExposure, 90, t(27, 15), t(27, 15 + 1.0 / 60), .decibelAWeightedSoundPressureLevel())])
+            return true
         } catch {
-            m.log("DAILYEXP could not save readings: \(error)")
-            return
-        }
-        let source = HealthKitSource(scope: scope)
-        for key in ["hrAvg", "hrMin", "hrMax", "respiratoryRate", "restingHr"] {
-            for line in (try? await source.statisticsAndRaw(metricKey: key, from: day(0), to: day(15))) ?? ["\(key) failed"] { m.log("DAILYEXP \(line)") }
+            m.log("DAILYSEM FAIL could not save the reading shapes: \(error)")
+            return false
         }
     }
 

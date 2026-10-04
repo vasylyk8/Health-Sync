@@ -13,7 +13,11 @@ final class SampleAggregationTests: XCTestCase {
     }
 
     private func aggregator(_ from: Date, _ to: Date, cumulative: Bool, _ g: SampleAggregator.Granularity = .day) -> SampleAggregator {
-        SampleAggregator(calendar: cal, from: from, to: to, cumulative: cumulative, granularity: g)
+        SampleAggregator(calendar: cal, from: from, to: to, style: cumulative ? .cumulative : .arithmetic, granularity: g)
+    }
+
+    private func weighted(_ style: SampleAggregator.Style = .timeWeighted) -> SampleAggregator {
+        SampleAggregator(calendar: cal, from: at(2026, 5, 1), to: at(2026, 6, 1), style: style, granularity: .day)
     }
 
     private func dict(_ v: [(String, Double)]) -> [String: Double] { Dictionary(v, uniquingKeysWith: { a, _ in a }) }
@@ -30,6 +34,52 @@ final class SampleAggregationTests: XCTestCase {
         let filled = HealthKitSource.missingDaily(primary: primary, fallback: raw)
         XCTAssertEqual(filled.map(\.0), ["2026-05-12"])
         XCTAssertEqual(filled.first?.1, 50)
+    }
+
+    /// The measured HealthKit behaviour: the Watch's 23:55-23:50 resting heart rate counts on both days.
+    func testReadingCoveringMostOfTheNextDayCountsOnBothDays() {
+        var a = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: false)
+        a.add(RawReading(start: at(2026, 5, 11, 23, 55), end: at(2026, 5, 12, 23, 50), value: 50, source: "w"))
+        XCTAssertEqual(a.daily(.avg).map(\.0), ["2026-05-11", "2026-05-12"])
+        var b = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: false)
+        b.add(RawReading(start: at(2026, 5, 11, 23), end: at(2026, 5, 12, 5), value: 16, source: "w"))
+        XCTAssertEqual(b.daily(.avg).map(\.0), ["2026-05-11"])
+    }
+
+    // Time-weighted averages (heart rate), against the values HealthKit's own statistics gave in the simulator.
+    private func series(_ start: Date, seconds: Double, values: [Double]) -> RawReading {
+        RawReading(start: start, end: start.addingTimeInterval(seconds), value: values.reduce(0, +) / Double(values.count),
+                   min: values.min()!, max: values.max()!, last: values.last!, count: values.count, source: "w")
+    }
+    private let ten = (0 ..< 10).map { Double(100 + 10 * $0) }
+
+    func testTimeWeightedAverageMatchesHealthKit() {
+        func day(_ add: (inout SampleAggregator) -> Void) -> Double {
+            var a = weighted()
+            add(&a)
+            return a.daily(.avg).first!.1
+        }
+        let single60 = RawReading(start: at(2026, 5, 3, 8), end: at(2026, 5, 3, 8), value: 60, source: "w")
+        // Series of ten 10 s apart (100 s), 1 s apart (10 s), 60 s apart (600 s); two 10 s apart (20 s).
+        XCTAssertEqual(day { $0.add(single60); $0.add(series(at(2026, 5, 3, 12), seconds: 100, values: ten)) }, 123.75, accuracy: 1e-6)
+        XCTAssertEqual(day { $0.add(single60); $0.add(series(at(2026, 5, 3, 12), seconds: 10, values: ten)) }, 106.3636, accuracy: 1e-3)
+        XCTAssertEqual(day { $0.add(single60); $0.add(series(at(2026, 5, 3, 12), seconds: 600, values: ten)) }, 137.2727, accuracy: 1e-3)
+        XCTAssertEqual(day { $0.add(single60); $0.add(series(at(2026, 5, 3, 12), seconds: 20, values: [100, 190])) }, 106.75, accuracy: 1e-6)
+        // Single readings with and without a duration.
+        func r(_ v: Double, _ h: Int, _ s: Double) -> RawReading { RawReading(start: at(2026, 5, 3, h), end: at(2026, 5, 3, h).addingTimeInterval(s), value: v, source: "w") }
+        XCTAssertEqual(day { $0.add(r(60, 8, 0)); $0.add(r(100, 12, 100)) }, 90.5263, accuracy: 1e-3)
+        XCTAssertEqual(day { $0.add(r(60, 8, 0)); $0.add(r(100, 12, 0)) }, 80, accuracy: 1e-6)
+        XCTAssertEqual(day { $0.add(r(60, 8, 60)); $0.add(r(100, 12, 0)) }, 72, accuracy: 1e-6)
+        XCTAssertEqual(day { $0.add(r(60, 8, 600)); $0.add(r(100, 12, 60)) }, 65.6, accuracy: 1e-6)
+        // The semantics day of the first check run: 60 at 08:00, the 100 s series, 70 at 20:00 -> 113.
+        XCTAssertEqual(day { $0.add(single60); $0.add(series(at(2026, 5, 3, 12), seconds: 100, values: ten)); $0.add(r(70, 20, 0)) }, 113, accuracy: 1e-6)
+    }
+
+    func testSoundLevelsAverageAsEnergy() {
+        var a = weighted(.equivalentLevel)
+        a.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 30), value: 60, source: "w"))
+        a.add(RawReading(start: at(2026, 5, 3, 15), end: at(2026, 5, 3, 15, 30), value: 70, source: "w"))
+        XCTAssertEqual(a.daily(.avg).first!.1, 10 * log10((1e6 + 1e7) / 2), accuracy: 1e-9)
     }
 
     func testDiscreteReadingThatEndsAtMidnightStaysOnItsDay() {

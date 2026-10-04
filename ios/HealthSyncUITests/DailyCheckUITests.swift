@@ -46,7 +46,6 @@ final class DailyCheckUITests: XCTestCase {
         if !output.label.contains("DAILYCHECK OK") { failures.append("daily metrics missing: " + lines("DAILYCHECK")) }
         if !output.label.contains("DAILYSEM OK") { failures.append("raw aggregation vs HealthKit statistics: " + lines("DAILYSEM")) }
         if !output.label.contains("DAILYRAW OK") { failures.append("daily pass without statistics: " + lines("DAILYRAW")) }
-        print("DAILYUI experiment: " + lines("DAILYEXP"))
         XCTAssertTrue(failures.isEmpty, failures.joined(separator: " || "))
     }
 }
