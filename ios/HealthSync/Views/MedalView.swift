@@ -24,10 +24,12 @@ struct MedalView: View {
     /// Counts turns, so a late "finished" from an earlier turn is ignored.
     @State private var turnCount = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// UI tests (and Apple's accessibility audit, which waits for the screen to settle) get a still medal.
+    private let animates = !ProcessInfo.processInfo.arguments.contains("-uiTesting")
 
     var body: some View {
         Group {
-            if reduceMotion || (showingBack && settled) {
+            if reduceMotion || !animates || (showingBack && settled) {
                 medal(angle: showingBack ? (turn?.to ?? 180) : 0)
             } else {
                 TimelineView(.animation) { context in
