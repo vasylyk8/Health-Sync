@@ -59,7 +59,8 @@ def save(api, payload, output):
     attrs = payload['ageRating']
     api.call('PATCH', f'ageRatingDeclarations/{before["id"]}', {
         'type': 'ageRatingDeclarations', 'id': before['id'], 'attributes': attrs})
-    after = api.call('GET', f'ageRatingDeclarations/{before["id"]}')['data']
+    # Apple permits UPDATE on this resource; reads use the app-info relationship.
+    after = api.call('GET', f'appInfos/{info["id"]}/ageRatingDeclaration')['data']
     if any(after['attributes'].get(k) != v for k, v in attrs.items()):
         raise RuntimeError('Age-rating readback mismatch')
     info_after = api.call('GET', f'appInfos/{info["id"]}')['data']
