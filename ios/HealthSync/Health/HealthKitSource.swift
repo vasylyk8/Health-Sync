@@ -684,10 +684,20 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let days = SampleAggregator.localDays(from: from, to: min(to, now), calendar: calendar)
         let calibrate = Self.calibrationTypes.contains(type.identifier) && to > now.addingTimeInterval(-3600) && !out.isEmpty
         guard out.count < days || calibrate, try await hasQuantitySamples(type, predicate: range) else { return out }
-        let raw = try await rawDailyStatistics(type, unit: unit, agg: agg, scale: scale, from: from, to: to, calendar: calendar)
-        if calibrate, let d = SampleAggregator.difference(reference: out, other: raw) {
-            let text = String(format: "%.1f/%.1f%%/%dd", d.median, d.max, d.days)
-            sourceLock.withLock { dailyCalibration[label] = text }
+        let aggregator = try await rawDailyAggregator(type, unit: unit, scale: scale, from: from, to: to, calendar: calendar,
+                                                      measureVariants: calibrate && type.aggregationStyle == .cumulative)
+        let raw = aggregator.daily(agg)
+        if calibrate {
+            // Median/largest percent difference from HealthKit's own daily values, and days compared; for cumulative types
+            // also for two other merge rules (a5, w5), to see which comes closest on this phone's real sources.
+            func text(_ values: [(String, Double)]) -> String? {
+                SampleAggregator.difference(reference: out, other: values).map { String(format: "%.1f/%.1f/%dd", $0.median, $0.max, $0.days) }
+            }
+            var parts = [text(raw)].compactMap { $0 }
+            for (name, values) in aggregator.dailyVariants().sorted(by: { $0.key < $1.key }) {
+                if let t = text(values) { parts.append("\(name)=\(t)") }
+            }
+            if !parts.isEmpty { sourceLock.withLock { dailyCalibration[label] = parts.joined(separator: ";") } }
         }
         let missing = Self.missingDaily(primary: out, fallback: raw)
         if !missing.isEmpty {
@@ -742,9 +752,15 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     private func rawDailyStatistics(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date,
                                     calendar: Calendar) async throws -> [(String, Double)] {
-        var aggregator = SampleAggregator(calendar: calendar, from: from, to: to, style: Self.aggregationStyle(type), granularity: .day)
+        try await rawDailyAggregator(type, unit: unit, scale: scale, from: from, to: to, calendar: calendar).daily(agg)
+    }
+
+    private func rawDailyAggregator(_ type: HKQuantityType, unit: HKUnit, scale: Double, from: Date, to: Date, calendar: Calendar,
+                                    measureVariants: Bool = false) async throws -> SampleAggregator {
+        var aggregator = SampleAggregator(calendar: calendar, from: from, to: to, style: Self.aggregationStyle(type), granularity: .day,
+                                          measureVariants: measureVariants)
         try await forEachRawReading(type, unit: unit, scale: scale, from: from, to: to) { aggregator.add($0) }
-        return aggregator.daily(agg)
+        return aggregator
     }
 
     /// Every reading of `type` that touches [from, to), read a month at a time so years of heart rate never sit in memory at
@@ -778,15 +794,16 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     private static func reading(_ sample: HKQuantitySample, unit: HKUnit, scale: Double) -> RawReading? {
         let source = sample.sourceRevision.source.bundleIdentifier
+        let watch = sample.sourceRevision.productType?.hasPrefix("Watch") ?? false
         // A series reading (e.g. heart rate during a workout) holds several values: its average, extremes and last value.
         if let d = sample as? HKDiscreteQuantitySample, d.count > 1 {
             return RawReading(start: d.startDate, end: d.endDate, value: d.averageQuantity.doubleValue(for: unit) * scale,
                               min: d.minimumQuantity.doubleValue(for: unit) * scale, max: d.maximumQuantity.doubleValue(for: unit) * scale,
-                              last: d.mostRecentQuantity.doubleValue(for: unit) * scale, count: d.count, source: source)
+                              last: d.mostRecentQuantity.doubleValue(for: unit) * scale, count: d.count, source: source, watch: watch)
         }
         let v = sample.quantity.doubleValue(for: unit) * scale
         guard v.isFinite else { return nil }
-        return RawReading(start: sample.startDate, end: sample.endDate, value: v, source: source)
+        return RawReading(start: sample.startDate, end: sample.endDate, value: v, source: source, watch: watch)
     }
 
     private func dailyCategory(_ type: HKCategoryType, mode: CategoryMode, from: Date, to: Date, calendar: Calendar) async throws -> [(String, RecordValue)] {
