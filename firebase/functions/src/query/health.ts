@@ -406,7 +406,8 @@ export async function getNutritionLog(deps: QueryDeps, args: NutritionArgs): Pro
 // ---------------------------------------------------------------------------------------------
 // Profile
 
-export async function getProfile(deps: QueryDeps): Promise<ToolResult> {
+/** Opt-in profile (throws category_disabled when switched off): date of birth, sex, and age / rough max HR derived from it. */
+export async function loadProfile(deps: QueryDeps, asOfMs: number = deps.now()) {
   const cats = await enabledCategories(deps);
   requireCategory(cats, 'profile', 'Profile data');
   return withDuck(async (c, dir) => {
@@ -416,14 +417,19 @@ export async function getProfile(deps: QueryDeps): Promise<ToolResult> {
     let age: number | null = null;
     if (typeof p.dob === 'string') {
       const d = new Date(p.dob + 'T00:00:00Z');
-      const now = new Date(deps.now());
+      const now = new Date(asOfMs);
       age = now.getUTCFullYear() - d.getUTCFullYear() - (now.getUTCMonth() < d.getUTCMonth() || (now.getUTCMonth() === d.getUTCMonth() && now.getUTCDate() < d.getUTCDate()) ? 1 : 0);
     }
-    return {
-      ...envelope(deps, [['_events_profile', man]], !!man, ['Estimated max heart rate is only a rough starting point; ask the user for their measured maximum or zone boundaries when they have them.']),
-      profile: { ...p, ...(age !== null ? { age_years: age, estimated_max_hr: round(208 - 0.7 * age, 0) } : {}) },
-    };
+    return { man, profile: { ...p, ...(age !== null ? { age_years: age, estimated_max_hr: round(208 - 0.7 * age, 0) } : {}) } as Record<string, unknown> & { age_years?: number; estimated_max_hr?: number } };
   });
+}
+
+export async function getProfile(deps: QueryDeps): Promise<ToolResult> {
+  const { man, profile } = await loadProfile(deps);
+  return {
+    ...envelope(deps, [['_events_profile', man]], !!man, ['Estimated max heart rate is only a rough starting point; ask the user for their measured maximum or zone boundaries when they have them.']),
+    profile,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
