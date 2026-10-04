@@ -34,6 +34,7 @@ export const readinessShape = {
     speed_at_75pct_hrmax_ratio: z.number().nullable(),
     speed_at_marathon_effort_ratio: z.number().nullable().describe('speed at 87% of max HR in long runs, now vs the prior block'),
     body_mass_kg_now_vs_prior: z.tuple([z.number().nullable(), z.number().nullable()]).describe('kg, 28-day mean now vs before the prior marathon; context, not added on top of the efficiency comparison'),
+    pace_at_same_hr: z.array(z.object({ bpm: z.number(), now: z.string().nullable(), prior: z.string().nullable(), faster_pct: z.number().nullable() })).nullable().describe('pace per km at the same heart rate in sustained stretches of long runs, now vs the prior block (only where both blocks have data at that heart rate)'),
     volume_based_repeat: hms.nullable().describe('prior marathon scaled by the change in Tanda training indices (cross-check only, not averaged in)'),
   }).optional(),
   data_gaps: z.array(z.string()),
