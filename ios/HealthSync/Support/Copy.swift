@@ -6,6 +6,7 @@ enum Copy {
         static let tagline = "Your Apple Health, meet your AI."
         static let subtitle = "Every workout, heartbeat and night of sleep from all your sources, ready for your AI."
         static let connectButton = "Connect to Apple Health"
+        static let connectedButton = "Connected"
         /// Examples of what KROK can answer, scrolling slowly behind the tagline.
         static let questions = [
             "What are my fastest 5K and 10K efforts?",
@@ -23,6 +24,7 @@ enum Copy {
         static let headline = "Keep your data yours."
         static let body = "An account is needed to connect with AI. You can delete it and your data anytime."
         static let signIn = "Sign in with Apple"
+        static let connected = "Apple Health connected"
     }
 
     enum Home {
@@ -46,9 +48,16 @@ enum Copy {
     enum Menu {
         static let help = "Help & Support"
         static let privacy = "Privacy Policy"
+        static let logOut = "Log out"
         static let deleteAll = "Delete All My Data"
         static let speedTest = "Run speed test (pauses sync)"
         static let signIn = "Sign in with Apple"
+    }
+
+    enum LogOut {
+        static let title = "Log out of KROK?"
+        static let message = "Your data and your Claude and ChatGPT connections stay as they are. Sign in with the same Apple Account to come back."
+        static let confirm = "Log out"
     }
 
     enum Delete {

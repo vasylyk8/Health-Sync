@@ -578,6 +578,36 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Signs out of this phone and returns to the welcome page. Nothing is deleted on the server: the account, its data
+    /// and the assistants' connections stay, and signing in with the same Apple Account during onboarding restores them.
+    func logOut() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        await stopSync(waitingAtMost: 20)
+        telemetry.event("signed_out")
+        Keychain.removeAll()
+        outbox.reset()
+        await engine.resetStats()
+        estimator = SyncEstimator()
+        estimate = SyncEstimate()
+        progress = SyncProgress(detailsDone: 0, detailsTotal: 0, isSyncing: false)
+        await backend.signOut()
+        defaults.removeObject(forKey: Self.healthConnectedKey)
+        defaults.removeObject(forKey: Self.pendingAccountKey)
+        defaults.removeObject(forKey: Self.onboardingUidKey)
+        defaults.removeObject(forKey: Self.syncedUidKey)
+        defaults.removeObject(forKey: Self.uploadFinishedKey)
+        goals.clear(editions: SpecialEdition.all)
+        goalSeconds = nil
+        uploadFinished = false
+        status = .empty
+        appleAccountLinked = false
+        started = false
+        busy = false
+        withAnimation { phase = .welcome }
+    }
+
     /// Sign in with Apple from the ••• menu (for accounts that were created before the account page existed).
     func signInWithAppleFromMenu() async {
         guard !busy else { return }
