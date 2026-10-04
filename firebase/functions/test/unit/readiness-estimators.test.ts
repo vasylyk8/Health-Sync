@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { READINESS_CONFIG as cfg, withConfig } from '../../src/readiness/config.js';
 import {
-  classOf, convertTime, efficiencyPoints, effortsOfRun, estimateE1, estimateE1b, estimateE2, estimateE3, fitSpeedAtHr, lowerBoundEffort, personalExponent, selectE1Source, toMarathon, volumeAdjustedR,
+  classOf, convertTime, efficiencyPoints, effortsOfRun, estimateE1, estimateE1b, estimateE2, estimateEarlierRace, estimateE3, fitSpeedAtHr, lowerBoundEffort, personalExponent, selectE1Source, toMarathon, volumeAdjustedR,
   type EfficiencyPoint,
 } from '../../src/readiness/estimators.js';
 import { adjustmentSigmaSeconds, applyAdjustments, buildAdjustments, heatPenaltyPct } from '../../src/readiness/adjust.js';
@@ -275,5 +275,44 @@ describe('adjustments', () => {
     expect(adjustmentSigmaSeconds(12_000, adjs)).toBeCloseTo(Math.sqrt(150 ** 2 + 240 ** 2 + 120 ** 2), 6);
     expect(applyAdjustments(12_000, [])).toBe(12_000);
     expect(adjustmentSigmaSeconds(12_000, [])).toBe(0);
+  });
+});
+
+describe('E1s: an earlier race', () => {
+  const src: RaceEffort = { workoutId: 'hm-old', date: '2026-04-11', ageWeeks: 25, distanceM: HM, seconds: 6_036, hrFraction: 0.91, tagged: false, effortInferred: true, qualifies: true, klass: 'half', tempC: null };
+  const fit = (speedAt: number) => ({ ok: true as const, n: 20, slope: 0.1, intercept: 0, speedAt, hrSd: 5 });
+  const none = { ok: false as const, n: 0, reason: 'no steady runs' };
+  const base = { cfg, source: src, personalR: null, avgWeeklyKm: 60, runs30k: 2, weeklyKmThen: 50, maintained: true, gapDays: 3, volumeTimeRatio: null, massNow: null, massThen: null };
+  const conv = toMarathon(cfg, 6_036, HM, volumeAdjustedR(cfg, 60, 2).r);
+
+  it('moves the conversion by the measured efficiency change and widens sigma with the race age', () => {
+    const e = estimateEarlierRace({ ...base, now: fit(3.09), then: fit(3.0) });
+    expect(e.name).toBe('E1s_earlier_race');
+    expect(e.predictedSeconds).toBeCloseTo(conv / 1.03, 3);
+    expect(e.sigmaPct).toBeCloseTo(6.5 + 0.1 * 9, 6);
+    expect(e.inputs).toMatchObject({ fitness_basis: 'efficiency', fitness_ratio: 1.03 });
+  });
+  it('credits at most the configured fitness gain', () => {
+    const e = estimateEarlierRace({ ...base, now: fit(3.6), then: fit(3.0) });
+    expect(e.predictedSeconds).toBeCloseTo(conv / 1.05, 3);
+  });
+  it('credits no fitness gain without an efficiency comparison unless volume was maintained, and adds uncertainty', () => {
+    const noCredit = estimateEarlierRace({ ...base, now: none, then: none, maintained: false, gapDays: 30, volumeTimeRatio: 0.97 });
+    expect(noCredit.predictedSeconds).toBeCloseTo(conv, 3);
+    expect(noCredit.sigmaPct).toBeCloseTo(6.5 + 0.9 + 2 + 1, 6);
+    expect(noCredit.notes.join(' ')).toContain('30 days');
+    const volume = estimateEarlierRace({ ...base, now: none, then: none, volumeTimeRatio: 0.97 });
+    expect(volume.predictedSeconds).toBeCloseTo(conv * 0.97, 3);
+    expect(volume.inputs).toMatchObject({ fitness_basis: 'volume' });
+  });
+  it('applies body mass only when there is no efficiency comparison (weight is already in speed at a fixed heart rate)', () => {
+    const mass = { massNow: 80, massThen: 85 };
+    const withEff = estimateEarlierRace({ ...base, ...mass, now: fit(3.09), then: fit(3.0) });
+    expect(withEff.inputs).not.toHaveProperty('weight_adjust_pct');
+    const without = estimateEarlierRace({ ...base, ...mass, now: none, then: none });
+    expect(without.inputs).toMatchObject({ weight_adjust_pct: -2.94 });
+    expect(without.predictedSeconds).toBeCloseTo(conv * (1 - 0.0294), -1);
+    // Capped at 4% for a large change.
+    expect(estimateEarlierRace({ ...base, massNow: 60, massThen: 85, now: none, then: none }).inputs).toMatchObject({ weight_adjust_pct: -4 });
   });
 });
