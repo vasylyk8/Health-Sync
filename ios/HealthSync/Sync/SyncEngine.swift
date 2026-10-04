@@ -69,11 +69,11 @@ actor SyncEngine {
         var device = "iPhone"
         var appVersion = "1.0"
         /// Workouts read from HealthKit at the same time while raw data is collected.
-        var detailReadConcurrency = 4
+        var detailReadConcurrency = 24
         /// Daily and hourly history share a lane, avoiding competing raw fallback reads.
-        var serializeHistoryReads = true
-        /// More queries did not improve phone throughput; keep tuning within this ceiling.
-        var detailQueryMaxConcurrency = 32
+        var serializeHistoryReads = false
+        /// Configurable ceiling for controlled scheduling comparisons; production tuning is unchanged.
+        var detailQueryMaxConcurrency = 96
         /// Batches of one raw-data upload sent at the same time (only for `_wstream`, whose parts have no ordering).
         var uploadConcurrency = 6
         /// Workouts whose raw data goes into one upload (fewer round trips and file writes).

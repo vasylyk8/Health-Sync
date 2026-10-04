@@ -9,7 +9,11 @@ on:
     inputs:
       count:
         description: Number of synthetic workouts
-        default: '150'
+        default: '300'
+      scheduling:
+        description: Compare first-sync scheduling with identical data
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -28,7 +32,7 @@ jobs:
       PUBLIC_BASE_URL: https://krok-1d60a.web.app
       SIM_DEVICE: iPhone 17 Pro
       TEST_RUNNER_BENCH_COUNT: ${{ inputs.count || '150' }}
-      TEST_RUNNER_BENCH_SCHEDULING: '1'
+      TEST_RUNNER_BENCH_SCHEDULING: ${{ (github.ref_name == 'perf/first-sync-contention' || inputs.scheduling) && '1' || '0' }}
       TEST_RUNNER_BENCH_MINUTES: '90'
     steps:
       - uses: actions/checkout@v4

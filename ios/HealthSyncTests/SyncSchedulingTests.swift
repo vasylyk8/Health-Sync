@@ -66,7 +66,11 @@ final class SyncSchedulingTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let box = Outbox(root: root)
-        let engine = SyncEngine(source: s, uploader: up, outbox: box, scope: scope)
+        var config = SyncEngine.Config()
+        config.detailReadConcurrency = 4
+        config.serializeHistoryReads = true
+        config.detailQueryMaxConcurrency = 32
+        let engine = SyncEngine(source: s, uploader: up, outbox: box, scope: scope, config: config)
         let outcome = try await engine.run()
         XCTAssertEqual(outcome, .finished)
         XCTAssertEqual(s.snapshot.history, 1)
