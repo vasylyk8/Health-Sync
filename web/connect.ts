@@ -45,14 +45,24 @@ async function start() {
     list.append(li);
   }
   document.querySelector<HTMLElement>('#full-route-option')!.hidden = !info.scopes.includes('health:routes:full');
-  document.querySelector<HTMLElement>('#consent')!.hidden = false;
+  const consent = document.querySelector<HTMLElement>('#consent')!;
+  consent.hidden = false;
   signIn.hidden = false;
+  document.querySelector<HTMLElement>('#progress')!.hidden = false;
+  let wasSignedIn = false;
   const updateUser = () => {
     const user = auth.currentUser;
     signIn.hidden = !!user;
     approve.disabled = !user;
     document.querySelector<HTMLElement>('#switch-account')!.hidden = !user;
-    status.textContent = user ? 'Signed in. Authorize access only if this is the assistant you chose to connect.'
+    // Make the two-step flow explicit: after Apple sign-in, the only thing left is "Allow access".
+    consent.classList.toggle('locked', !user);
+    document.querySelector<HTMLElement>('#step-signin')!.className = user ? 'done' : 'current';
+    document.querySelector<HTMLElement>('#step-allow')!.className = user ? 'current' : '';
+    status.className = user ? 'ok' : '';
+    if (user && !wasSignedIn) approve.focus();
+    wasSignedIn = !!user;
+    status.textContent = user ? 'Signed in. Last step: review what ' + (document.querySelector('#assistant')!.textContent ?? 'your assistant') + ' can read, then tap Allow access. Only continue if this is the assistant you chose to connect.'
       : appleRedirectFailed ? 'Apple sign-in did not complete. Try signing in again, or cancel and restart the connection in your assistant. If Apple shows a different app, cancel and contact KROK support.'
       : 'Sign in using the same Apple Account you linked in the KROK iPhone app.';
   };
