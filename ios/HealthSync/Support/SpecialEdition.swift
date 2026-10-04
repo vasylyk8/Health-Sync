@@ -53,7 +53,7 @@ struct SpecialEdition {
         lastDay: DateComponents(year: 2026, month: 10, day: 17),
         medalTop: "CHICAGO MARATHON",
         medalBottom: "OCT 11, 2026",
-        caption: "RUNNING CHICAGO?",
+        caption: "READY FOR CHICAGO?",
         hours: 2...8,
         defaultGoal: (4, 30),
         art: { AnyView(ChicagoMarathonArt(course: false)) },
