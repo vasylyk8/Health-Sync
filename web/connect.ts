@@ -6,15 +6,6 @@ const signIn = document.querySelector<HTMLButtonElement>('#sign-in')!;
 const approve = document.querySelector<HTMLButtonElement>('#approve')!;
 const deny = document.querySelector<HTMLButtonElement>('#deny')!;
 const request = new URL(location.href).searchParams.get('request');
-const descriptions: Record<string, string> = {
-  'health:workouts:read': 'Workouts and detailed measurements, including heart rate, pace, power, and cadence.',
-  'health:daily:read': 'Daily summaries, including sleep, HRV, body measurements, nutrition, mood, and cycle data you sync.',
-  'health:events:read': 'Timed nutrition entries you opted to sync.',
-  'health:profile:read': 'Personal health profile you opted to sync: age, date of birth, biological sex, wheelchair use, and activity mode.',
-  'health:routes:read': 'Workout GPS routes, with the first and last 300 metres hidden.',
-  'health:routes:full': 'Exact workout start/end locations, only when you explicitly request them.',
-  offline_access: 'Keep this assistant connected until you disconnect it or authorization expires.',
-};
 const fullRoutes = document.querySelector<HTMLInputElement>('#full-routes')!;
 
 async function start() {
@@ -37,13 +28,12 @@ async function start() {
   if (!infoResponse.ok) throw new Error(info.message ?? 'This request expired. Start again in your assistant.');
   document.querySelector<HTMLElement>('#assistant')!.textContent = info.provider === 'claude' ? 'Claude' : 'ChatGPT';
   document.querySelector<HTMLElement>('#client')!.textContent = `Connecting ${info.clientName} (${info.callbackHost}).`;
-  const list = document.querySelector<HTMLUListElement>('#permissions')!;
-  for (const scope of info.scopes as string[]) {
-    if (scope === 'health:routes:full') continue;
-    const li = document.createElement('li');
-    li.textContent = descriptions[scope] ?? scope;
-    list.append(li);
-  }
+  // One plain-language sentence; optional sensitive groups are named only when this connection requests them.
+  const scopes = info.scopes as string[];
+  const extras = [scopes.includes('health:events:read') && 'nutrition entries', scopes.includes('health:profile:read') && 'health profile (age, sex)']
+    .filter(Boolean).join(' and ');
+  document.querySelector<HTMLElement>('#permissions')!.textContent =
+    `Reads the Apple Health data you chose to sync in KROK: workouts, daily summaries and GPS routes (first and last 300 m hidden)${extras ? `, plus ${extras} if you turned them on` : ''}.`;
   document.querySelector<HTMLElement>('#full-route-option')!.hidden = !info.scopes.includes('health:routes:full');
   const consent = document.querySelector<HTMLElement>('#consent')!;
   consent.hidden = false;
@@ -62,7 +52,7 @@ async function start() {
     status.className = user ? 'ok' : '';
     if (user && !wasSignedIn) approve.focus();
     wasSignedIn = !!user;
-    status.textContent = user ? 'Signed in. Last step: review what ' + (document.querySelector('#assistant')!.textContent ?? 'your assistant') + ' can read, then tap Allow access. Only continue if this is the assistant you chose to connect.'
+    status.textContent = user ? 'Signed in. Tap Allow access to finish connecting.'
       : appleRedirectFailed ? 'Apple sign-in did not complete. Try signing in again, or cancel and restart the connection in your assistant. If Apple shows a different app, cancel and contact KROK support.'
       : 'Sign in using the same Apple Account you linked in the KROK iPhone app.';
   };
