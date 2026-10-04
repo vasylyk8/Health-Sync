@@ -158,10 +158,20 @@ enum DailyCheck {
             m.log("DAILYCHECK \(rows) day rows; \(expected.subtracting(missing).count) of \(expected.count) expected metrics came out")
             m.log("DAILYCHECK found: \(found.sorted().joined(separator: ", "))")
             m.log("DAILYCHECK report: \(source.dailyReport)")
-            if missing.isEmpty {
+            var missingDays: [String] = []
+            for d in 1 ... 10 {
+                let day = SleepNights.dayKey(cal.date(byAdding: .day, value: -d, to: today)!, calendar: cal)
+                let row = records.first { $0["day"] == .string(day) }
+                let keys: Set<String>
+                if case .object(let values)? = row?["m"] { keys = Set(values.keys) } else { keys = [] }
+                let absent = expected.subtracting(keys).sorted()
+                if !absent.isEmpty { missingDays.append("\(day):\(absent.joined(separator: ","))") }
+            }
+            let retainedAllResults = source.dailyReport.contains("0 retried.")
+            if missing.isEmpty && missingDays.isEmpty && retainedAllResults {
                 m.log("DAILYCHECK OK")
             } else {
-                m.log("DAILYCHECK FAIL missing: \(missing.joined(separator: ", "))")
+                m.log("DAILYCHECK FAIL missing: \(missing.joined(separator: ", ")); days: \(missingDays.joined(separator: "; ")); retainedAllResults=\(retainedAllResults)")
             }
         } catch {
             m.log("DAILYCHECK FAIL daily pass threw: \(error) · report: \(source.dailyReport)")
