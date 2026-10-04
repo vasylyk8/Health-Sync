@@ -77,20 +77,19 @@ export function selectAllForRawAnalysis(a: ShortlistArgs): { id: string; why: st
   add(earlier, 'earlier race candidate', cfg.earlier.candidates);
   if (earlier[0]) {
     const end = addDays(earlier[0].date, -1);
-    add(newestFirst(runs.filter((r) => inWindow(r, windowStart(end, cfg.windows.efficiencyWeeks), end) && steady(r))), 'steady run (earlier race block)', b.steadyRunsPerBlock);
+    add(newestFirst(runs.filter((r) => inWindow(r, windowStart(end, cfg.windows.efficiencyWeeks), end) && steady(r))), 'steady run (earlier race block)', b.earlierSteadyRuns);
   }
-  if (a.prior) {
-    const end = addDays(a.prior.date, -1);
-    add(prefer(runs.filter((r) => inWindow(r, windowStart(end, cfg.earlier.maxAgeWeeks), end) && raceLike(r))), 'race before prior marathon', cfg.earlier.candidates);
-  }
-  add(newestFirst(runs.filter((r) => inWindow(r, durStart, a.asOf) && runKm(r) >= b.longRunMinKm)), 'long run', 2 * b.candidatesPerBlock);
-  add(fastestFirst(block.filter((r) => runKm(r) >= b.effortCandidateMinKm)), 'possible max effort', b.candidatesPerBlock);
+  // Efficiency runs of the prior block come before the bulk of the current block: without them the prior-marathon estimator has no
+  // efficiency comparison at all.
+  const priorEnd = a.prior ? addDays(a.prior.date, -1) : null;
+  const priorBlock = priorEnd ? runs.filter((r) => inWindow(r, windowStart(priorEnd, cfg.windows.blockWeeks), priorEnd)) : [];
+  if (priorEnd) add(newestFirst(priorBlock.filter((r) => inWindow(r, windowStart(priorEnd, cfg.windows.efficiencyWeeks), priorEnd) && steady(r))), 'steady run (prior block)', b.steadyRunsPerBlock);
   add(newestFirst(runs.filter((r) => inWindow(r, effStart, a.asOf) && steady(r))), 'steady run (current block)', b.steadyRunsPerBlock);
-  if (a.prior) {
-    const end = addDays(a.prior.date, -1);
-    const priorBlock = runs.filter((r) => inWindow(r, windowStart(end, cfg.windows.blockWeeks), end));
-    add(newestFirst(priorBlock.filter((r) => inWindow(r, windowStart(end, cfg.windows.durabilityWeeks), end) && runKm(r) >= b.longRunMinKm)), 'long run (prior block)', b.candidatesPerBlock);
-    add(newestFirst(priorBlock.filter((r) => inWindow(r, windowStart(end, cfg.windows.efficiencyWeeks), end) && steady(r))), 'steady run (prior block)', b.steadyRunsPerBlock);
+  add(newestFirst(runs.filter((r) => inWindow(r, durStart, a.asOf) && runKm(r) >= b.longRunMinKm)), 'long run', b.longRunsCurrent);
+  add(fastestFirst(block.filter((r) => runKm(r) >= b.effortCandidateMinKm)), 'possible max effort', b.maxEffortsCurrent);
+  if (priorEnd) {
+    add(prefer(runs.filter((r) => inWindow(r, windowStart(priorEnd, cfg.earlier.maxAgeWeeks), priorEnd) && raceLike(r))), 'race before prior marathon', cfg.earlier.candidates);
+    add(newestFirst(priorBlock.filter((r) => inWindow(r, windowStart(priorEnd, cfg.windows.durabilityWeeks), priorEnd) && runKm(r) >= b.longRunMinKm)), 'long run (prior block)', b.longRunsPrior);
     add(fastestFirst(priorBlock.filter((r) => runKm(r) >= b.effortCandidateMinKm)), 'possible max effort (prior block)', b.candidatesPerBlock);
   }
   return out;

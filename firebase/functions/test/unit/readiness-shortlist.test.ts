@@ -25,4 +25,16 @@ describe('raw-run shortlist', () => {
     const list = selectForRawAnalysis({ ...args, runs: [easy] });
     expect(list.find((x) => x.why === 'earlier race candidate')).toBeUndefined();
   });
+  it('under the real budget keeps the prior block\'s efficiency runs and an earlier race for a runner with many runs', () => {
+    const marathon = run('prior-mar', '2025-10-12', 42.2, 340, { hr: 173 });
+    const priorSteady = Array.from({ length: 30 }, (_, i) => run(`ps${i}`, addDays('2025-10-11', -(i + 1)), 8 + (i % 5), 350, { hr: 148 }));
+    const nowSteady = Array.from({ length: 40 }, (_, i) => run(`ns${i}`, addDays(AS_OF, -(i + 1)), 8 + (i % 5), 350, { hr: 148 }));
+    const longs = Array.from({ length: 40 }, (_, i) => run(`lg${i}`, addDays(AS_OF, -(i % 80)), 20 + (i % 12), 360, { hr: 150 }));
+    const hm = run('hm-2026', '2026-04-11', 21.1, 286, { hr: 178 });
+    const list = selectForRawAnalysis({ runs: [marathon, ...priorSteady, ...nowSteady, ...longs, hm], asOf: AS_OF, maxHr: 195, taggedIds: [], prior: marathon, cfg });
+    expect(list.length).toBeLessThanOrEqual(cfg.budget.maxRawRuns);
+    expect(list.filter((x) => x.why === 'steady run (prior block)').length).toBeGreaterThanOrEqual(10);
+    expect(list.find((x) => x.id === 'hm-2026')).toMatchObject({ why: 'earlier race candidate' });
+    expect(list.find((x) => x.id === 'prior-mar')).toBeDefined();
+  });
 });
