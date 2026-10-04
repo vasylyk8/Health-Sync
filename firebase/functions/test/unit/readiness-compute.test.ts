@@ -63,6 +63,25 @@ describe('well-prepared runner, tagged half marathon, race in 14 days', () => {
     expect(o.prediction!.probability_before_durability).toBeGreaterThanOrEqual(o.likelihood!.probability);
     expect(o.block_comparison!.runs_read_in_detail.current_window[1]).toBeGreaterThan(0);
   });
+  it('states probability, range, driver and the gaps that matter in plain words, and gives temperature scenarios', () => {
+    const o = computeReadiness(wellPrepared(), cfg);
+    expect(o.plain_language!.headline).toContain('modelled chance');
+    expect(o.plain_language!.headline).toContain(o.prediction!.central);
+    expect(o.plain_language!.gaps_that_matter.join(' ')).toContain('Race-day temperature was not given');
+    expect(o.plain_language!.validation).toContain('one marathon');
+    const sc = o.temperature_scenarios!;
+    expect(sc.map((x) => x.temp_c)).toEqual([10, 15, 20, 25]);
+    // No heat penalty up to 15 degC; then the chance can only fall as it gets hotter.
+    expect(sc[0]!.probability).toBe(sc[1]!.probability);
+    expect(sc[3]!.probability).toBeLessThanOrEqual(sc[2]!.probability);
+    expect(sc[2]!.probability).toBeLessThan(sc[1]!.probability);
+    expect(readinessSchema.safeParse(o).success).toBe(true);
+  });
+  it('gives no scenarios when the caller supplied the temperature', () => {
+    const o = computeReadiness({ ...wellPrepared(), context: { course: null, expectedTempC: 18, newSuperShoes: false } }, cfg);
+    expect(o.temperature_scenarios).toBeNull();
+    expect(o.plain_language!.gaps_that_matter.join(' ')).not.toContain('temperature was not given');
+  });
   it('matches the snapshot', () => {
     expect(computeReadiness(wellPrepared(), cfg)).toMatchSnapshot();
   });
