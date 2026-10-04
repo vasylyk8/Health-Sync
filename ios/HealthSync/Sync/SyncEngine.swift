@@ -69,7 +69,11 @@ actor SyncEngine {
         var device = "iPhone"
         var appVersion = "1.0"
         /// Workouts read from HealthKit at the same time while raw data is collected.
-        var detailReadConcurrency = 24
+        var detailReadConcurrency = 4
+        /// Daily and hourly history share a lane, avoiding competing raw fallback reads.
+        var serializeHistoryReads = true
+        /// More queries did not improve phone throughput; keep tuning within this ceiling.
+        var detailQueryMaxConcurrency = 32
         /// Batches of one raw-data upload sent at the same time (only for `_wstream`, whose parts have no ordering).
         var uploadConcurrency = 6
         /// Workouts whose raw data goes into one upload (fewer round trips and file writes).
@@ -226,7 +230,13 @@ actor SyncEngine {
             // Years of daily history and the summaries of every workout take a minute or more on a large
             // history and do not depend on the raw data (or on each other), so they run alongside it: the raw
             // data starts as soon as the list of workouts is known.
-            background.append(Task { try await self.step { try await SyncTiming.shared.measure("phase.daily") { try await self.dailyContext() } } })
+            let context = Task {
+                try await self.step { try await SyncTiming.shared.measure("phase.daily") { try await self.dailyContext() } }
+                if self.config.serializeHistoryReads {
+                    try await self.step { try await SyncTiming.shared.measure("phase.hourly") { try await self.hourlyHistory() } }
+                }
+            }
+            background.append(context)
             let history = Task {
                 try await self.step {
                     guard let wt = self.scope.workout else { return }
@@ -240,7 +250,9 @@ actor SyncEngine {
                 }
             }
             background.append(history)
-            background.append(Task { try await self.step { try await SyncTiming.shared.measure("phase.hourly") { try await self.hourlyHistory() } } })
+            if !config.serializeHistoryReads {
+                background.append(Task { try await self.step { try await SyncTiming.shared.measure("phase.hourly") { try await self.hourlyHistory() } } })
+            }
             background.append(Task {
                 try await self.step {
                     try await SyncTiming.shared.measure("phase.events") {
@@ -636,9 +648,13 @@ actor SyncEngine {
         // Workouts in progress are bounded by a fixed gate (memory); how many HealthKit queries run at once
         // is tuned to what this iPhone answers fastest, since Apple documents no limit.
         let gate = ReadGate(limit: config.detailReadConcurrency)
+        let queryMax = max(4, config.detailQueryMaxConcurrency)
+        let previousQueryLimit = source.queryConcurrency
+        source.setQueryConcurrency(min(previousQueryLimit, queryMax))
+        defer { source.setQueryConcurrency(previousQueryLimit) }
         let tuner = ReadTuner(
             current: { [source] in source.queryConcurrency }, apply: { [source] in source.setQueryConcurrency($0) },
-            minLimit: 4, maxLimit: 96, step: 8, windowSize: 24)
+            minLimit: 4, maxLimit: queryMax, step: 8, windowSize: 24)
         timing.set("read.limit", source.queryConcurrency)
 
         func read(_ group: [WorkoutRef]) -> Task<[EncodedWorkout?], Error> {

@@ -28,13 +28,13 @@ enum HealthLab {
 
     /// Recent "heavy" workouts (9 types, ~9,000 samples, 5,000-point route) and older "light" ones
     /// (heart rate, energy and distance only, no route), like a long real history.
-    static func seed(_ store: HKHealthStore, heavy: Int, light: Int, _ m: BenchModel) async {
+    static func seed(_ store: HKHealthStore, heavy: Int, light: Int, spacingDays: Double = 1.3, _ m: BenchModel) async {
         let t0 = Date()
         var samples = 0, failures = 0
         for i in 0 ..< heavy + light {
             let isHeavy = i < heavy
             let dur: Double = isHeavy ? 3000 : 1800
-            let start = Date().addingTimeInterval(-Double(i + 1) * 86_400 * 1.3 - 7200)
+            let start = Date().addingTimeInterval(-Double(i + 1) * 86_400 * spacingDays - 7200)
             let config = HKWorkoutConfiguration()
             config.activityType = .running
             config.locationType = .outdoor

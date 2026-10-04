@@ -7,7 +7,9 @@ final class HealthBenchUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         let count = ProcessInfo.processInfo.environment["BENCH_COUNT"] ?? "300"
+        let scheduling = ProcessInfo.processInfo.environment["BENCH_SCHEDULING"] == "1"
         app.launchArguments = ["-healthBench", "-benchCount", count]
+        if scheduling { app.launchArguments += ["-benchScheduling", "-benchHeavy", "24"] }
         app.launch()
 
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -40,5 +42,6 @@ final class HealthBenchUITests: XCTestCase {
         shot.lifetime = .keepAlways
         add(shot)
         XCTAssertTrue(output.label.contains("BENCH DONE"), "benchmark did not finish")
+        if scheduling { XCTAssertTrue(output.label.contains("SCHED CHECK OK"), "scheduling changed data or failed: " + output.label) }
     }
 }

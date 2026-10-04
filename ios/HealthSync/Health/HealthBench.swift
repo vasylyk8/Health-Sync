@@ -1,5 +1,6 @@
 #if DEBUG
 import CoreLocation
+import CryptoKit
 import HealthKit
 import SwiftUI
 import os
@@ -79,8 +80,13 @@ enum HealthBench {
         m.log("authorized")
         let heavy = args.firstIndex(of: "-benchHeavy").flatMap { Int(args[$0 + 1]) } ?? 60
         let light = max(0, count - heavy)
-        await HealthLab.seed(store, heavy: heavy, light: light, m)
+        await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: args.contains("-benchScheduling") ? 9 : 1.3, m)
         await seedBackground(store, count: 100_000, m)
+        if args.contains("-benchScheduling") {
+            await schedulingComparison(scope, m)
+            m.log("BENCH DONE")
+            return
+        }
         if args.contains("-benchLab") { await HealthLab.run(store, scope: scope, m) }
         // The in-app speed test, exactly as on a phone (its rows are logged as they appear).
         let printed = BenchCounter()
@@ -105,6 +111,55 @@ enum HealthBench {
             await engineRun(scope, m, label: "\(pipelined ? "B pipelined" : "A one group at a time") · \(rate) MB/s per upload\(cap.map { ", \($0) MB/s total" } ?? "")", config: config, uploader: net)
         }
         m.log("BENCH DONE")
+    }
+
+    /// Fresh local outboxes over identical HealthKit data. No production account or network access.
+    /// Reverse the order in the second half to expose warming/order effects instead of calling them a speedup.
+    private static func schedulingComparison(_ scope: SyncScope, _ m: BenchModel) async {
+        let at = Date()
+        let expected = (try? await HealthKitSource(scope: scope).workoutIndex().count) ?? 0
+        var reference: String?
+        var passed = expected > 0
+        for variant in ["baseline", "bounded", "coordinated", "coordinated", "bounded", "baseline"] {
+            var config = SyncEngine.Config()
+            config.detailReadConcurrency = variant == "baseline" ? 24 : 4
+            config.serializeHistoryReads = variant == "coordinated"
+            config.detailQueryMaxConcurrency = variant == "baseline" ? 96 : 32
+            let net = BenchCapture()
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("scheduling-\(UUID().uuidString)")
+            let box = Outbox(root: root)
+            let source = HealthKitSource(scope: scope)
+            let engine = SyncEngine(source: source, uploader: net, outbox: box, scope: scope, config: config, now: { at })
+            let before = SyncTiming.shared.phaseMilliseconds()
+            let started = Date()
+            let watcher = Task { @MainActor in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(15))
+                    if Task.isCancelled { break }
+                    let p = await engine.progress
+                    m.log("SCHED running \(variant): \(Int(Date().timeIntervalSince(started)))s details \(p.detailsDone)/\(p.detailsTotal)")
+                }
+            }
+            do {
+                let outcome = try await engine.run()
+                let wall = Date().timeIntervalSince(started)
+                let fingerprint = net.fingerprint
+                if reference == nil { reference = fingerprint }
+                let equal = fingerprint == reference
+                let complete = outcome == .finished && box.state.detailsDone.count == expected && box.pending().isEmpty
+                passed = passed && equal && complete
+                let phases = SyncTiming.shared.phaseMilliseconds().mapValues { $0 / 1000 }
+                let delta = phases.map { key, value in "\(key)=\(String(format: "%.2f", value - (before[key] ?? 0) / 1000))s" }.sorted().joined(separator: " ")
+                m.log("SCHED result \(variant): wall=\(String(format: "%.2f", wall))s details=\(box.state.detailsDone.count)/\(expected) equal=\(equal) complete=\(complete) digest=\(fingerprint) \(net.summary(wall: wall)) \(delta)")
+            } catch {
+                passed = false
+                m.log("SCHED failed \(variant): \(error)")
+            }
+            watcher.cancel()
+            await watcher.value
+            try? FileManager.default.removeItem(at: root)
+        }
+        m.log(passed ? "SCHED CHECK OK" : "SCHED CHECK FAILED")
     }
 
     /// Reads every workout the way the app does (per-workout queries, many at once) and reports the rate.
@@ -421,6 +476,28 @@ final class SimNet: Uploader, @unchecked Sendable {
             String(format: "· %d uploads, %.1f MB, %.1f in flight on average (peak %d)", uploads, Double(bytes) / 1_000_000, busy / max(wall, 0.001), peak)
         }
     }
+}
+
+/// Canonical multiset of every synthetic record, preserving duplicates and ignoring only batch headers.
+private final class BenchCapture: Uploader, @unchecked Sendable {
+    private let net = SimNet(perUploadMBs: 0.6, capMBs: 0.6)
+    private let lock = NSLock()
+    private var records: [String] = []
+    func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {
+        guard let raw = Gzip.decompress(gz), let text = String(data: raw, encoding: .utf8) else { throw NSError(domain: "BenchCapture", code: 1) }
+        let lines = try text.split(separator: "\n").dropFirst().map { line -> String in
+            let object = try JSONSerialization.jsonObject(with: Data(line.utf8))
+            let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+            return typeId + ":" + String(decoding: data, as: UTF8.self)
+        }
+        try await net.upload(batchId: batchId, gz: gz, sha256: sha256, typeId: typeId)
+        lock.withLock { records.append(contentsOf: lines) }
+    }
+    var fingerprint: String {
+        let data = lock.withLock { Data(records.sorted().joined(separator: "\n").utf8) }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+    func summary(wall: Double) -> String { net.summary(wall: wall) }
 }
 
 /// How many speed-test rows were already logged.
