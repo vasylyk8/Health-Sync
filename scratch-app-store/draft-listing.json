@@ -1,0 +1,17 @@
+{
+  "bundleId": "com.vasylyk.krok",
+  "versionString": "1.0.0",
+  "locale": "en-US",
+  "appInfo": {
+    "name": "KROK",
+    "subtitle": "Your Health data for AI",
+    "privacyPolicyUrl": "https://krok-1d60a.web.app/privacy"
+  },
+  "versionLocalization": {
+    "description": "KROK connects your Apple Health data to Claude or ChatGPT so you can ask questions about your training and recovery.\n\nAsk questions such as:\n• What were the kilometre splits in my latest run?\n• How much time did I spend in each heart rate zone?\n• How did I sleep before my longest workout?\n• How has my training load changed over six weeks?\n\nWORKOUTS AND RECOVERY\nRead Apple's recorded workout summaries and available measurements such as heart rate, speed, power and cadence. Explore GPS routes, sleep, activity and recovery summaries. Available detail depends on what your devices and apps recorded and what you allow KROK to read. Incomplete data is identified in tool results.\n\nHOW IT WORKS\n1. Connect Apple Health and choose the data types KROK may read.\n2. Sign in with Apple and let your data sync to KROK.\n3. Connect your assistant and approve its read-only access.\n4. Ask questions in Claude or ChatGPT.\n\nYOUR DATA, YOUR CHOICES\nKROK never changes your Apple Health records. Apple Health lets you allow or deny individual types. KROK's Your data settings let you turn additional groups off, which removes that group's server data. Medications are off by default and require a separate choice.\n\nKROK stores the data you allow on its servers before you connect an assistant. Public OAuth routes hide their first and last 300 metres by default; exact endpoints require separate permission and an explicit request. Existing private-link connections use a different authorization model.\n\nDisconnect an assistant or delete your KROK account and server data from the app. Deletion does not change Apple Health or remove information an assistant already received. Your health data is not sold or used for advertising.\n\nREQUIREMENTS\nAn iPhone running iOS 17 or later and an Apple Account are required. Claude or ChatGPT is a separate service with its own account, availability, terms and plan requirements. Custom ChatGPT connections require developer mode on an eligible plan. Check KROK's connection instructions for the supported setup.\n\nKROK is free at this release. It is not a medical device and does not provide diagnosis, treatment or medical advice. Consult a qualified healthcare professional before making medical decisions.",
+    "keywords": "apple health,claude,chatgpt,workout,running,heart rate,gps,fitness,sleep,recovery,export,mcp",
+    "promotionalText": "Ask Claude or ChatGPT about your workouts, heart rate, routes, sleep and recovery using the Apple Health data you choose to share.",
+    "supportUrl": "https://krok-1d60a.web.app/support",
+    "marketingUrl": "https://krok-1d60a.web.app/"
+  }
+}
