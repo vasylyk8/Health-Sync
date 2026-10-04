@@ -25,7 +25,7 @@ final class SampleAggregationTests: XCTestCase {
     /// The known gap: a 50 bpm resting-heart-rate reading from the evening of May 11 to May 12. Apple Health shows it on
     /// May 12; HealthKit's statistics had a value for May 11 only. The fill must give May 12 its 50 and leave May 11 alone.
     func testRestingHeartRateAcrossMidnightFillsTheSecondDay() {
-        var a = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: false)
+        var a = weighted()
         a.add(RawReading(start: at(2026, 5, 11, 0, 5), end: at(2026, 5, 11, 23, 50), value: 47, source: "com.apple.health.A"))
         a.add(RawReading(start: at(2026, 5, 11, 23, 55), end: at(2026, 5, 12, 23, 55), value: 50, source: "com.apple.health.A"))
         let raw = a.daily(.avg)
@@ -36,13 +36,15 @@ final class SampleAggregationTests: XCTestCase {
         XCTAssertEqual(filled.first?.1, 50)
     }
 
-    /// The measured HealthKit behaviour: the Watch's 23:55-23:50 resting heart rate counts on both days.
-    func testReadingCoveringMostOfTheNextDayCountsOnBothDays() {
-        var a = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: false)
+    /// The measured HealthKit behaviour: a time-weighted reading (resting heart rate 23:55-23:50, or 18:00-08:00) counts on
+    /// every day it touches; an arithmetic one (respiratory rate 20:00-20:00 the next day) only on the day it starts.
+    func testWhichDaysAReadingAcrossMidnightCountsOn() {
+        var a = weighted()
         a.add(RawReading(start: at(2026, 5, 11, 23, 55), end: at(2026, 5, 12, 23, 50), value: 50, source: "w"))
-        XCTAssertEqual(a.daily(.avg).map(\.0), ["2026-05-11", "2026-05-12"])
+        a.add(RawReading(start: at(2026, 5, 20, 18), end: at(2026, 5, 21, 8), value: 55, source: "w"))
+        XCTAssertEqual(a.daily(.avg).map(\.0), ["2026-05-11", "2026-05-12", "2026-05-20", "2026-05-21"])
         var b = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: false)
-        b.add(RawReading(start: at(2026, 5, 11, 23), end: at(2026, 5, 12, 5), value: 16, source: "w"))
+        b.add(RawReading(start: at(2026, 5, 11, 20), end: at(2026, 5, 12, 20), value: 15, source: "w"))
         XCTAssertEqual(b.daily(.avg).map(\.0), ["2026-05-11"])
     }
 
@@ -80,6 +82,11 @@ final class SampleAggregationTests: XCTestCase {
         a.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 30), value: 60, source: "w"))
         a.add(RawReading(start: at(2026, 5, 3, 15), end: at(2026, 5, 3, 15, 30), value: 70, source: "w"))
         XCTAssertEqual(a.daily(.avg).first!.1, 10 * log10((1e6 + 1e7) / 2), accuracy: 1e-9)
+        // Measured: 60 dB for 30 min and 90 dB for 1 min -> 75.2148 (weighted by duration alone).
+        var b = weighted(.equivalentLevel)
+        b.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 30), value: 60, source: "w"))
+        b.add(RawReading(start: at(2026, 5, 3, 15), end: at(2026, 5, 3, 15, 1), value: 90, source: "w"))
+        XCTAssertEqual(b.daily(.avg).first!.1, 75.2148, accuracy: 1e-3)
     }
 
     func testDiscreteReadingThatEndsAtMidnightStaysOnItsDay() {

@@ -34,11 +34,12 @@ struct RawReading: Equatable, Sendable {
 /// Daily and hourly values computed from raw readings, for the days and hours Apple Health's own statistics leave out
 /// (a restored iOS 27 iPhone returned empty statistics for every year that ended in the past, while the readings were there).
 /// The rules follow what HealthKit's statistics do, measured against them in the simulator by the daily check:
-/// - a discrete reading counts in the bucket it starts in, and also in each later bucket it covers for more than half
-///   (the Watch's resting heart rate written 23:55-23:50 counts on both days; 22:00-02:00 only on the first);
-/// - averages: arithmetic types weigh every value alike (a series reading as many values as it holds); time-weighted types
-///   (heart rate) weigh each reading by its time span widened by 22.5 s on each side, overlaps split in the middle; sound
-///   levels are averaged the same way as energy (10^(dB/10)), as an equivalent continuous level;
+/// - arithmetic types (respiratory rate, SpO2...) weigh every value alike (a series reading as many values as it holds) and
+///   count a reading only in the bucket it starts in, however far it reaches into the next one;
+/// - time-weighted types (heart rate, resting heart rate) weigh each reading by its time span widened by 22.5 s on each
+///   side, overlaps split in the middle, and count it in every bucket its span touches (the Watch's resting heart rate
+///   written 23:55-23:50 counts on both days);
+/// - sound levels average as energy (10^(dB/10)) weighted by duration, an equivalent continuous level;
 /// - a cumulative reading is spread over its span by time, and readings from several sources are never added together:
 ///   per hour the largest source wins, like Apple Health's per-interval source priority, so a Watch and an iPhone that
 ///   both counted the same walk count it once.
@@ -46,8 +47,10 @@ struct SampleAggregator {
     enum Granularity { case day, hour }
     enum Style { case cumulative, arithmetic, timeWeighted, equivalentLevel }
 
-    /// Half the time HealthKit's time-weighted average gives an instantaneous reading (measured: 45 s in all).
+    /// Half the time HealthKit's time-weighted average gives an instantaneous reading (measured: 45 s in all). Sound levels
+    /// are weighted by duration alone.
     static let halfWindow: TimeInterval = 22.5
+    private var widen: TimeInterval { style == .timeWeighted ? Self.halfWindow : 0 }
 
     let calendar: Calendar
     let from: Date
@@ -100,7 +103,7 @@ struct SampleAggregator {
                 acc.sum += r.value * Double(r.count)
                 acc.weight += Double(r.count)
             case .timeWeighted, .equivalentLevel:
-                acc.spans.append(Self.span(r, value: style == .equivalentLevel ? pow(10, r.value / 10) : r.value))
+                acc.spans.append(span(r, value: style == .equivalentLevel ? pow(10, r.value / 10) : r.value))
             }
             acc.min = Swift.min(acc.min, r.min)
             acc.max = Swift.max(acc.max, r.max)
@@ -128,60 +131,66 @@ struct SampleAggregator {
         }
     }
 
-    /// The buckets a discrete reading counts in: the one it starts in, and each later one it covers for more than half.
-    /// Only buckets inside [from, to).
+    private var component: Calendar.Component { granularity == .day ? .day : .hour }
+
+    /// The buckets a discrete reading counts in: the one it starts in, and for time-weighted types and sound levels also
+    /// every later one its span reaches into. Only buckets inside [from, to).
     private func discreteBuckets(_ r: RawReading) -> [Date] {
-        let component: Calendar.Component = granularity == .day ? .day : .hour
         guard let first = calendar.dateInterval(of: component, for: r.start) else { return [] }
         var out = [first.start]
-        var cursor = first.end
-        while cursor < r.end, let next = calendar.dateInterval(of: component, for: cursor) {
-            if Swift.min(next.end, r.end).timeIntervalSince(next.start) > next.duration / 2 { out.append(next.start) }
-            cursor = next.end
+        if style != .arithmetic {
+            var cursor = first.end
+            while cursor < r.end, let next = calendar.dateInterval(of: component, for: cursor) {
+                out.append(next.start)
+                cursor = next.end
+            }
         }
         let lower = calendar.dateInterval(of: component, for: from)?.start ?? from
         return out.filter { $0 >= lower && $0 < to }
     }
 
-    private static func span(_ r: RawReading, value: Double) -> Span {
+    private func span(_ r: RawReading, value: Double) -> Span {
         let start = r.start.timeIntervalSince1970
         let end = r.end.timeIntervalSince1970
-        guard r.count > 1 else { return Span(start: start, end: end, value: value) }
+        guard r.count > 1, style == .timeWeighted else { return Span(start: start, end: end, value: value) }
         let gap = (end - start) / Double(r.count)
-        return Span(start: start, end: end - gap, value: value, cap: Double(r.count - 1) * Swift.min(gap, 2 * halfWindow) + 2 * halfWindow)
+        return Span(start: start, end: end - gap, value: value, cap: Double(r.count - 1) * Swift.min(gap, 2 * widen) + 2 * widen)
     }
 
     /// Average of one bucket's readings by the type's style.
-    private func average(_ acc: Discrete) -> Double? {
+    private func average(_ acc: Discrete, bucket: Date) -> Double? {
         switch style {
         case .arithmetic, .cumulative:
             return acc.weight > 0 ? acc.sum / acc.weight : nil
         case .timeWeighted:
-            return Self.timeWeightedMean(acc.spans)
+            return timeWeightedMean(acc.spans, bucket: bucket)
         case .equivalentLevel:
-            return Self.timeWeightedMean(acc.spans).map { 10 * log10($0) }
+            return timeWeightedMean(acc.spans, bucket: bucket).map { 10 * log10($0) }
         }
     }
 
-    /// Each reading weighs its span widened by `halfWindow` on each side; where two neighbours' widened spans overlap, the
-    /// overlap is split in the middle.
-    private static func timeWeightedMean(_ spans: [Span]) -> Double? {
-        guard !spans.isEmpty else { return nil }
+    /// Each reading weighs its span widened by `widen` on each side, inside the bucket (widened the same way); where two
+    /// neighbours' spans overlap, the overlap is split in the middle. Readings without any weight count alike.
+    private func timeWeightedMean(_ spans: [Span], bucket: Date) -> Double? {
+        guard !spans.isEmpty, let interval = calendar.dateInterval(of: component, for: bucket) else { return nil }
         let s = spans.sorted { ($0.start, $0.end) < ($1.start, $1.end) }
-        let lo = s.map { $0.start - halfWindow }
-        let hi = s.map { $0.end + halfWindow }
+        let lo = s.map { $0.start - widen }
+        let hi = s.map { $0.end + widen }
+        let bucketStart = interval.start.timeIntervalSince1970 - widen
+        let bucketEnd = interval.end.timeIntervalSince1970 + widen
         var sum = 0.0
         var weight = 0.0
         for i in s.indices {
-            var a = lo[i]
-            var b = hi[i]
+            var a = Swift.max(lo[i], bucketStart)
+            var b = Swift.min(hi[i], bucketEnd)
             if i > 0, lo[i] < hi[i - 1] { a = Swift.max(a, (lo[i] + hi[i - 1]) / 2) }
             if i + 1 < s.count, lo[i + 1] < hi[i] { b = Swift.min(b, (lo[i + 1] + hi[i]) / 2) }
             let w = Swift.min(s[i].cap, Swift.max(0, b - a))
             sum += s[i].value * w
             weight += w
         }
-        return weight > 0 ? sum / weight : nil
+        if weight > 0 { return sum / weight }
+        return s.map(\.value).reduce(0, +) / Double(s.count)
     }
 
     /// One value per local day that has readings ("YYYY-MM-DD", value).
@@ -199,7 +208,7 @@ struct SampleAggregator {
             let day = SleepNights.dayKey(bucket, calendar: calendar)
             switch agg {
             case .sum: return nil
-            case .avg: return average(acc).map { (day, $0) }
+            case .avg: return average(acc, bucket: bucket).map { (day, $0) }
             case .min: return (day, acc.min)
             case .max: return (day, acc.max)
             case .last: return (day, acc.last)
@@ -215,7 +224,7 @@ struct SampleAggregator {
         }
         return discrete.keys.sorted().compactMap { hour in
             guard let acc = discrete[hour] else { return nil }
-            return HourBucket(t: hour.msValue, v: avg ? average(acc) : nil, lo: min ? acc.min : nil, hi: max ? acc.max : nil)
+            return HourBucket(t: hour.msValue, v: avg ? average(acc, bucket: hour) : nil, lo: min ? acc.min : nil, hi: max ? acc.max : nil)
         }
     }
 
