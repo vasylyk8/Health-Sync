@@ -283,6 +283,9 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
   if (inputs.context.course === null) caveats.push('No course profile was given, so the course is treated as flat (pass course for a rolling or hilly course).');
   caveats.push('Race-day fueling, pacing and crowd congestion are not modelled; the race-day uncertainty term covers typical effects.');
   const lk = likelihood(inputs.goalSeconds, centralFinal, sigma, cfg);
+  // The same estimate without the durability checks (weak-evidence heuristics), so their effect is visible.
+  const centralBeforeDurability = applyAdjustments(centralBase, adjs);
+  const lkBefore = likelihood(inputs.goalSeconds, centralBeforeDurability, sigma, cfg);
   const [lo, hi] = range80(centralFinal, sigma, cfg);
   if (mods.totalPct > mods.cappedPct) caveats.push(`Durability modifiers total ${mods.totalPct}%; capped at ${mods.cappedPct}%.`);
   if (prior && prior.seconds <= inputs.goalSeconds) caveats.push(`A prior marathon (${prior.run.date}, ${hms(prior.seconds)}) is at or under the goal time.`);
@@ -296,6 +299,11 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
 
   // ---- Benchmarks and block comparison -----------------------------------------------------------------------------
   const priorEnd = priorBlockEnd;
+  // How many runs (of at least comparisonMinKm) in a comparison window were read from raw streams.
+  const coverage = (start: string, end: string): [number, number] => {
+    const inWin = inputs.runs.filter((r) => inWindow(r, start, end) && runKm(r) >= cfg.budget.comparisonMinKm);
+    return [inWin.filter((r) => inputs.raw.has(r.id)).length, inWin.length];
+  };
   const massNow = massAround(asOf);
   const massPrior = priorDate ? massAround(priorDate) : null;
   if (e2.available && massNow !== null && massPrior !== null && Math.abs(massNow / massPrior - 1) >= 0.02) {
@@ -344,13 +352,20 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
       return { bpm, now: paceStr(1000 / vNow), prior: paceStr(1000 / vPrior), faster_pct: round((vNow / vPrior - 1) * 100, 1) };
     }) : null,
     volume_based_repeat: volumeRepeatSec !== null ? hms(volumeRepeatSec) : null,
+    runs_read_in_detail: {
+      current_window: coverage(windowStart(asOf, w.efficiencyWeeks), asOf),
+      prior_window: priorEnd ? coverage(windowStart(priorEnd, w.efficiencyWeeks), priorEnd) : null,
+    },
     body_mass_kg_now_vs_prior: [massNow !== null ? round(massNow) : null, massPrior !== null ? round(massPrior) : null] as [number | null, number | null],
   };
 
   const result: ReadinessResult = {
     status: 'ok', as_of: asOf, mode, race,
     likelihood: { score_0_10: lk.score, probability: round(lk.probability, 3), label: lk.label },
-    prediction: { central: hms(centralFinal), range_80: [hms(lo), hms(hi)], sigma_pct: round((sigma / centralFinal) * 100, 2) },
+    prediction: {
+      central: hms(centralFinal), range_80: [hms(lo), hms(hi)], sigma_pct: round((sigma / centralFinal) * 100, 2),
+      central_before_durability: hms(centralBeforeDurability), durability_adjustment_pct: round(mods.cappedPct, 2), probability_before_durability: round(lkBefore.probability, 3),
+    },
     confidence, estimators: est,
     modifiers: mods.results.map((m) => ({ check: m.check, value: m.value, benchmark: m.benchmark, applied_pct: m.appliedPct, status: m.status, evidence: m.evidence, ...(m.detail ? { detail: m.detail } : {}) })),
     adjustments: adjs.map((a) => ({ name: a.name, pct: round(a.pct, 2), evidence: 'weak' as const, detail: a.detail })),

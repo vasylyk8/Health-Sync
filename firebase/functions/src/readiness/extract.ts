@@ -83,6 +83,11 @@ export function selectAllForRawAnalysis(a: ShortlistArgs): { id: string; why: st
   // efficiency comparison at all.
   const priorEnd = a.prior ? addDays(a.prior.date, -1) : null;
   const priorBlock = priorEnd ? runs.filter((r) => inWindow(r, windowStart(priorEnd, cfg.windows.blockWeeks), priorEnd)) : [];
+  // Every run of a useful length in the two comparison windows (last weeks of each block) is read, so the heart-rate comparison does not depend on which
+  // runs happened to look like steady runs from their summaries; the older weeks of a block only add detail where they are long runs or efforts.
+  const longEnough = (r: RunSummary) => runKm(r) >= b.comparisonMinKm;
+  add(newestFirst(runs.filter((r) => inWindow(r, effStart, a.asOf) && longEnough(r))), 'comparison window run (current block)', b.comparisonWindowRuns);
+  if (priorEnd) add(newestFirst(priorBlock.filter((r) => inWindow(r, windowStart(priorEnd, cfg.windows.efficiencyWeeks), priorEnd) && longEnough(r))), 'comparison window run (prior block)', b.comparisonWindowRuns);
   if (priorEnd) add(newestFirst(priorBlock.filter((r) => inWindow(r, windowStart(priorEnd, cfg.windows.efficiencyWeeks), priorEnd) && steady(r))), 'steady run (prior block)', b.steadyRunsPerBlock);
   add(newestFirst(runs.filter((r) => inWindow(r, effStart, a.asOf) && steady(r))), 'steady run (current block)', b.steadyRunsPerBlock);
   add(newestFirst(runs.filter((r) => inWindow(r, durStart, a.asOf) && runKm(r) >= b.longRunMinKm)), 'long run', b.longRunsCurrent);

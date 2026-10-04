@@ -33,8 +33,22 @@ describe('raw-run shortlist', () => {
     const hm = run('hm-2026', '2026-04-11', 21.1, 286, { hr: 178 });
     const list = selectForRawAnalysis({ runs: [marathon, ...priorSteady, ...nowSteady, ...longs, hm], asOf: AS_OF, maxHr: 195, taggedIds: [], prior: marathon, cfg });
     expect(list.length).toBeLessThanOrEqual(cfg.budget.maxRawRuns);
-    expect(list.filter((x) => x.why === 'steady run (prior block)').length).toBeGreaterThanOrEqual(10);
+    expect(list.filter((x) => x.why === 'steady run (prior block)' || x.why === 'comparison window run (prior block)').length).toBeGreaterThanOrEqual(10);
     expect(list.find((x) => x.id === 'hm-2026')).toMatchObject({ why: 'earlier race candidate' });
     expect(list.find((x) => x.id === 'prior-mar')).toBeDefined();
+  });
+  it('reads every run of 8 km or more in the last 6 weeks of both blocks, whatever its heart rate', () => {
+    const marathon = run('prior-mar', '2025-10-12', 42.2, 340, { hr: 173 });
+    // Hard runs (average HR above the steady band) and easy runs alike, in both comparison windows.
+    const priorWin = Array.from({ length: 25 }, (_, i) => run(`pw${i}`, addDays('2025-10-11', -(i + 1)), 8 + (i % 9), 350, { hr: i % 3 === 0 ? 172 : 148 }));
+    const nowWin = Array.from({ length: 25 }, (_, i) => run(`nw${i}`, addDays(AS_OF, -(i + 1)), 8 + (i % 9), 350, { hr: i % 3 === 0 ? 172 : 148 }));
+    const filler = Array.from({ length: 60 }, (_, i) => run(`old${i}`, addDays(AS_OF, -(60 + i)), 22, 360, { hr: 150 }));
+    const list = selectForRawAnalysis({ runs: [marathon, ...priorWin, ...nowWin, ...filler], asOf: AS_OF, maxHr: 195, taggedIds: [], prior: marathon, cfg });
+    const ids = new Set(list.map((x) => x.id));
+    const inWin = (r: { date: string }, from: string, to: string) => r.date >= from && r.date <= to;
+    const nowIn = nowWin.filter((r) => inWin(r, addDays(AS_OF, -42), AS_OF));
+    const priorIn = priorWin.filter((r) => inWin(r, addDays('2025-10-11', -42), '2025-10-11'));
+    expect(nowIn.every((r) => ids.has(r.id))).toBe(true);
+    expect(priorIn.every((r) => ids.has(r.id))).toBe(true);
   });
 });

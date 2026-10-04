@@ -55,6 +55,14 @@ describe('well-prepared runner, tagged half marathon, race in 14 days', () => {
     expect(out.workouts!.length).toBeGreaterThan(10);
     expect(computeReadiness(wellPrepared(), cfg, 'summary').workouts).toBeUndefined();
   });
+  it('shows the estimate and likelihood without the durability checks next to the final ones', () => {
+    const o = computeReadiness(wellPrepared(), cfg);
+    const secs = (t: string) => t.split(':').reduce((n, x) => n * 60 + Number(x), 0);
+    expect(o.prediction!.durability_adjustment_pct).toBeGreaterThanOrEqual(0);
+    expect(secs(o.prediction!.central_before_durability)).toBeLessThanOrEqual(secs(o.prediction!.central));
+    expect(o.prediction!.probability_before_durability).toBeGreaterThanOrEqual(o.likelihood!.probability);
+    expect(o.block_comparison!.runs_read_in_detail.current_window[1]).toBeGreaterThan(0);
+  });
   it('matches the snapshot', () => {
     expect(computeReadiness(wellPrepared(), cfg)).toMatchSnapshot();
   });
