@@ -38,7 +38,7 @@ final class OnboardingUITests: XCTestCase {
         app.buttons["connectHealth"].tap()
         app.signInThroughAccountPage()
         XCTAssertTrue(app.buttons["editionMedal"].waitForExistence(timeout: 20))
-        XCTAssertTrue(app.staticTexts["GOOD LUCK, CHICAGO"].exists)
+        XCTAssertTrue(app.staticTexts["RUNNING CHICAGO?"].exists)
         snapshot("03a-Home-Medal")
         app.buttons["editionMedal"].tap()
         XCTAssertTrue(app.buttons["editionDone"].waitForExistence(timeout: 5))

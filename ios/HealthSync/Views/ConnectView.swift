@@ -17,6 +17,8 @@ struct ConnectView: View {
                     content.frame(minHeight: geo.size.height)
                 }
                 .scrollBounceBehavior(.always, axes: .vertical)
+                // The medal's ribbon runs up under the status bar, past the top of this scroll view.
+                .scrollClipDisabled()
                 .refreshable { await model.pullToRefresh() }
             }
         }
