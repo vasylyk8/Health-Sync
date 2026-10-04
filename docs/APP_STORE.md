@@ -27,7 +27,7 @@ Private by design
 • Read-only: KROK never changes your Apple Health data.
 • Your data is stored encrypted in the EU and used only to answer your own questions.
 • Nothing is shared until you connect an assistant, and you can disconnect at any time.
-• You choose which extra data groups (nutrition, glucose, symptoms, cycle, medications…) to share, and switching one off deletes it.
+• You choose which Apple Health data to share (nutrition, glucose, symptoms, cycle, medications…) in Apple Health’s permission settings.
 • Delete all your data from our servers with one tap.
 • No ads, and your health data is never sold or used for advertising.
 
@@ -48,7 +48,7 @@ KROK lets users analyze their own Apple Health data with the AI assistant of the
 
 - Data is read-only and used only to provide this service to the user. It is not used for advertising, sold, or used for data mining. No data is shared until the user connects an assistant and consents to the named recipient. Apple-linked accounts use public OAuth with explicit read-only permissions; existing anonymous accounts can use a revocable private link.
 - The user can disconnect an assistant (access stops immediately) or delete all data (••• menu → Delete All My Data).
-- Workouts (including their GPS routes), daily/hourly summaries of fitness and recovery metrics, and the enabled additional types are requested from Apple Health. Further groups of Apple Health data (nutrition and alcohol, heart alerts, glucose/insulin/blood pressure, mood and symptoms, menstrual cycle, medications, profile) are separate switches in ••• → Your data (on by default, except medications, which is off until the user turns it on); Apple Health's permission sheet lists each type and the user can deny any, and each is used by specific features (for example glucose around a workout, nutrition and recovery). The AI is instructed to describe data and trends only, with no diagnosis or medical advice. Clinical records, reproductive and sexual-health data and questionnaires are not read. Data is stored encrypted in the EU (Google Cloud, Belgium) and deleted automatically after a year of inactivity.
+- Workouts (including their GPS routes), daily/hourly summaries of fitness and recovery metrics, and the enabled additional types are requested from Apple Health. Further groups of Apple Health data (nutrition and alcohol, heart alerts, glucose/insulin/blood pressure, mood and symptoms, menstrual cycle, medications, profile) are requested on Apple Health's permission sheet, which lists each type; the user can deny any in Apple Health (there is no separate in-app switch), and each is used by specific features (for example glucose around a workout, nutrition and recovery). The AI is instructed to describe data and trends only, with no diagnosis or medical advice. Clinical records, reproductive and sexual-health data and questionnaires are not read. Data is stored encrypted in the EU (Google Cloud, Belgium) and deleted automatically after a year of inactivity.
 - Onboarding is three screens: Welcome (Connect to Apple Health), an account page (Sign in with Apple, required) and the upload screen. Syncing begins as soon as Health access is granted, while the account page is shown.
 - To test without an AI account, the app works fully up to the connection step. Adding the connector on claude.ai (free account) takes about a minute: Settings → Connectors → Add custom connector → paste the link.
 - HealthKit data is not stored in iCloud.
@@ -69,6 +69,6 @@ KROK lets users analyze their own Apple Health data with the AI assistant of the
 The app uses only standard HTTPS encryption (exempt). `ITSAppUsesNonExemptEncryption` = NO is already set.
 
 ## Notes on sensitive groups (review before submission)
-- Each optional group can be hidden from the app for the first submission without removing code (hide it in `coverage.json` `categories`, or remove its rows from the Your data screen). Consider launching with `nutrition`, `heart`, `devices` and `profile` visible and adding `mind`, `cycle` and `medications` later if App Review pushes back.
+- Each optional group can be hidden from the app for the first submission without removing code (hide it in `coverage.json` `categories`). Consider launching with `nutrition`, `heart`, `devices` and `profile` visible and adding `mind`, `cycle` and `medications` later if App Review pushes back.
 - Permission strings: `NSHealthShareUsageDescription` lists the groups and says each is off until switched on (see `ios/project.yml`).
 - Screenshots and the description must not promise diagnosis or medical advice.
