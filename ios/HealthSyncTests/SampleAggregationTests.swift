@@ -283,4 +283,15 @@ final class SampleAggregationTests: XCTestCase {
         }
     }
 
+    func testNeighbourReadMarginDoesNotAddDiscreteValuesOutsideTheRequestedRange() {
+        for style in [SampleAggregator.Style.arithmetic, .timeWeighted, .equivalentLevel] {
+            var a = SampleAggregator(calendar: cal, from: at(2026, 5, 3, 12, 15), to: at(2026, 5, 3, 12, 45), style: style, granularity: .hour)
+            a.add(RawReading(start: at(2026, 5, 3, 12, 14), end: at(2026, 5, 3, 12, 14), value: 999, source: "w"))
+            a.add(RawReading(start: at(2026, 5, 3, 12, 30), end: at(2026, 5, 3, 12, 31), value: 60, source: "w"))
+            a.add(RawReading(start: at(2026, 5, 3, 12, 46), end: at(2026, 5, 3, 12, 46), value: 999, source: "w"))
+            XCTAssertEqual(a.hourly(avg: true, min: false, max: false).count, 1)
+            XCTAssertEqual(a.hourly(avg: true, min: false, max: false).first!.v!, 60, accuracy: 1e-9)
+        }
+    }
+
 }

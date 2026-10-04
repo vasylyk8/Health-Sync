@@ -117,6 +117,9 @@ struct SampleAggregator {
 
     mutating func add(_ r: RawReading) {
         guard r.value.isFinite, r.end >= r.start else { return }
+        // Only cumulative duplicate handling needs neighbouring readings outside the range. The other styles follow
+        // HealthKit's overlap predicate, so the five-minute read margin cannot add values after the requested end.
+        if style != .cumulative, r.start >= to || r.end < from { return }
         if style == .cumulative { addCumulative(r) } else { addDiscrete(r) }
     }
 
