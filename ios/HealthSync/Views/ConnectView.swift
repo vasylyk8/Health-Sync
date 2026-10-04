@@ -82,14 +82,14 @@ struct ConnectView: View {
                 Spacer(minLength: 8)
                 EditionMedalView(edition: edition, editing: $editingGoal)
                     .transition(.opacity)
-                Spacer(minLength: editingGoal ? 0 : 24)
+                Spacer(minLength: editingGoal ? 0 : 40)
             } else {
                 Spacer(minLength: 24)
             }
             // Kept in place (just hidden) while the picker is open, so it does not count up from 0 again afterwards.
             Group {
                 HeroMetricView(metrics: heroMetrics, compact: activeEdition != nil)
-                Spacer(minLength: activeEdition == nil ? 40 : 24)
+                Spacer(minLength: activeEdition == nil ? 40 : 32)
                 progress
             }
             .opacity(editingGoal ? 0 : 1)

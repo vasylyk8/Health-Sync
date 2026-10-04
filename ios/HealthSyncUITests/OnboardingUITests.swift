@@ -44,7 +44,10 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(app.buttons["editionDone"].waitForExistence(timeout: 5))
         snapshot("03b-Home-Medal-Picker")
         app.buttons["editionDone"].tap()
-        XCTAssertTrue(app.staticTexts["GOAL 4:30:00"].waitForExistence(timeout: 5))
+        let ask = app.buttons["askPrompt"]
+        XCTAssertTrue(ask.waitForExistence(timeout: 5))
+        XCTAssertTrue(ask.label.contains("4:30"), "the question names the goal")
+        snapshot("03c-Home-Medal-Ask")
     }
 
     func testAppleAccountCanUsePublicOAuthWithoutCreatingAPrivateLink() {

@@ -26,8 +26,8 @@ struct SetupSheet: View {
         switch screen {
         case .consent: return Copy.Sheet.consentTitle(provider.name)
         case .steps: return Copy.Sheet.connectTitle(provider.name)
-        case .connected: return Copy.Sheet.isSetUp(provider.name)
-        case .oauth: return Copy.Sheet.authorizeTitle(provider.name)
+        case .connected: return Copy.Sheet.connectedTitle(provider.name)
+        case .oauth: return Copy.Sheet.connectTitle(provider.name)
         }
     }
 
@@ -188,53 +188,30 @@ struct SetupSheet: View {
     private var oauthView: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text(Copy.Sheet.oauthIntro)
-                        .bodyText()
-                        .foregroundStyle(Theme.ink)
-                    Text(Copy.Sheet.oauthPending)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(Copy.Sheet.oauthLead(provider.name))
                         .smallText()
                         .foregroundStyle(Theme.muted)
-                    Text(Theme.mcpURL.absoluteString)
-                        .smallText()
-                        .monospaced()
-                        .foregroundStyle(Theme.ink)
-                        .textSelection(.enabled)
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    HStack(spacing: 12) {
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 28)
+                    OAuthStep(number: 1, title: Copy.Sheet.oauthCopyTitle, detail: Copy.Sheet.oauthCopyDetail(provider.name), isLast: false) {
+                        linkCard
+                    }
+                    OAuthStep(number: 2, title: Copy.Sheet.oauthAddTitle(provider.name), detail: Copy.Sheet.oauthAddDetail(chatGPT: provider.id == "chatgpt"), isLast: false) {
                         Button {
-                            UIPasteboard.general.string = Theme.mcpURL.absoluteString
-                            Haptics.success()
-                            copied = true
+                            openURL(provider.setupURL)
                         } label: {
-                            Label(Copy.Sheet.copyServerURL, systemImage: "doc.on.doc")
+                            Label(Copy.Sheet.openSite(provider.websiteLabel), systemImage: "arrow.up.right")
+                                .labelStyle(TrailingIconLabelStyle())
                         }
-                        .buttonStyle(StepActionStyle(filled: true))
-                        .accessibilityIdentifier("copyOAuthURL")
-                        if copied {
-                            Text(Copy.Sheet.copied)
-                                .smallText()
-                                .foregroundStyle(Theme.muted)
-                                .accessibilityIdentifier("oauthCopied")
-                        }
+                        .buttonStyle(StepActionStyle(filled: false))
+                        .accessibilityIdentifier("openWebsite")
                     }
-                    Button {
-                        openURL(provider.setupURL)
-                    } label: {
-                        Label(Copy.Sheet.openSite(provider.websiteLabel), systemImage: "arrow.up.right")
+                    OAuthStep(number: 3, title: Copy.Sheet.oauthSignInTitle, detail: Copy.Sheet.oauthSignInDetail(provider.name), isLast: true) {
+                        EmptyView()
                     }
-                    .buttonStyle(StepActionStyle(filled: false))
-                    .accessibilityIdentifier("openWebsite")
-                    Text(Copy.Sheet.oauthHowTo(chatGPT: provider.id == "chatgpt"))
-                        .bodyText()
-                        .foregroundStyle(Theme.ink)
-                    Text(Copy.Sheet.oauthWarning)
-                        .smallText()
-                        .foregroundStyle(Theme.muted)
                 }
-                .padding(.top, 24)
+                .padding(.top, 8)
                 .padding(.bottom, 16)
             }
             .scrollBounceBehavior(.basedOnSize)
@@ -244,16 +221,75 @@ struct SetupSheet: View {
         .closesWhenSetUp(provider: provider) { dismiss() }
     }
 
+    /// The KROK server link and its Copy button in one card (the middle of a long link is shortened).
+    private var linkCard: some View {
+        let url = Theme.mcpURL.absoluteString.replacingOccurrences(of: "https://", with: "")
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Text(url)
+                    .smallText()
+                    .monospaced()
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    UIPasteboard.general.string = Theme.mcpURL.absoluteString
+                    Haptics.success()
+                    copied = true
+                } label: {
+                    Label(copied ? Copy.Sheet.copied : Copy.Sheet.copy, systemImage: copied ? "checkmark" : "doc.on.doc")
+                }
+                .buttonStyle(StepActionStyle(filled: true))
+                .accessibilityIdentifier("copyOAuthURL")
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, 8)
+            .padding(.vertical, 8)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            if copied {
+                Text(Copy.Sheet.copied)
+                    .smallText()
+                    .foregroundStyle(Theme.muted)
+                    .accessibilityIdentifier("oauthCopied")
+            }
+        }
+    }
+
     // MARK: Connected
 
     private var connectedView: some View {
         VStack(spacing: 0) {
             ScrollView {
-                Text(Copy.Sheet.connectedBody(provider.name))
-                    .bodyText()
-                    .foregroundStyle(Theme.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 24)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(Copy.Sheet.connectedLead(provider.name))
+                        .smallText()
+                        .foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(Copy.Sheet.askYourAI)
+                        .tracking(4.5)
+                        .smallText(.semibold)
+                        .foregroundStyle(Theme.muted)
+                        .padding(.top, 32)
+                        .padding(.bottom, 16)
+                    VStack(alignment: .trailing, spacing: 10) {
+                        ForEach(exampleQuestions, id: \.self) { question in
+                            Text(question)
+                                .bodyText()
+                                .foregroundStyle(Theme.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                                .background(
+                                    Theme.surface,
+                                    in: UnevenRoundedRectangle(topLeadingRadius: 20, bottomLeadingRadius: 20, bottomTrailingRadius: 6, topTrailingRadius: 20, style: .continuous))
+                                .frame(maxWidth: 300, alignment: .trailing)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .padding(.top, 8)
             }
             .scrollBounceBehavior(.basedOnSize)
             Button(Copy.Sheet.disconnect(provider.name)) { confirmDisconnect = true }
@@ -270,6 +306,69 @@ struct SetupSheet: View {
             }
         } message: {
             Text(Copy.Sheet.disconnectMessage(provider.name))
+        }
+    }
+
+    /// Example questions: the race question first when a goal is set, then general ones.
+    private var exampleQuestions: [String] {
+        var list = Copy.Sheet.exampleQuestions
+        if let edition = model.edition, let goal = model.goalSeconds {
+            list.insert(edition.prompt(SpecialEdition.timeText(seconds: goal)), at: 0)
+        }
+        return list.filter { !$0.isEmpty }
+    }
+}
+
+/// One step of the connect sheet: a numbered dot joined to the next one by a line.
+private struct OAuthStep<Content: View>: View {
+    let number: Int
+    let title: String
+    let detail: String
+    let isLast: Bool
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            Text("\(number)")
+                .smallText(.semibold)
+                .foregroundStyle(Theme.onInk)
+                .frame(width: 28, height: 28)
+                .background(Theme.ink, in: Circle())
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .bodyText(.semibold)
+                    .foregroundStyle(Theme.ink)
+                    .accessibilityAddTraits(.isHeader)
+                Text(detail)
+                    .smallText()
+                    .foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                content()
+                    .padding(.top, 12)
+            }
+            .padding(.bottom, isLast ? 0 : 28)
+        }
+        .background(alignment: .topLeading) {
+            if !isLast {
+                // The line from this dot down to the next one.
+                Rectangle()
+                    .fill(Theme.track)
+                    .frame(width: 2)
+                    .padding(.top, 36)
+                    .padding(.leading, 13)
+                    .padding(.bottom, 6)
+            }
+        }
+    }
+}
+
+/// Title first, then the icon (the arrow of "Open claude.ai").
+private struct TrailingIconLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 8) {
+            configuration.title
+            configuration.icon
         }
     }
 }
