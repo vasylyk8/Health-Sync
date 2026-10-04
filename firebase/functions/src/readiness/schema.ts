@@ -32,6 +32,7 @@ export const readinessShape = {
     weekly_km_now_vs_prior: z.tuple([z.number(), z.number().nullable()]),
     runs_30k_now_vs_prior: z.tuple([z.number(), z.number().nullable()]),
     speed_at_75pct_hrmax_ratio: z.number().nullable(),
+    volume_based_repeat: hms.nullable().describe('prior marathon scaled by the change in Tanda training indices (cross-check only, not averaged in)'),
   }).optional(),
   data_gaps: z.array(z.string()),
   assumptions: z.object({

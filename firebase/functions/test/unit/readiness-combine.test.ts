@@ -1,3 +1,6 @@
+import { relativeModifiers } from '../../src/readiness/modifiers.js';
+import { volumeBasedRepeat } from '../../src/readiness/estimators.js';
+import type { ModifierResult } from '../../src/readiness/types.js';
 import { describe, expect, it } from 'vitest';
 import { applyModifier, combineEstimates, labelOf, likelihood, range80 } from '../../src/readiness/combine.js';
 import { confidenceComponents, confidencePercent, type ConfidenceInputs } from '../../src/readiness/confidence.js';
@@ -200,5 +203,40 @@ describe('splits helper used by the fixtures', () => {
   it('builds hand-checkable splits', () => {
     const s = splitsOf(2.5, { pace: 300, hr: 140 });
     expect(s.map((x) => [x.split, x.distance_m, x.moving_seconds, x.partial])).toEqual([[1, 1000, 300, false], [2, 1000, 300, false], [3, 500, 150, true]]);
+  });
+});
+
+const mr = (check: string, appliedPct: number, status: ModifierResult['status'], value: number | null): ModifierResult => ({ check, value, benchmark: 'b', appliedPct, status, evidence: 'weak' });
+
+describe('durability relative to the prior marathon block', () => {
+  const now = { results: [mr('runs_30km_or_more', 1, 'not_met', 2), mr('long_run_decoupling', 1, 'not_met', 7.3), mr('goal_pace_segment', 1, 'not_met', 5), mr('hr_late', 0, 'met', 90)], totalPct: 3, cappedPct: 3 };
+  const prior = { results: [mr('runs_30km_or_more', 2, 'not_met', 0), mr('long_run_decoupling', 0, 'unknown', null), mr('goal_pace_segment', 0, 'met', 11), mr('hr_late', 0, 'unknown', null)] };
+  it('counts only a shortfall against the prior block for the share anchored on it, and the full penalty for the rest', () => {
+    const out = relativeModifiers(now, prior, 0.75, 5);
+    const by = (c: string) => out.results.find((r) => r.check === c)!;
+    expect(by('runs_30km_or_more').appliedPct).toBe(0.25); // better than the prior block (2 vs 0): only the 25% not anchored on it
+    expect(by('runs_30km_or_more').detail).toContain('anchored on that marathon');
+    expect(by('long_run_decoupling').appliedPct).toBe(1); // no prior value: stays absolute
+    expect(by('goal_pace_segment').appliedPct).toBe(1); // prior block met it, now does not: a real shortfall
+    expect(by('hr_late').appliedPct).toBe(0);
+    expect(out.totalPct).toBe(2.25);
+    expect(out.cappedPct).toBe(2.25);
+  });
+  it('is the absolute result with no weight on the prior marathon, and respects the cap', () => {
+    expect(relativeModifiers(now, prior, 0, 5).totalPct).toBe(3);
+    expect(relativeModifiers(now, prior, 0, 2).cappedPct).toBe(2);
+  });
+});
+
+describe('volume-based repeat of the prior marathon', () => {
+  const base = { cfg, priorSeconds: 14_340, priorKm: 47, priorPace: 380 };
+  it('is the prior time when nothing changed, faster with more volume at the same pace, and null without inputs', () => {
+    expect(volumeBasedRepeat({ ...base, nowKm: 47, nowPace: 380 })).toBeCloseTo(14_340, 6);
+    const faster = volumeBasedRepeat({ ...base, nowKm: 57, nowPace: 380 })!;
+    expect(faster).toBeLessThan(14_340);
+    // Tanda's volume term is worth a few minutes for +10 km/week, not tens of minutes.
+    expect(14_340 - faster).toBeGreaterThan(120);
+    expect(14_340 - faster).toBeLessThan(600);
+    expect(volumeBasedRepeat({ ...base, nowKm: 0, nowPace: 380 })).toBeNull();
   });
 });

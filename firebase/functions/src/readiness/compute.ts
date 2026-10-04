@@ -2,9 +2,9 @@ import { adjustmentSigmaSeconds, applyAdjustments, buildAdjustments } from './ad
 import { combineEstimates, applyModifier, likelihood, range80 } from './combine.js';
 import { confidenceComponents, confidencePercent } from './confidence.js';
 import { READINESS_CONFIG, type ReadinessConfig } from './config.js';
-import { effortsOfRun, efficiencyPoints, estimateE1, estimateE1b, estimateE2, estimateE3, fitSpeedAtHr, lowerBoundEffort, personalExponent, selectE1Source, volumeAdjustedR } from './estimators.js';
+import { effortsOfRun, efficiencyPoints, estimateE1, estimateE1b, estimateE2, estimateE3, fitSpeedAtHr, lowerBoundEffort, personalExponent, selectE1Source, volumeAdjustedR, volumeBasedRepeat } from './estimators.js';
 import { addDays, avgWeeklyKm, countRunsAtLeast, daysBetween, fullSplits, hms, inWindow, longestGapDays, median, runKm, weeksWithRuns, windowStart } from './features.js';
-import { decouplingQualifying, evaluateModifiers } from './modifiers.js';
+import { decouplingQualifying, evaluateModifiers, relativeModifiers } from './modifiers.js';
 import type { ReadinessResult } from './schema.js';
 import type { Estimate, PriorMarathon, RaceEffort, ReadinessInputs, RunRaw, RunSummary } from './types.js';
 
@@ -204,7 +204,14 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
   }
 
   // ---- Modifiers, likelihood ---------------------------------------------------------------------------------------
-  const mods = evaluateModifiers(modInputs);
+  let mods = evaluateModifiers(modInputs);
+  const e2Weight = combined.weights.find((x) => x.name === 'E2_prior_marathon')?.weight ?? 0;
+  if (prior && priorBlockEnd && e2Weight > 0) {
+    const pStart = windowStart(priorBlockEnd, w.durabilityWeeks);
+    const priorMods = evaluateModifiers({ ...modInputs, runs: inputs.runs.filter((r) => inWindow(r, pStart, priorBlockEnd)), windowStart: pStart, windowEnd: priorBlockEnd });
+    mods = relativeModifiers(mods, priorMods, e2Weight, cfg.modifiers.capPct);
+    caveats.push('Durability checks were compared with the prior marathon block, because the prior marathon carries most of the weight: only a shortfall against that block adds time to that part of the estimate.');
+  }
   for (const m of mods.results) if (m.status === 'unknown') gaps.push(`Durability check "${m.check}" is unknown: ${m.detail ?? 'no qualifying data'}.`);
   const e1bCap = e1b?.available && !e1bAsEstimate ? e1b.predictedSeconds! : null;
   const centralBase = e1bCap !== null ? Math.min(combined.centralSeconds, e1bCap) : combined.centralSeconds;
@@ -232,6 +239,22 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
 
   // ---- Benchmarks and block comparison -----------------------------------------------------------------------------
   const priorEnd = priorBlockEnd;
+  const indices = (start: string, end: string) => {
+    const rs = inputs.runs.filter((r) => inWindow(r, start, end) && r.distanceM && r.movingSec);
+    const outdoorRs = rs.filter((r) => !r.indoor);
+    const pr = outdoorRs.length ? outdoorRs : rs;
+    const k = pr.reduce((n, r) => n + runKm(r), 0);
+    return { weeklyKm: rs.reduce((n, r) => n + runKm(r), 0) / w.e3Weeks, pace: k > 0 ? pr.reduce((n, r) => n + r.movingSec!, 0) / k : 0 };
+  };
+  const volumeRepeatSec = prior && priorEnd ? (() => {
+    const now = indices(e3Start, asOf);
+    const then = indices(windowStart(priorEnd, w.e3Weeks), priorEnd);
+    return volumeBasedRepeat({ cfg, priorSeconds: prior.seconds, nowKm: now.weeklyKm, nowPace: now.pace, priorKm: then.weeklyKm, priorPace: then.pace });
+  })() : null;
+  if (volumeRepeatSec !== null && e2.available && Math.abs(volumeRepeatSec / e2.predictedSeconds! - 1) > 0.03) {
+    const dir = volumeRepeatSec < e2.predictedSeconds! ? 'faster' : 'slower';
+    caveats.push(`Cross-check: scaling the prior marathon by the change in training volume and pace alone gives ${hms(volumeRepeatSec)}, ${dir} than the efficiency-based repeat (${hms(e2.predictedSeconds!)}) by more than 3%. The two measure different things (volume vs aerobic efficiency); the volume figure is not averaged in.`);
+  }
   const priorDurStart = priorEnd ? windowStart(priorEnd, w.durabilityWeeks) : null;
   const priorKm12 = priorEnd ? avgWeeklyKm(inputs.runs, priorEnd, w.durabilityWeeks) : null;
   const priorRuns30 = priorEnd ? countRunsAtLeast(inputs.runs, cfg.modifiers.longRuns30k.minKm, priorDurStart!, priorEnd) : null;
@@ -256,6 +279,7 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
     weekly_km_now_vs_prior: [round(avgKm12), priorKm12 !== null ? round(priorKm12) : null] as [number, number | null],
     runs_30k_now_vs_prior: [runs30k, priorRuns30] as [number, number | null],
     speed_at_75pct_hrmax_ratio: e2res.rEff !== null ? round(e2res.rEff, 3) : null,
+    volume_based_repeat: volumeRepeatSec !== null ? hms(volumeRepeatSec) : null,
   };
 
   const result: ReadinessResult = {
