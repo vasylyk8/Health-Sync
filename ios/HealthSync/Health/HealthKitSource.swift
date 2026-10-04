@@ -514,6 +514,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             dailyFallbacks = []
             dailyFills = [:]
             dailyCalibration = [:]
+            dailyStatisticsErrors = [:]
         }
         // Real-device build 52 reported 65 completions but 64 missing result slots. The first slot (restingHr)
         // was never retried, leaving that metric missing even when a subsequent probe could read it.
@@ -566,14 +567,16 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             let ns = errors[i]! as NSError
             return "\(metrics[i].key)=\(ns.domain.replacingOccurrences(of: "com.apple.", with: ""))/\(ns.code)"
         }.joined(separator: ",")
-        let (fallbacks, fills, calibration) = sourceLock.withLock { () -> (String, String, String) in
+        let (fallbacks, fills, calibration, statsErrors) = sourceLock.withLock { () -> (String, String, String, String) in
             (dailyFallbacks.sorted().joined(separator: ","),
              dailyFills.keys.sorted().map { "\($0):\(dailyFills[$0]!)" }.joined(separator: ","),
-             dailyCalibration.keys.sorted().map { "\($0):\(dailyCalibration[$0]!)" }.joined(separator: ","))
+             dailyCalibration.keys.sorted().map { "\($0):\(dailyCalibration[$0]!)" }.joined(separator: ","),
+             // Error code x number of metrics (the note has to keep room for fill=).
+             Dictionary(grouping: dailyStatisticsErrors.values, by: { $0 }).map { "\($0.key)x\($0.value.count)" }.sorted().joined(separator: ","))
         }
         let counts = metrics.indices.filter { Self.sentinelKeys.contains(metrics[$0].key) }
             .map { "\(metrics[$0].key)=\((perMetric[$0] ?? []).count)" }.joined(separator: ",")
-        let note = "daily from=\(SleepNights.dayKey(start, calendar: cal)) to=\(SleepNights.dayKey(to, calendar: cal)) data=\(withData)/\(metrics.count) got=\(received) lost=\(lost.count)(\(lostKeys)) counts=\(counts) empty=\(empty.count) failed=\(failedShort.isEmpty ? "none" : failedShort) ms=\(Int(Date().timeIntervalSince(started) * 1000)) suspect=\(suspectKeys.isEmpty ? "none" : suspectKeys) cal=\(calibration.isEmpty ? "none" : calibration) fill=\(fills.isEmpty ? "none" : fills) fallback=\(fallbacks.isEmpty ? "none" : fallbacks)"
+        let note = "daily from=\(SleepNights.dayKey(start, calendar: cal)) to=\(SleepNights.dayKey(to, calendar: cal)) data=\(withData)/\(metrics.count) got=\(received) lost=\(lost.count)(\(lostKeys)) counts=\(counts) empty=\(empty.count) failed=\(failedShort.isEmpty ? "none" : failedShort) ms=\(Int(Date().timeIntervalSince(started) * 1000)) suspect=\(suspectKeys.isEmpty ? "none" : suspectKeys) statsErr=\(statsErrors.isEmpty ? "none" : statsErrors) cal=\(calibration.isEmpty ? "none" : calibration) fill=\(fills.isEmpty ? "none" : fills) fallback=\(fallbacks.isEmpty ? "none" : fallbacks)"
         sourceLock.withLock { lastDailyNote = note }
         // A query that still fails after its retry fails the chunk (so it is read again on the next run) instead of being
         // uploaded with metrics silently missing. Only errors that retrying cannot fix (no permission) leave a metric out.
@@ -666,13 +669,21 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
                                  calendar: Calendar, label: String) async throws -> [(String, Double)] {
         let options = Self.statisticsOptions(agg)
         let range = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
-        var out = try await dailyStatisticsOnce(type, unit: unit, agg: agg, scale: scale, from: from, to: to, calendar: calendar,
+        // HealthKit's statistics failing (not for lack of permission) is handled like statistics coming back empty: the days
+        // are filled from the raw readings below, and the error goes into the note.
+        var out: [(String, Double)] = []
+        do {
+            out = try await dailyStatisticsOnce(type, unit: unit, agg: agg, scale: scale, from: from, to: to, calendar: calendar,
                                                 predicate: range, options: options)
+        } catch {
+            if Self.isPermanentFailure(error) { throw error }
+            sourceLock.withLock { dailyStatisticsErrors[label] = Self.errorCode(error) }
+        }
         // A real restored iPhone can return an empty source-less statistics collection for years of samples from retired
         // Watches/iPhones. Naming every source makes HealthKit apply its own source-priority/de-duplication rules again.
         if out.isEmpty, try await hasQuantitySamples(type, predicate: range), let sources = await allSourcesPredicate(type) {
-            out = try await dailyStatisticsOnce(type, unit: unit, agg: agg, scale: scale, from: from, to: to, calendar: calendar,
-                                                predicate: Self.and(range, sources), options: options)
+            out = (try? await dailyStatisticsOnce(type, unit: unit, agg: agg, scale: scale, from: from, to: to, calendar: calendar,
+                                                  predicate: Self.and(range, sources), options: options)) ?? []
             if !out.isEmpty { recordFallback(type, mode: "sources", hourly: false) }
         }
 
@@ -684,10 +695,20 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let days = SampleAggregator.localDays(from: from, to: min(to, now), calendar: calendar)
         let calibrate = Self.calibrationTypes.contains(type.identifier) && to > now.addingTimeInterval(-3600) && !out.isEmpty
         guard out.count < days || calibrate, try await hasQuantitySamples(type, predicate: range) else { return out }
-        let raw = try await rawDailyStatistics(type, unit: unit, agg: agg, scale: scale, from: from, to: to, calendar: calendar)
-        if calibrate, let d = SampleAggregator.difference(reference: out, other: raw) {
-            let text = String(format: "%.1f/%.1f%%/%dd", d.median, d.max, d.days)
-            sourceLock.withLock { dailyCalibration[label] = text }
+        let aggregator = try await rawDailyAggregator(type, unit: unit, scale: scale, from: from, to: to, calendar: calendar,
+                                                      measureVariants: calibrate && type.aggregationStyle == .cumulative)
+        let raw = aggregator.daily(agg)
+        if calibrate {
+            // Median/largest percent difference from HealthKit's own daily values, and days compared; for cumulative types
+            // also for two other merge rules (a5, w5), to see which comes closest on this phone's real sources.
+            func text(_ values: [(String, Double)]) -> String? {
+                SampleAggregator.difference(reference: out, other: values).map { String(format: "%.1f/%.1f/%dd", $0.median, $0.max, $0.days) }
+            }
+            var parts = [text(raw)].compactMap { $0 }
+            for (name, values) in aggregator.dailyVariants().sorted(by: { $0.key < $1.key }) {
+                if let t = text(values) { parts.append("\(name)=\(t)") }
+            }
+            if !parts.isEmpty { sourceLock.withLock { dailyCalibration[label] = parts.joined(separator: ";") } }
         }
         let missing = Self.missingDaily(primary: out, fallback: raw)
         if !missing.isEmpty {
@@ -712,6 +733,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     private func dailyStatisticsOnce(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date,
                                      calendar: Calendar, predicate: NSPredicate, options: HKStatisticsOptions) async throws -> [(String, Double)] {
         #if DEBUG
+        if debugFailingStatistics { throw HealthSourceError.noResults }
         if debugEmptyStatistics { return [] }
         #endif
         await queryGate.acquire()
@@ -742,9 +764,15 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     private func rawDailyStatistics(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date,
                                     calendar: Calendar) async throws -> [(String, Double)] {
-        var aggregator = SampleAggregator(calendar: calendar, from: from, to: to, style: Self.aggregationStyle(type), granularity: .day)
+        try await rawDailyAggregator(type, unit: unit, scale: scale, from: from, to: to, calendar: calendar).daily(agg)
+    }
+
+    private func rawDailyAggregator(_ type: HKQuantityType, unit: HKUnit, scale: Double, from: Date, to: Date, calendar: Calendar,
+                                    measureVariants: Bool = false) async throws -> SampleAggregator {
+        var aggregator = SampleAggregator(calendar: calendar, from: from, to: to, style: Self.aggregationStyle(type), granularity: .day,
+                                          measureVariants: measureVariants)
         try await forEachRawReading(type, unit: unit, scale: scale, from: from, to: to) { aggregator.add($0) }
-        return aggregator.daily(agg)
+        return aggregator
     }
 
     /// Every reading of `type` that touches [from, to), read a month at a time so years of heart rate never sit in memory at
@@ -778,15 +806,16 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     private static func reading(_ sample: HKQuantitySample, unit: HKUnit, scale: Double) -> RawReading? {
         let source = sample.sourceRevision.source.bundleIdentifier
+        let watch = sample.sourceRevision.productType?.hasPrefix("Watch") ?? false
         // A series reading (e.g. heart rate during a workout) holds several values: its average, extremes and last value.
         if let d = sample as? HKDiscreteQuantitySample, d.count > 1 {
             return RawReading(start: d.startDate, end: d.endDate, value: d.averageQuantity.doubleValue(for: unit) * scale,
                               min: d.minimumQuantity.doubleValue(for: unit) * scale, max: d.maximumQuantity.doubleValue(for: unit) * scale,
-                              last: d.mostRecentQuantity.doubleValue(for: unit) * scale, count: d.count, source: source)
+                              last: d.mostRecentQuantity.doubleValue(for: unit) * scale, count: d.count, source: source, watch: watch)
         }
         let v = sample.quantity.doubleValue(for: unit) * scale
         guard v.isFinite else { return nil }
-        return RawReading(start: sample.startDate, end: sample.endDate, value: v, source: source)
+        return RawReading(start: sample.startDate, end: sample.endDate, value: v, source: source, watch: watch)
     }
 
     private func dailyCategory(_ type: HKCategoryType, mode: CategoryMode, from: Date, to: Date, calendar: Calendar) async throws -> [(String, RecordValue)] {
@@ -875,6 +904,15 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     private var dailyCalibration: [String: String] = [:]
     /// Hours filled from raw readings per hourly series in the last hourly pass.
     private var hourlyFills: [String: Int] = [:]
+    /// HealthKit statistics errors handled by the raw fill, and errors that failed a series, per metric, for the notes.
+    private var dailyStatisticsErrors: [String: String] = [:]
+    private var hourlyStatisticsErrors: [String: String] = [:]
+    private var hourlyFailures: [String: String] = [:]
+
+    private static func errorCode(_ error: Error) -> String {
+        let ns = error as NSError
+        return "\(ns.domain.replacingOccurrences(of: "com.apple.", with: ""))/\(ns.code)"
+    }
 
     private static func and(_ first: NSPredicate, _ second: NSPredicate) -> NSPredicate {
         NSCompoundPredicate(andPredicateWithSubpredicates: [first, second])
@@ -908,6 +946,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         sourceLock.withLock {
             hourlyFallbacks = []
             hourlyFills = [:]
+            hourlyStatisticsErrors = [:]
+            hourlyFailures = [:]
         }
         var records: [Record] = []
         var errors: [Error] = []
@@ -923,6 +963,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
                     // briefly locked) is tried once more, and if it still fails the chunk fails and is retried on the
                     // next run, rather than being recorded as complete with a series silently missing.
                     attempt += 1
+                    sourceLock.withLock { hourlyFailures[metric.name] = Self.errorCode(error) }
                     if Self.isPermanentFailure(error) { break }
                     if attempt >= 2 { errors.append(error); break }
                 }
@@ -949,9 +990,16 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
         let range = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
         let anchor = Calendar.current.dateInterval(of: .hour, for: from)?.start ?? from
-        var out = try await hourlyBucketsOnce(metric, from: anchor, to: to, predicate: range, options: options)
+        // Statistics failing (not for lack of permission) is handled like statistics coming back empty; see dailyStatistics.
+        var out: [HourBucket] = []
+        do {
+            out = try await hourlyBucketsOnce(metric, from: anchor, to: to, predicate: range, options: options)
+        } catch {
+            if Self.isPermanentFailure(error) { throw error }
+            sourceLock.withLock { hourlyStatisticsErrors[metric.name] = Self.errorCode(error) }
+        }
         if out.isEmpty, try await hasQuantitySamples(metric.type, predicate: range), let sources = await allSourcesPredicate(metric.type) {
-            out = try await hourlyBucketsOnce(metric, from: anchor, to: to, predicate: Self.and(range, sources), options: options)
+            out = (try? await hourlyBucketsOnce(metric, from: anchor, to: to, predicate: Self.and(range, sources), options: options)) ?? []
             if !out.isEmpty { recordFallback(metric.type, mode: "sources", hourly: true) }
         }
         // Statistics that leave whole days out (seen on a restored iPhone, whole years at a time) are filled hour by hour from
@@ -974,6 +1022,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     private func hourlyBucketsOnce(_ metric: HourlyMetric, from: Date, to: Date, predicate: NSPredicate,
                                    options: HKStatisticsOptions) async throws -> [HourBucket] {
         #if DEBUG
+        if debugFailingStatistics { throw HealthSourceError.noResults }
         if debugEmptyStatistics { return [] }
         #endif
         await queryGate.acquire()
@@ -1003,6 +1052,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     #if DEBUG
     /// Daily check only: every statistics query comes back empty, as on the restored iPhone, so the raw fill is tested end to end.
     var debugEmptyStatistics = false
+    /// Daily check only: every statistics query fails, so the raw fill is tested as the path taken when HealthKit errors.
+    var debugFailingStatistics = false
 
     /// Daily check only: for every core daily quantity metric and every hourly series, HealthKit's own statistics next to the
     /// raw-reading aggregation over the same range. One line per day or hour where they differ, prefixed with the metric.
@@ -1176,7 +1227,9 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         sourceLock.withLock {
             let modes = hourlyFallbacks.sorted().joined(separator: ",")
             let fills = hourlyFills.keys.sorted().map { "\($0):\(hourlyFills[$0]!)" }.joined(separator: ",")
-            return "hourly fill=\(fills.isEmpty ? "none" : fills) fallback=\(modes.isEmpty ? "none" : modes)"
+            let statsErrors = hourlyStatisticsErrors.keys.sorted().map { "\($0):\(hourlyStatisticsErrors[$0]!)" }.joined(separator: ",")
+            let failures = hourlyFailures.keys.sorted().map { "\($0):\(hourlyFailures[$0]!)" }.joined(separator: ",")
+            return "hourly fill=\(fills.isEmpty ? "none" : fills) statsErr=\(statsErrors.isEmpty ? "none" : statsErrors) failed=\(failures.isEmpty ? "none" : failures) fallback=\(modes.isEmpty ? "none" : modes)"
         }
     }
 

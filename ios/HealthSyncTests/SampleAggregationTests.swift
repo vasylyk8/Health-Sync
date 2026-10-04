@@ -129,6 +129,30 @@ final class SampleAggregationTests: XCTestCase {
         XCTAssertEqual(dict(a.daily(.sum))["2026-05-03"]!, 1100 + 400, accuracy: 1e-9)
     }
 
+    /// A scale app writes a whole day's resting energy (2,300 kcal) at the weigh-in; HealthKit's daily total keeps the Watch's.
+    func testOtherAppsCountOnlyInHoursAppleDevicesLeftEmpty() {
+        var a = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: true)
+        for h in 0 ..< 24 { a.add(RawReading(start: at(2026, 5, 3, h), end: at(2026, 5, 3, h, 59), value: 85, source: "com.apple.health.watch")) }
+        a.add(RawReading(start: at(2026, 5, 3, 8, 58), end: at(2026, 5, 3, 8, 58), value: 2300, source: "com.renpho.health"))
+        // An hour only an app recorded (the Watch off) still counts.
+        a.add(RawReading(start: at(2026, 5, 4, 10), end: at(2026, 5, 4, 10, 30), value: 50, source: "com.strava"))
+        let days = dict(a.daily(.sum))
+        XCTAssertEqual(days["2026-05-03"]!, 24 * 85, accuracy: 1e-6)
+        XCTAssertEqual(days["2026-05-04"]!, 50, accuracy: 1e-6)
+    }
+
+    func testMergeVariantsForMeasurement() {
+        var a = SampleAggregator(calendar: cal, from: at(2026, 5, 1), to: at(2026, 6, 1), style: .cumulative, granularity: .day, measureVariants: true)
+        // 09:00-09:10: Watch 100 steps, iPhone 130 for the same walk; 09:30-09:35 only the iPhone, 40.
+        a.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 10), value: 100, source: "com.apple.health.W", watch: true))
+        a.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 10), value: 130, source: "com.apple.health.P"))
+        a.add(RawReading(start: at(2026, 5, 3, 9, 30), end: at(2026, 5, 3, 9, 35), value: 40, source: "com.apple.health.P"))
+        XCTAssertEqual(dict(a.daily(.sum))["2026-05-03"]!, 170, accuracy: 1e-6)
+        let v = a.dailyVariants()
+        XCTAssertEqual(dict(v["a5"]!)["2026-05-03"]!, 170, accuracy: 1e-6)
+        XCTAssertEqual(dict(v["w5"]!)["2026-05-03"]!, 140, accuracy: 1e-6)
+    }
+
     func testOneSourceAddsUpLikeHealthKit() {
         var a = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: true)
         for h in [8, 12, 16] { a.add(RawReading(start: at(2026, 5, 3, h), end: at(2026, 5, 3, h, 30), value: 801, source: "app")) }

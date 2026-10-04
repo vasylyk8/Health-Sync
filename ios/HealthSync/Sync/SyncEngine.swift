@@ -366,7 +366,9 @@ actor SyncEngine {
     /// 12: collect daily reads sequentially; the device reported completions without retaining their result slots.
     /// 13: days Apple Health's statistics leave out are filled from the raw readings for every metric (steps, energy and heart
     ///     rate came back empty for every past year on a restored iPhone); a reading counts on the day holding most of it.
-    static let dailyVersion = 13
+    /// 14: in an hour Apple's own devices recorded, other apps' cumulative readings are left out (a scale app's whole-day
+    ///     resting energy written at each weigh-in had been taken instead of the Watch's).
+    static let dailyVersion = 14
 
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }

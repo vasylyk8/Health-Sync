@@ -86,10 +86,10 @@ enum DailyCheck {
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("dailycheck-\(UUID().uuidString)")
         let uploader = CaptureUploader()
-        // Statistics switched off, as on the restored iPhone where they came back empty for every past year: every day and hour
-        // the server job checks then comes from the raw-reading fill.
+        // Every statistics query failing (the restored iPhone's statistics came back empty, or with an error, for past years):
+        // every day and hour the server job checks then comes from the raw-reading fill.
         let source = HealthKitSource(scope: scope)
-        source.debugEmptyStatistics = true
+        source.debugFailingStatistics = true
         let engine = SyncEngine(source: source, uploader: uploader, outbox: Outbox(root: root), scope: scope, categories: { ["core"] })
         let started = Date()
         do {
