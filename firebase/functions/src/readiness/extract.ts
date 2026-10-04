@@ -71,6 +71,7 @@ export function selectForRawAnalysis(a: ShortlistArgs): { id: string; why: strin
   if (a.prior) {
     const end = addDays(a.prior.date, -1);
     const priorBlock = runs.filter((r) => inWindow(r, windowStart(end, cfg.windows.blockWeeks), end));
+    add(newestFirst(priorBlock.filter((r) => inWindow(r, windowStart(end, cfg.windows.durabilityWeeks), end) && runKm(r) >= b.longRunMinKm)), 'long run (prior block)', b.candidatesPerBlock);
     add(newestFirst(priorBlock.filter((r) => inWindow(r, windowStart(end, cfg.windows.efficiencyWeeks), end) && steady(r))), 'steady run (prior block)', b.steadyRunsPerBlock);
     add(fastestFirst(priorBlock.filter((r) => runKm(r) >= b.effortCandidateMinKm)), 'possible max effort (prior block)', b.candidatesPerBlock);
   }

@@ -266,3 +266,15 @@ export function estimateE3(args: { cfg: ReadinessConfig; weeklyKm: number; paceS
     notes,
   };
 }
+
+/**
+ * Cross-check only (never averaged in, which would count the same fitness twice): the prior marathon scaled by how the
+ * Tanda training-index prediction changed between the prior block and now. Population-level, so it ignores personal response.
+ */
+export function volumeBasedRepeat(args: { cfg: ReadinessConfig; priorSeconds: number; nowKm: number; nowPace: number; priorKm: number; priorPace: number }): number | null {
+  const t = args.cfg.e3.tanda;
+  const f = (km: number, pace: number) => t.a + t.b * Math.exp(t.c * km) + t.d * pace;
+  if (!(args.nowKm > 0 && args.nowPace > 0 && args.priorKm > 0 && args.priorPace > 0)) return null;
+  const bf = t.e * Math.exp(t.f * args.cfg.e3.defaultBodyFatPct);
+  return args.priorSeconds * ((f(args.nowKm, args.nowPace) + bf) / (f(args.priorKm, args.priorPace) + bf));
+}

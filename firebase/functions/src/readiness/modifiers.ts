@@ -116,3 +116,28 @@ export function evaluateModifiers(i: ModifierInputs): { results: ModifierResult[
   const totalPct = results.reduce((n, r) => n + r.appliedPct, 0);
   return { results, totalPct, cappedPct: Math.min(m.capPct, totalPct) };
 }
+
+/**
+ * The prior marathon time already contains the durability the runner had in that block, so against that estimator only a
+ * shortfall relative to the prior block counts. Estimators that do not embed it (race conversion, training formula) see the
+ * full absolute penalty. Each check is therefore blended by the weight the prior-marathon estimator carries in the average.
+ * A check that cannot be evaluated for the prior block stays absolute.
+ */
+export function relativeModifiers(
+  now: { results: ModifierResult[]; totalPct: number; cappedPct: number },
+  prior: { results: ModifierResult[] },
+  priorMarathonWeight: number,
+  capPct: number,
+): { results: ModifierResult[]; totalPct: number; cappedPct: number } {
+  const w = Math.min(1, Math.max(0, priorMarathonWeight));
+  const results = now.results.map((r) => {
+    const p = prior.results.find((x) => x.check === r.check);
+    if (!p || p.status === 'unknown' || r.status === 'unknown') return r;
+    const relative = Math.max(0, r.appliedPct - p.appliedPct);
+    const blended = Math.round((w * relative + (1 - w) * r.appliedPct) * 100) / 100;
+    const note = `prior marathon block: ${p.value ?? 'n/a'} (${p.appliedPct}% would have applied); counted at ${blended}% because ${Math.round(w * 100)}% of the estimate is anchored on that marathon`;
+    return { ...r, appliedPct: blended, detail: r.detail ? `${r.detail}; ${note}` : note };
+  });
+  const totalPct = Math.round(results.reduce((n, r) => n + r.appliedPct, 0) * 100) / 100;
+  return { results, totalPct, cappedPct: Math.min(capPct, totalPct) };
+}
