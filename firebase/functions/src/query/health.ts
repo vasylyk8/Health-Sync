@@ -7,6 +7,7 @@ import { envelope, range, rows, type ToolResult } from './common.js';
 import { isComplete, loadType, localRangeToUtc, localTs, ToolError, validTz, type QueryDeps } from './context.js';
 import { lit, withDuck } from './duck.js';
 import { findWorkout, parseExtra } from './lookup.js';
+import { readinessHint } from './race.js';
 
 const DAY_MS = 86_400_000;
 
@@ -561,11 +562,13 @@ export async function getTrainingLoad(deps: QueryDeps, args: LoadArgs): Promise<
     const shown = series.slice(-n);
     const last = shown.at(-1)!;
     const weekAgo = series.at(-8);
+    const hint = await readinessHint(deps);
     return {
       ...envelope(deps, [[WORKOUT_TYPE, man]], isComplete(man, a, b, deps.now()), [
         'Load per workout is a heart-rate based training impulse (TRIMP) using resting and maximum heart rate; workouts without heart rate fall back to Apple\'s effort score x duration. CTL and ATL are 42-day and 7-day smoothed load estimates; TSB = CTL - ATL. They are not measurements of actual fitness, fatigue, injury risk or readiness to exercise. No training or treatment recommendation is supplied.',
         'Apple\'s own Training Load number is not readable by apps, so this is an independent estimate.',
         'Days without recorded workouts and workouts without usable heart rate or effort are assigned zero load in this model; this does not prove inactivity. Observed workout maximum heart rate is not necessarily physiological maximum heart rate. Without supplied or observed parameters, defaults are 190 bpm maximum and 60 bpm resting heart rate. The default TRIMP coefficient is 1.92; the explicit female formula uses 1.67. Sex is not inferred.',
+        ...(hint ? [hint] : []),
       ]),
       inputs: { resting_hr: round(rest, 0), resting_hr_source: args.resting_hr !== undefined ? 'given' : observedRest !== null ? 'mean recorded resting heart rate' : 'default 60 (ask the user)', trimp_coefficient: k, trimp_coefficient_source: args.sex ? 'sex-specific formula selected by user' : 'default formula coefficient (sex not inferred)', max_hr: round(maxHr, 0), max_hr_source: args.max_hr ? 'given' : observedMax >= 120 ? 'highest workout max heart rate seen' : 'default 190 (ask the user)', workouts_by_basis: basis },
       current: { ...last, ramp_rate_ctl_per_week: weekAgo ? round(last.ctl - weekAgo.ctl, 1) : null },
