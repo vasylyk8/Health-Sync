@@ -252,10 +252,16 @@ const base = {
   /** Raw-data analysis budget: one MCP request has a 45 s deadline and a response-size cap. */
   budget: {
     softTimeMs: 28_000,
-    maxRawRuns: 60,
+    maxRawRuns: 72,
     /** Shortlist sizes (runs analysed from raw streams). */
     candidatesPerBlock: 12,
     steadyRunsPerBlock: 12,
+    /** Steady runs read for the block before an earlier race. */
+    earlierSteadyRuns: 6,
+    /** Long runs and possible max efforts of the current block; the prior block's long runs. */
+    longRunsCurrent: 12,
+    maxEffortsCurrent: 8,
+    longRunsPrior: 6,
     longRunMinKm: 20,
     effortCandidateMinKm: 5,
     /** Steady-run shortlist: average HR within these fractions of HRmax (summary level). */

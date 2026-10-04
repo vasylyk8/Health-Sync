@@ -35,7 +35,7 @@ export interface ShortlistArgs {
  * Which runs are worth reading raw streams for, most valuable first (the time budget drops the tail):
  * the prior marathon, tagged races, long runs, likely max efforts, steady aerobic runs of both blocks.
  */
-export function selectForRawAnalysis(a: ShortlistArgs): { id: string; why: string }[] {
+export function selectAllForRawAnalysis(a: ShortlistArgs): { id: string; why: string }[] {
   const { cfg, runs } = a;
   const b = cfg.budget;
   const out: { id: string; why: string }[] = [];
@@ -65,18 +65,9 @@ export function selectForRawAnalysis(a: ShortlistArgs): { id: string; why: strin
 
   if (a.prior) add([a.prior], 'prior marathon');
   add(runs.filter((r) => a.taggedIds.includes(r.id)), 'tagged race');
-  add(newestFirst(runs.filter((r) => inWindow(r, durStart, a.asOf) && runKm(r) >= b.longRunMinKm)), 'long run', 2 * b.candidatesPerBlock);
-  add(fastestFirst(block.filter((r) => runKm(r) >= b.effortCandidateMinKm)), 'possible max effort', b.candidatesPerBlock);
-  add(newestFirst(runs.filter((r) => inWindow(r, effStart, a.asOf) && steady(r))), 'steady run (current block)', b.steadyRunsPerBlock);
-  if (a.prior) {
-    const end = addDays(a.prior.date, -1);
-    const priorBlock = runs.filter((r) => inWindow(r, windowStart(end, cfg.windows.blockWeeks), end));
-    add(newestFirst(priorBlock.filter((r) => inWindow(r, windowStart(end, cfg.windows.durabilityWeeks), end) && runKm(r) >= b.longRunMinKm)), 'long run (prior block)', b.candidatesPerBlock);
-    add(newestFirst(priorBlock.filter((r) => inWindow(r, windowStart(end, cfg.windows.efficiencyWeeks), end) && steady(r))), 'steady run (prior block)', b.steadyRunsPerBlock);
-    add(fastestFirst(priorBlock.filter((r) => runKm(r) >= b.effortCandidateMinKm)), 'possible max effort (prior block)', b.candidatesPerBlock);
-  }
-  // Earlier races (older than the current block): the likeliest race-like runs, and the steady runs of the block before the first one
-  // so the fitness change since then can be measured. Also races in the lead-up to the prior marathon (personal exponent).
+  // Earlier races (older than the current block) are few and valuable, so they come before the bulk training runs: the likeliest
+  // race-like runs, the steady runs of the block before the first one (to measure the fitness change since then), and races in the
+  // lead-up to the prior marathon (personal exponent).
   const raceLike = (r: RunSummary) => {
     const km = runKm(r);
     return km >= 4.8 && km <= 22.5 && r.avgHr !== null && r.avgHr / a.maxHr >= cfg.earlier.candidateHrFraction;
@@ -86,14 +77,26 @@ export function selectForRawAnalysis(a: ShortlistArgs): { id: string; why: strin
   add(earlier, 'earlier race candidate', cfg.earlier.candidates);
   if (earlier[0]) {
     const end = addDays(earlier[0].date, -1);
-    add(newestFirst(runs.filter((r) => inWindow(r, windowStart(end, cfg.windows.efficiencyWeeks), end) && steady(r))), 'steady run (earlier race block)', b.steadyRunsPerBlock);
+    add(newestFirst(runs.filter((r) => inWindow(r, windowStart(end, cfg.windows.efficiencyWeeks), end) && steady(r))), 'steady run (earlier race block)', b.earlierSteadyRuns);
   }
-  if (a.prior) {
-    const end = addDays(a.prior.date, -1);
-    add(prefer(runs.filter((r) => inWindow(r, windowStart(end, cfg.earlier.maxAgeWeeks), end) && raceLike(r))), 'race before prior marathon', cfg.earlier.candidates);
+  // Efficiency runs of the prior block come before the bulk of the current block: without them the prior-marathon estimator has no
+  // efficiency comparison at all.
+  const priorEnd = a.prior ? addDays(a.prior.date, -1) : null;
+  const priorBlock = priorEnd ? runs.filter((r) => inWindow(r, windowStart(priorEnd, cfg.windows.blockWeeks), priorEnd)) : [];
+  if (priorEnd) add(newestFirst(priorBlock.filter((r) => inWindow(r, windowStart(priorEnd, cfg.windows.efficiencyWeeks), priorEnd) && steady(r))), 'steady run (prior block)', b.steadyRunsPerBlock);
+  add(newestFirst(runs.filter((r) => inWindow(r, effStart, a.asOf) && steady(r))), 'steady run (current block)', b.steadyRunsPerBlock);
+  add(newestFirst(runs.filter((r) => inWindow(r, durStart, a.asOf) && runKm(r) >= b.longRunMinKm)), 'long run', b.longRunsCurrent);
+  add(fastestFirst(block.filter((r) => runKm(r) >= b.effortCandidateMinKm)), 'possible max effort', b.maxEffortsCurrent);
+  if (priorEnd) {
+    add(prefer(runs.filter((r) => inWindow(r, windowStart(priorEnd, cfg.earlier.maxAgeWeeks), priorEnd) && raceLike(r))), 'race before prior marathon', cfg.earlier.candidates);
+    add(newestFirst(priorBlock.filter((r) => inWindow(r, windowStart(priorEnd, cfg.windows.durabilityWeeks), priorEnd) && runKm(r) >= b.longRunMinKm)), 'long run (prior block)', b.longRunsPrior);
+    add(fastestFirst(priorBlock.filter((r) => runKm(r) >= b.effortCandidateMinKm)), 'possible max effort (prior block)', b.candidatesPerBlock);
   }
-  return out.slice(0, b.maxRawRuns);
+  return out;
 }
+
+/** The shortlist cut to the raw-run budget. */
+export const selectForRawAnalysis = (a: ShortlistArgs): { id: string; why: string }[] => selectAllForRawAnalysis(a).slice(0, a.cfg.budget.maxRawRuns);
 
 // ---------------------------------------------------------------------------------------------
 // Raw analysis of one run
@@ -291,7 +294,10 @@ export async function gatherInputs(deps: QueryDeps, a: GatherArgs): Promise<{ in
     const priorDisabled = a.priorMarathonId === 'none';
     const priorRun = detectPriorMarathon(runs, { asOf: a.asOf, raceDate: a.race.date, lookbackStart: addMonths(a.asOf, -cfg.windows.priorMarathonLookbackMonths), override: a.priorMarathonId, cfg });
     if (a.priorMarathonId && !priorDisabled && !priorRun) gaps.push(`prior_marathon_workout_id ${a.priorMarathonId} is not among the running workouts in the last ${cfg.windows.priorMarathonLookbackMonths} months.`);
-    const shortlist = selectForRawAnalysis({ runs, asOf: a.asOf, maxHr: maxHr.value, taggedIds: a.raceWorkoutIds, prior: priorRun, cfg });
+    const shortlistArgs = { runs, asOf: a.asOf, maxHr: maxHr.value, taggedIds: a.raceWorkoutIds, prior: priorRun, cfg };
+    const shortlist = selectForRawAnalysis(shortlistArgs);
+    const dropped = selectAllForRawAnalysis(shortlistArgs).length - shortlist.length;
+    if (dropped > 0) gaps.push(`${dropped} lower-priority run(s) were not read from raw data (limit of ${cfg.budget.maxRawRuns} per request).`);
     const docs = new Map((await Promise.all(shortlist.map(async (s) => [s.id, await deps.meta.getWorkoutData(deps.uid, s.id)] as const))));
 
     // ---- Raw analysis within the time budget -------------------------------------------------------------------------

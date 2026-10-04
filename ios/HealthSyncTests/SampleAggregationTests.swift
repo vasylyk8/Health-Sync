@@ -126,8 +126,8 @@ final class SampleAggregationTests: XCTestCase {
         a.add(RawReading(start: at(2026, 5, 3, 9, 5), end: at(2026, 5, 3, 9, 35), value: 1100, source: "com.apple.health.phone"))
         // Only the phone was carried in the afternoon: those steps count.
         a.add(RawReading(start: at(2026, 5, 3, 15), end: at(2026, 5, 3, 15, 20), value: 400, source: "com.apple.health.phone"))
-        // 09:00-09:30 the Watch's 1000; 09:30-09:35 the phone's share (1100 x 5/30); the afternoon 400.
-        XCTAssertEqual(dict(a.daily(.sum))["2026-05-03"]!, 1000 + 1100.0 * 5 / 30 + 400, accuracy: 1e-9)
+        // 09:00-09:30 the Watch's 1000 (the phone's reading overlaps it and is left out whole); the afternoon 400.
+        XCTAssertEqual(dict(a.daily(.sum))["2026-05-03"]!, 1000 + 400, accuracy: 1e-9)
     }
 
     /// A scale app writes a whole day's resting energy (2,300 kcal) at the weigh-in; HealthKit's daily total keeps the Watch's.
@@ -146,7 +146,7 @@ final class SampleAggregationTests: XCTestCase {
         XCTAssertEqual(days["2026-05-05"]!, 40, accuracy: 1e-6)
     }
 
-    /// Per 5 minutes the Watch counts where it recorded, the iPhone fills the rest (measured closest to HealthKit's totals).
+    /// The Watch counts where it recorded; the iPhone fills only time well away from the Watch's readings.
     func testWatchCountsFirstPerFiveMinutes() {
         var a = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: true)
         // 09:00-09:10: Watch 100 steps, iPhone 130 for the same walk; 09:30-09:35 only the iPhone, 40.
@@ -158,6 +158,28 @@ final class SampleAggregationTests: XCTestCase {
         h.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 10), value: 100, source: "com.apple.health.W", watch: true))
         h.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 10), value: 130, source: "com.apple.health.P"))
         XCTAssertEqual(h.hourly(avg: true, min: false, max: false).compactMap(\.v), [100])
+    }
+
+    /// The iPhone logs the same walk a few minutes off from the Watch (seen on a real iPhone: HealthKit then keeps the
+    /// Watch's alone). Within 5 minutes of a Watch reading the iPhone's is left out; further away it counts.
+    func testIPhoneNearTheWatchIsLeftOut() {
+        var a = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: true)
+        a.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 10), value: 100, source: "com.apple.health.W", watch: true))
+        a.add(RawReading(start: at(2026, 5, 3, 9, 14), end: at(2026, 5, 3, 9, 20), value: 90, source: "com.apple.health.P"))
+        a.add(RawReading(start: at(2026, 5, 3, 8, 50), end: at(2026, 5, 3, 8, 56), value: 30, source: "com.apple.health.P"))
+        a.add(RawReading(start: at(2026, 5, 3, 9, 16), end: at(2026, 5, 3, 9, 20), value: 25, source: "com.apple.health.P2"))
+        a.add(RawReading(start: at(2026, 5, 3, 9, 40), end: at(2026, 5, 3, 9, 45), value: 50, source: "com.apple.health.P"))
+        // Left out: 09:14 (4 min after the Watch) and 08:50-08:56 (4 min before it). Counted: 09:16 (6 min after) and 09:40.
+        XCTAssertEqual(dict(a.daily(.sum))["2026-05-03"]!, 100 + 25 + 50, accuracy: 1e-9)
+        // A reading written before the Watch's (sorted by start, not by arrival) is judged the same way.
+        var b = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: true)
+        b.add(RawReading(start: at(2026, 5, 3, 9, 14), end: at(2026, 5, 3, 9, 20), value: 90, source: "com.apple.health.P"))
+        b.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 10), value: 100, source: "com.apple.health.W", watch: true))
+        XCTAssertEqual(dict(b.daily(.sum))["2026-05-03"]!, 100, accuracy: 1e-9)
+        // With no Watch at all the iPhone counts in full.
+        var c = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: true)
+        c.add(RawReading(start: at(2026, 5, 3, 9, 14), end: at(2026, 5, 3, 9, 20), value: 90, source: "com.apple.health.P"))
+        XCTAssertEqual(dict(c.daily(.sum))["2026-05-03"]!, 90, accuracy: 1e-9)
     }
 
     func testOneSourceAddsUpLikeHealthKit() {
