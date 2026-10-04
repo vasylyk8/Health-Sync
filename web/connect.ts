@@ -62,7 +62,7 @@ async function start() {
     status.className = user ? 'ok' : '';
     if (user && !wasSignedIn) approve.focus();
     wasSignedIn = !!user;
-    status.textContent = user ? 'Signed in. Last step: review what ' + (document.querySelector('#assistant')!.textContent ?? 'your assistant') + ' can read, then tap Allow access. Only continue if this is the assistant you chose to connect.'
+    status.textContent = user ? 'Signed in. Tap Allow access to finish connecting.'
       : appleRedirectFailed ? 'Apple sign-in did not complete. Try signing in again, or cancel and restart the connection in your assistant. If Apple shows a different app, cancel and contact KROK support.'
       : 'Sign in using the same Apple Account you linked in the KROK iPhone app.';
   };
