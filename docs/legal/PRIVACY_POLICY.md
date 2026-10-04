@@ -1,6 +1,6 @@
 # KROK Privacy Policy (DRAFT – needs legal review before launch)
 
-_Last updated: 3 October 2026. Controller: 2ndOp Inc · support@2ndopinions.ai._
+_Last updated: 4 October 2026. Controller: 2ndOp Inc · support@2ndopinions.ai._
 
 ## What KROK does
 KROK copies your **workouts** from Apple Health, with their detailed measurements and GPS routes, plus **daily and hourly summaries** (sleep, heart rate, steps and similar), to our servers, so that the AI assistants **you** connect (Anthropic's Claude and/or OpenAI's ChatGPT) can answer questions about your training and recovery. If you choose, KROK can also share further groups of Apple Health data (see "Additional data groups").
@@ -13,7 +13,7 @@ KROK copies your **workouts** from Apple Health, with their detailed measurement
 - **Technical and product-usage data:** crash reports; app version; whether onboarding steps, a sync and an assistant connection succeeded; coarse sync and tool-call duration; which assistant and KROK tool were used; and when those events occurred. These events are linked to the pseudonymous KROK account so we can measure the activation funnel and retention. They never contain Health values, workout counts or metadata, GPS routes, Health dates, tool arguments, free text, connector links, your email or your Apple identifier.
 
 ## Additional data groups (on by default, you choose)
-These groups are read when you connect Apple Health, if you track them. Apple Health shows each type and lets you allow or deny it. In the app, **••• menu → Your data**, you can switch a group off at any time, which **deletes its data from our servers**.
+These groups are read when you connect Apple Health, if you track them. Apple Health shows each type and lets you allow or deny it. You control each group in Apple Health (**Settings › Health › Data Access & Devices › KROK**): turn a type off there and KROK stops reading it. KROK has no separate per-group switch; to remove data already copied to our servers, use **••• menu → Delete All My Data** or email support@2ndopinions.ai.
 - **Nutrition and alcohol:** logged food and drink with the nutrients and times, alcoholic drinks, blood alcohol content.
 - **Heart alerts and lung function:** high/low heart rate and irregular rhythm notifications, atrial fibrillation burden, lung function measurements, inhaler use.
 - **Glucose, insulin and blood pressure:** readings recorded in Apple Health (for example by a continuous glucose monitor).
@@ -29,7 +29,7 @@ If you enter an optional **expected finish time for a race**, it is stored with 
 
 ## Why we use it (legal bases)
 - To provide the service you asked for: storing your data so your connected assistants can read it (GDPR Art. 6(1)(b)).
-- Health data is special-category data. We process it only with your **explicit consent** (GDPR Art. 9(2)(a)), given when you connect Apple Health (including the types you allow on Apple's permission sheet), and again, per assistant, when you connect Claude or ChatGPT. You can withdraw consent at any time by switching a group off in KROK or in Apple Health, disconnecting, or deleting your data.
+- Health data is special-category data. We process it only with your **explicit consent** (GDPR Art. 9(2)(a)), given when you connect Apple Health (including the types you allow on Apple's permission sheet), and again, per assistant, when you connect Claude or ChatGPT. You can withdraw consent at any time by turning a type off in Apple Health, disconnecting, or deleting your data.
 - Crash and usage diagnostics: our legitimate interest in understanding and improving whether the service works (Art. 6(1)(f)). These never contain health data and are not used for advertising or tracking across apps or websites.
 
 ## Who receives it
@@ -38,7 +38,7 @@ If you enter an optional **expected finish time for a race**, it is stored with 
 - We never sell your data, use it for advertising, or share it with anyone else.
 
 ## How long we keep it
-Until you delete it (••• menu → Delete All My Data, completed within 24 hours), or automatically **one year after your last sync**. Data of an additional group is deleted as soon as you switch that group off. Product events and access logs (which tool was used and when, no health values or arguments) are kept for 90 days. One-time funnel milestones are deleted with the account. Daily analytics rollups contain aggregate counts and durations without account identifiers.
+Until you delete it (••• menu → Delete All My Data, completed within 24 hours), or automatically **one year after your last sync**. Product events and access logs (which tool was used and when, no health values or arguments) are kept for 90 days. One-time funnel milestones are deleted with the account. Daily analytics rollups contain aggregate counts and durations without account identifiers.
 
 ## Your rights
 You can access, correct, export or delete your data, withdraw consent, and complain to your data protection authority. The easiest way to delete your server data is in the app. For anything else, email support@2ndopinions.ai.

@@ -186,28 +186,30 @@ struct SetupSheet: View {
     // MARK: Sign in with Apple (public connector)
 
     private var oauthView: some View {
-        VStack(spacing: 0) {
+        let chatGPT = provider.id == "chatgpt"
+        return VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(Copy.Sheet.oauthLead(provider.name))
-                        .smallText()
-                        .foregroundStyle(Theme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.bottom, 28)
-                    OAuthStep(number: 1, title: Copy.Sheet.oauthCopyTitle, detail: Copy.Sheet.oauthCopyDetail(provider.name), isLast: false) {
+                    OAuthStep(number: 1, title: Copy.Sheet.oauthCopyTitle, detail: nil, isLast: false) {
                         linkCard
                     }
-                    OAuthStep(number: 2, title: Copy.Sheet.oauthAddTitle(provider.name), detail: Copy.Sheet.oauthAddDetail(chatGPT: provider.id == "chatgpt"), isLast: false) {
-                        Button {
-                            openURL(provider.setupURL)
-                        } label: {
-                            Label(Copy.Sheet.openSite(provider.websiteLabel), systemImage: "arrow.up.right")
-                                .labelStyle(TrailingIconLabelStyle())
+                    OAuthStep(number: 2, title: Copy.Sheet.oauthOpenTitle(chatGPT: chatGPT), detail: Copy.Sheet.oauthOpenDetail(chatGPT: chatGPT), isLast: false) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            choiceHint(chatGPT: chatGPT)
+                            Button {
+                                openURL(provider.oauthURL)
+                            } label: {
+                                Label(Copy.Sheet.openSite(provider.oauthLabel), systemImage: "arrow.up.right")
+                                    .labelStyle(TrailingIconLabelStyle())
+                            }
+                            .buttonStyle(StepActionStyle(filled: true))
+                            .accessibilityIdentifier("openWebsite")
                         }
-                        .buttonStyle(StepActionStyle(filled: false))
-                        .accessibilityIdentifier("openWebsite")
                     }
-                    OAuthStep(number: 3, title: Copy.Sheet.oauthSignInTitle, detail: Copy.Sheet.oauthSignInDetail(provider.name), isLast: true) {
+                    OAuthStep(number: 3, title: Copy.Sheet.oauthFormTitle, detail: Copy.Sheet.oauthFormDetail(chatGPT: chatGPT), isLast: false) {
+                        formCard(chatGPT: chatGPT)
+                    }
+                    OAuthStep(number: 4, title: Copy.Sheet.oauthSignInTitle, detail: Copy.Sheet.oauthSignInDetail, isLast: true) {
                         EmptyView()
                     }
                 }
@@ -219,6 +221,61 @@ struct SetupSheet: View {
                 .padding(.bottom, 16)
         }
         .closesWhenSetUp(provider: provider) { dismiss() }
+    }
+
+    /// What to tap on the assistant's own page. Outlined, so it reads as a label and not as one of our buttons.
+    private func choiceHint(chatGPT: Bool) -> some View {
+        FlowLayout(spacing: 6) {
+            if chatGPT {
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                    .frame(width: 32, height: 32)
+                    .overlay(Circle().strokeBorder(Theme.track, lineWidth: 1))
+            } else {
+                Label("Add", systemImage: "plus")
+                    .smallText()
+                    .foregroundStyle(Theme.ink)
+                    .padding(.horizontal, 12)
+                    .frame(height: 32)
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.track, lineWidth: 1))
+            }
+            Image(systemName: "arrow.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.muted)
+                .frame(height: 32)
+            Text(Copy.Sheet.oauthChoice(chatGPT: chatGPT))
+                .smallText()
+                .foregroundStyle(Theme.ink)
+                .padding(.horizontal, 12)
+                .frame(height: 32)
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.track, lineWidth: 1))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Copy.Sheet.oauthChoice(chatGPT: chatGPT))
+    }
+
+    /// The values to type into the assistant's form.
+    private func formCard(chatGPT: Bool) -> some View {
+        var rows = [
+            (Copy.Sheet.oauthName, Copy.Sheet.oauthAppName),
+            (Copy.Sheet.oauthLinkField(chatGPT: chatGPT), Copy.Sheet.oauthYourLink),
+        ]
+        if chatGPT { rows.append((Copy.Sheet.oauthAuthField, Copy.Sheet.oauthAuthValue)) }
+        return VStack(spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                HStack(spacing: 12) {
+                    Text(row.0).smallText().foregroundStyle(Theme.muted)
+                    Spacer(minLength: 8)
+                    Text(row.1).smallText(.semibold).foregroundStyle(Theme.ink)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .accessibilityElement(children: .combine)
+                if index < rows.count - 1 { Divider().overlay(Theme.track) }
+            }
+        }
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     /// The KROK server link and its Copy button in one card (the middle of a long link is shortened).
@@ -323,7 +380,7 @@ struct SetupSheet: View {
 private struct OAuthStep<Content: View>: View {
     let number: Int
     let title: String
-    let detail: String
+    let detail: String?
     let isLast: Bool
     @ViewBuilder let content: () -> Content
 
@@ -340,10 +397,12 @@ private struct OAuthStep<Content: View>: View {
                     .bodyText(.semibold)
                     .foregroundStyle(Theme.ink)
                     .accessibilityAddTraits(.isHeader)
-                Text(detail)
-                    .smallText()
-                    .foregroundStyle(Theme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let detail {
+                    Text(detail)
+                        .smallText()
+                        .foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 content()
                     .padding(.top, 12)
             }

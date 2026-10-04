@@ -2,7 +2,7 @@
 
 The machine-readable source is **`shared/coverage.json`**. It's bundled into the iOS app and imported by the server, so both sides always agree. Read-only: nothing is written to HealthKit.
 
-Data is grouped in **categories**. `core` is always on; every other category is off until the user switches it on in the app (**Your data**), HealthKit permission for its types is requested only then, and switching it off deletes its data on the server (DATA_CONTRACT.md §7).
+Data is grouped in **categories**. `core` is always on; the other categories are read when the user connects Apple Health, where HealthKit permission for each type is requested and can be denied or withdrawn (there is no in-app "Your data" screen any more) (DATA_CONTRACT.md §7).
 
 ## Category: core (always on): Workouts, activity, sleep and recovery
 ### Workouts (everything Apple attaches)

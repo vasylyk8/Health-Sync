@@ -5,7 +5,6 @@ struct ConnectView: View {
     @EnvironmentObject var model: AppModel
     @State private var selected: AIProvider?
     @State private var confirmDelete = false
-    @State private var showChoices = false
     /// The race medal's finish-time picker is open (the number and sync status step aside).
     @State private var editingGoal = false
 
@@ -17,17 +16,12 @@ struct ConnectView: View {
                     content.frame(minHeight: geo.size.height)
                 }
                 .scrollBounceBehavior(.always, axes: .vertical)
-                // The medal's ribbon runs up under the status bar, past the top of this scroll view.
-                .scrollClipDisabled()
                 .refreshable { await model.pullToRefresh() }
             }
         }
         .background(Theme.background.ignoresSafeArea())
         .sheet(item: $selected) { provider in
             SetupSheet(provider: provider)
-        }
-        .sheet(isPresented: $showChoices) {
-            DataChoicesView().environmentObject(model)
         }
         .sheet(isPresented: $model.showBenchmark, onDismiss: { model.finishSpeedTest() }) {
             speedTest
@@ -49,7 +43,6 @@ struct ConnectView: View {
             Menu {
                 Link(destination: Theme.supportURL) { Label(Copy.Menu.help, systemImage: "questionmark.circle") }
                 Link(destination: Theme.privacyURL) { Label(Copy.Menu.privacy, systemImage: "hand.raised") }
-                Button { showChoices = true } label: { Label(Copy.Menu.yourData, systemImage: "slider.horizontal.3") }
                 if !model.appleAccountLinked {
                     Button { Task { await model.signInWithAppleFromMenu() } } label: { Label(Copy.Menu.signIn, systemImage: "person.crop.circle") }
                 }
