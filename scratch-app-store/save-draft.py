@@ -132,6 +132,14 @@ def save(api, payload, output):
             if not str(error).startswith('Apple API HTTP 409'):
                 raise
             results['skipped'].append(str(error))
+            if 'ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE.DIFFERENT_ACCOUNT' in str(error):
+                # Preserve Apple's current app name; choosing a replacement needs the owner.
+                attrs = {k: v for k, v in payload['appInfo'].items() if k != 'name'}
+                localize('appInfoLocalizations', 'appInfos', info['id'],
+                         before['appInfoLocalizations'], attrs)
+                results['existingAppNames'] = [item['attributes'].get('name')
+                    for item in before['appInfoLocalizations']
+                    if item['attributes'].get('locale') == payload['locale']]
     else:
         results['skipped'].append('App-wide metadata: editable app-info state not confirmed')
     state = api.call('GET', f'appStoreVersions/{version["id"]}')['data']
@@ -146,7 +154,8 @@ def save(api, payload, output):
             key: {'sha256': hashlib.sha256(value.encode()).hexdigest(), 'characters': len(value)}
             if key == 'description' else value for key, value in item['attributes'].items()
             if key in {**payload['appInfo'], **payload['versionLocalization']}}}
-            for item in results['verified']], 'skipped': results['skipped']}))
+            for item in results['verified']], 'existingAppNames': results.get('existingAppNames', []),
+        'skipped': results['skipped']}))
 
 
 if __name__ == '__main__':
