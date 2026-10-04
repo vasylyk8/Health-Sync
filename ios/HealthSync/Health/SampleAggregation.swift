@@ -47,11 +47,13 @@ struct RawReading: Equatable, Sendable {
 ///   written 23:55-23:50 counts on both days);
 /// - sound levels average as energy (10^(dB/10)) weighted by duration, an equivalent continuous level;
 /// - a cumulative reading is spread over its span by time into 5-minute slots, and readings from several sources are
-///   never added together. Per slot the Watch counts where it recorded (the largest Watch), else the larger of Apple's other
-///   devices (the iPhone), else, only in an hour none of Apple's devices recorded, the largest other app. So a Watch and an
-///   iPhone that both counted the same walk count it once, and a scale app's whole-day resting energy written at a
-///   weigh-in is not added to the Watch's. Measured on a real iPhone against HealthKit's daily totals (82 days): steps
-///   0.7% median / 3.7% worst day (largest Apple device per hour: 1.3 / 7.4%), active energy 0.0%.
+///   never added together. The Watch counts wherever it recorded. A reading of Apple's other devices (the iPhone) counts
+///   only when the Watch recorded nothing within 5 minutes of it: the iPhone logs the same walk or climb a few minutes off
+///   from the Watch, and HealthKit then keeps the Watch's alone. Per slot that leaves the Watch (the largest Watch), else
+///   the larger of Apple's other devices, else, only in an hour none of Apple's devices recorded, the largest other app,
+///   so a scale app's whole-day resting energy written at a weigh-in is not added to the Watch's. Measured against
+///   HealthKit's own totals on a real iPhone (81 days, Watch and iPhone both counting): steps -0.1% in all, 0.2% median /
+///   1.7% worst day, distance 0.1% / 1.7%; per 5-minute slot instead it was +0.7% in all, 0.7% / 3.8% and 0.6% / 7.3%.
 struct SampleAggregator {
     enum Granularity { case day, hour }
     enum Style { case cumulative, arithmetic, timeWeighted, equivalentLevel }
@@ -91,6 +93,13 @@ struct SampleAggregator {
     private var slots: [Date: [String: Double]] = [:]
     private var watches: Set<String> = []
     static let slotLength: TimeInterval = 300
+    /// Readings of Apple's other devices, kept until the Watch's readings are all in, and the Watch's spans.
+    private var deferred: [RawReading] = []
+    private var watchSpans: [(start: Date, end: Date)] = []
+    /// Hours any of Apple's devices recorded in, counted or not.
+    private var appleHours = Set<Date>()
+    /// How close the Watch's nearest reading may be for an iPhone reading to be left out (best fit: 3 to 8 minutes).
+    static let nearWatch: TimeInterval = 300
 
     init(calendar: Calendar, from: Date, to: Date, style: Style, granularity: Granularity) {
         self.calendar = calendar
@@ -126,34 +135,72 @@ struct SampleAggregator {
         }
     }
 
-    /// Adds a cumulative reading to its 5-minute slots, spread over its span by time; a reading without duration goes to
-    /// the slot it is in. Only the part inside [from, to) counts.
+    /// Adds a cumulative reading. The Watch's and other apps' readings go straight into their slots; Apple's other devices'
+    /// wait for `mergedSlots`, which needs all of the Watch's readings to decide.
     private mutating func addCumulative(_ r: RawReading) {
-        if r.watch { watches.insert(r.source) }
-        func slot(_ date: Date) -> Date { Date(timeIntervalSince1970: (date.timeIntervalSince1970 / Self.slotLength).rounded(.down) * Self.slotLength) }
-        let span = r.end.timeIntervalSince(r.start)
-        if span <= 0 {
-            guard r.start >= from, r.start < to else { return }
-            slots[slot(r.start), default: [:]][r.source, default: 0] += r.value
+        if Self.isApple(r.source) {
+            for (slot, _) in Self.slotShares(r, from: from, to: to) { appleHours.insert(hour(slot)) }
+        }
+        if r.watch {
+            watches.insert(r.source)
+            watchSpans.append((r.start, r.end))
+        } else if Self.isApple(r.source) {
+            deferred.append(r)
             return
         }
+        for (slot, share) in Self.slotShares(r, from: from, to: to) { slots[slot, default: [:]][r.source, default: 0] += share }
+    }
+
+    /// A reading's amount per 5-minute slot, spread over its span by time; a reading without duration goes to the slot it
+    /// is in. Only the part inside [from, to) counts.
+    private static func slotShares(_ r: RawReading, from: Date, to: Date) -> [(Date, Double)] {
+        func slot(_ date: Date) -> Date { Date(timeIntervalSince1970: (date.timeIntervalSince1970 / slotLength).rounded(.down) * slotLength) }
+        let span = r.end.timeIntervalSince(r.start)
+        if span <= 0 { return r.start >= from && r.start < to ? [(slot(r.start), r.value)] : [] }
+        var out: [(Date, Double)] = []
         var cursor = slot(r.start)
         while cursor < r.end {
-            let next = cursor.addingTimeInterval(Self.slotLength)
+            let next = cursor.addingTimeInterval(slotLength)
             let lo = Swift.max(cursor, r.start, from)
             let hi = Swift.min(next, r.end, to)
-            if hi > lo { slots[cursor, default: [:]][r.source, default: 0] += r.value * hi.timeIntervalSince(lo) / span }
+            if hi > lo { out.append((cursor, r.value * hi.timeIntervalSince(lo) / span)) }
             cursor = next
         }
+        return out
     }
 
     private static func isApple(_ source: String) -> Bool { source.hasPrefix("com.apple.health") }
 
+    private func hour(_ slot: Date) -> Date { calendar.dateInterval(of: .hour, for: slot)?.start ?? slot }
+
+    /// The Watch's spans merged where they overlap, in time order.
+    private func watchUnion() -> [(start: Date, end: Date)] {
+        var out: [(start: Date, end: Date)] = []
+        for s in watchSpans.sorted(by: { $0.start < $1.start }) {
+            if let last = out.last, s.start <= last.end {
+                out[out.count - 1].end = Swift.max(last.end, s.end)
+            } else {
+                out.append(s)
+            }
+        }
+        return out
+    }
+
     /// Each slot's amount after merging its sources (see the type's comment), with the slot's start.
     private func mergedSlots() -> [(Date, Double)] {
-        func hour(_ slot: Date) -> Date { calendar.dateInterval(of: .hour, for: slot)?.start ?? slot }
-        var appleHours = Set<Date>()
-        for (slot, sources) in slots where sources.keys.contains(where: Self.isApple) { appleHours.insert(hour(slot)) }
+        var slots = self.slots
+        let spans = watchUnion()
+        for r in deferred {
+            // The first Watch span that ends at or after the reading's start minus the margin; near if it starts in time.
+            let lo = r.start.addingTimeInterval(-Self.nearWatch)
+            var a = 0, b = spans.count
+            while a < b {
+                let m = (a + b) / 2
+                if spans[m].end < lo { a = m + 1 } else { b = m }
+            }
+            if a < spans.count, spans[a].start <= r.end.addingTimeInterval(Self.nearWatch) { continue }
+            for (slot, share) in Self.slotShares(r, from: from, to: to) { slots[slot, default: [:]][r.source, default: 0] += share }
+        }
         return slots.map { slot, sources -> (Date, Double) in
             let watch = sources.filter { watches.contains($0.key) }
             if let v = watch.values.max() { return (slot, v) }

@@ -36,6 +36,8 @@ protocol HealthSource: Sendable {
     /// Apple's separate per-medication permission sheet (iOS 26). Kept apart from `requestAuthorization` so a slow or
     /// missing second sheet can never hold up the main permission step; never throws.
     func requestMedicationAuthorization() async
+    /// Asks only for types this install was never asked about (one the app reads since an update); never throws.
+    func requestNewTypes(scope: SyncScope, categories: Set<String>) async
     /// Workout summaries started in [from, to), newest first (the fast "recent" pass).
     func workouts(from: Date, to: Date) async throws -> [Record]
     /// Workout summaries and deletions from the anchored query (full history and change capture).
@@ -74,6 +76,7 @@ protocol HealthSource: Sendable {
 
 extension HealthSource {
     func requestMedicationAuthorization() async {}
+    func requestNewTypes(scope: SyncScope, categories: Set<String>) async {}
     func requestAuthorization(scope: SyncScope, categories: Set<String>) async throws { try await requestAuthorization(scope: scope) }
     func dailyContextBatches(from: Date, to: Date, categories: Set<String>) async throws -> [DailyBatch] {
         [DailyBatch(typeId: HealthTypes.dailyId, category: "core", records: try await dailyContext(from: from, to: to), note: dailyDiagnosticNote())]

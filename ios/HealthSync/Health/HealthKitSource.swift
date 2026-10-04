@@ -71,6 +71,16 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
     }
 
+    /// iOS returns no data for a type the app never asked for, and an update can add one (noise notifications, read under
+    /// the identifier HealthKit resolves since daily version 16). Its sheet lists only the new types and does not appear
+    /// when every type was asked before. A status check that fails (a type iOS no longer accepts) goes to the request,
+    /// which leaves such types out.
+    func requestNewTypes(scope: SyncScope, categories: Set<String>) async {
+        let types = HealthTypes.readPermissions(for: scope, categories: categories.union(["core"]))
+        if let status = try? await store.statusForAuthorizationRequest(toShare: [], read: types), status != .shouldRequest { return }
+        try? await requestAuthorization(scope: scope, categories: categories)
+    }
+
     /// Types iOS refused to ask permission for at the last request (identifiers only), for diagnostics.
     private(set) var rejectedPermissionTypes: [String] = []
 

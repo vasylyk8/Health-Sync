@@ -127,8 +127,8 @@ final class BatchTests: XCTestCase {
         let box = Outbox(root: root)
         try box.update { $0.dailyFullAt = Date(); $0.dailyVersion = 0 }
         XCTAssertEqual(Outbox(root: root).state.dailyVersion, 0)
-        XCTAssertEqual(SyncEngine.dailyVersion, 15)
-        XCTAssertEqual(SyncEngine.hourlyVersion, 11)
+        XCTAssertEqual(SyncEngine.dailyVersion, 16)
+        XCTAssertEqual(SyncEngine.hourlyVersion, 12)
         XCTAssertEqual(SyncEngine.detailVersion, 1)
     }
 }

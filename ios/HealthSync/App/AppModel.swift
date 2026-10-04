@@ -255,8 +255,17 @@ final class AppModel: ObservableObject {
         guard phase != .welcome, !benchmarkRunning else { return }
         Task { await engine.onProgress { p in Task { @MainActor in self.progress = p } } }
         startObservers()
-        syncTask = Task { await syncNow() }
+        syncTask = Task {
+            await requestNewTypes()
+            await syncNow()
+        }
         Task { await sendGoalIfPending() }
+    }
+
+    /// In the foreground only (iOS shows the sheet then): types an update added are asked for once, before the sync reads them.
+    private func requestNewTypes() async {
+        let (source, scope, categories) = (self.source, self.scope, consent.enabled)
+        await Self.finishWithin(seconds: 60) { await source.requestNewTypes(scope: scope, categories: categories) }
     }
 
     /// Saves the expected finish time (kept on the phone, and sent to the server so the person's AI can use it).
