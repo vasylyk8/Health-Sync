@@ -331,7 +331,7 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
   const baseWeeksUsed = Math.max(1, Math.min(w.baseWeeks, historyWeeks));
   const benchmarks = [
     { metric: 'avg_weekly_km_12wk', value: round(avgKm12), context: priorKm12 !== null ? `prior marathon block: ${round(priorKm12)}` : 'no prior marathon block', evidence: 'moderate' as const },
-    { metric: 'longest_run_km_12wk', value: round(longest), context: 'a longest run of 25 km or more is associated with faster marathon finishes (PMC7496388)', evidence: 'moderate' as const },
+    { metric: 'longest_run_km_12wk', value: round(longest), context: 'benchmark from the spec: a longest run of 25 km or more (the supporting study has not been verified)', evidence: 'moderate' as const },
     { metric: 'runs_30km_or_more_12wk', value: runs30k, context: priorRuns30 !== null ? `prior marathon block: ${priorRuns30}` : 'no prior marathon block', evidence: 'moderate' as const },
     { metric: 'avg_weekly_km_base_52wk', value: baseRuns.length ? round(avgWeeklyKm(inputs.runs, baseEnd, baseWeeksUsed)) : null, context: baseRuns.length ? `context only, not used in the estimate: mean over the ${baseWeeksUsed} week(s) of history before the ${w.blockWeeks}-week block (up to ${w.baseWeeks})` : 'context only, not used in the estimate: no runs recorded before the block', evidence: 'moderate' as const },
     { metric: 'long_runs_with_carbs_logged', value: inputs.nutrition.enabled ? carbRuns : null, context: inputs.nutrition.enabled ? `of ${blockRuns.filter((r) => (r.movingSec ?? 0) >= minRunSec).length} runs of ${cfg.confidence.fueling.minRunMinutes} minutes or more in the block; not logged does not mean not eaten (context only)` : 'nutrition data is off or not granted (context only)', evidence: 'weak' as const },
@@ -359,6 +359,38 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
     body_mass_kg_now_vs_prior: [massNow !== null ? round(massNow) : null, massPrior !== null ? round(massPrior) : null] as [number | null, number | null],
   };
 
+  // Marathon-day temperature scenarios when the caller gave none: the same estimate with the heat adjustment at 10, 15, 20 and 25 degC.
+  const temperatureScenarios = inputs.context.expectedTempC === null
+    ? [10, 15, 20, 25].map((t) => {
+      const a = buildAdjustments({ ...inputs.context, expectedTempC: t }, cfg);
+      const c = applyAdjustments(centralMod, a);
+      const sg = Math.sqrt(combined.sigmaTotalSeconds ** 2 + adjustmentSigmaSeconds(centralMod, a) ** 2);
+      return { temp_c: t, central: hms(c), probability: round(likelihood(inputs.goalSeconds, c, sg, cfg).probability, 3) };
+    })
+    : null;
+
+  // Plain-language summary: what a reader needs first, with the biggest driver and the gaps that matter stated in words.
+  const pctOf = (p: number) => `${Math.round(p * 100)}%`;
+  const durMin = Math.round(((centralFinal - centralBeforeDurability) / 60) * 10) / 10;
+  const goalSeg = mods.results.find((m) => m.check === 'goal_pace_segment');
+  const gapsThatMatter: string[] = [];
+  if (!source) gapsThatMatter.push(earlierSource ? `No race-quality effort in the last ${w.blockWeeks} weeks; the most recent race is ${round(earlierSource.ageWeeks)} weeks old.` : `No race-quality effort in the last ${w.blockWeeks} weeks.`);
+  if (goalSeg && goalSeg.value !== null && goalSeg.value < cfg.modifiers.goalPaceSegment.minKm) gapsThatMatter.push(`Longest continuous stretch at goal pace inside a run of ${cfg.modifiers.goalPaceSegment.minRunKm} km or more: ${goalSeg.value} km (benchmark ${cfg.modifiers.goalPaceSegment.minKm} km).`);
+  if (inputs.context.expectedTempC === null) gapsThatMatter.push('Race-day temperature was not given: see temperature_scenarios.');
+  if (inputs.context.course === null) gapsThatMatter.push('Course profile was not given: treated as flat.');
+  if (inputs.nutrition.enabled && carbRuns === 0) gapsThatMatter.push('Fuelling is not logged (this says nothing about what the runner actually ate).');
+  const ratioUsed = typeof e2.inputs?.speed_ratio_used === 'number' ? e2.inputs.speed_ratio_used : null;
+  const plainLanguage = {
+    headline: `${pctOf(lk.probability)} modelled chance of finishing in ${hms(inputs.goalSeconds)} or faster ("${lk.label}" is just the band of that probability). Predicted finish ${hms(centralFinal)}; 8 in 10 outcomes fall between ${hms(lo)} and ${hms(hi)}.`,
+    driver: mods.cappedPct > 0.05
+      ? `Before the durability checks (heuristics, weak evidence) the estimate is ${hms(centralBeforeDurability)} with a ${pctOf(lkBefore.probability)} chance; the checks add ${durMin} min and take the chance to ${pctOf(lk.probability)}.`
+      : `No durability penalty was applied; the estimate is ${hms(centralFinal)}.`,
+    fitness: prior && e2.available && ratioUsed !== null ? `Against the prior marathon (${hms(prior.seconds)} on ${prior.run.date}) speed at the same heart rate is ${round((ratioUsed - 1) * 100, 1)}% ${ratioUsed >= 1 ? 'faster' : 'slower'}, which alone would give ${hms(e2.predictedSeconds!)}.` : null,
+    gaps_that_matter: gapsThatMatter,
+    confidence_note: 'The confidence percentage measures how complete the data is; it is not the chance of meeting the goal.',
+    validation: 'The model has been checked against one marathon only and its probabilities have not been calibrated across runners.',
+  };
+
   const result: ReadinessResult = {
     status: 'ok', as_of: asOf, mode, race,
     likelihood: { score_0_10: lk.score, probability: round(lk.probability, 3), label: lk.label },
@@ -369,6 +401,7 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
     confidence, estimators: est,
     modifiers: mods.results.map((m) => ({ check: m.check, value: m.value, benchmark: m.benchmark, applied_pct: m.appliedPct, status: m.status, evidence: m.evidence, ...(m.detail ? { detail: m.detail } : {}) })),
     adjustments: adjs.map((a) => ({ name: a.name, pct: round(a.pct, 2), evidence: 'weak' as const, detail: a.detail })),
+    temperature_scenarios: temperatureScenarios, plain_language: plainLanguage,
     benchmarks, block_comparison, data_gaps: dedupe(gaps), assumptions, caveats,
   };
   if (detail === 'full') result.workouts = workoutTable(inputs);

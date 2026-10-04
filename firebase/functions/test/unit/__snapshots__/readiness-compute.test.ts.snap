@@ -128,7 +128,7 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
       "value": 40.8,
     },
     {
-      "context": "a longest run of 25 km or more is associated with faster marathon finishes (PMC7496388)",
+      "context": "benchmark from the spec: a longest run of 25 km or more (the supporting study has not been verified)",
       "evidence": "moderate",
       "metric": "longest_run_km_12wk",
       "value": 12,
@@ -365,6 +365,18 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
       "value": null,
     },
   ],
+  "plain_language": {
+    "confidence_note": "The confidence percentage measures how complete the data is; it is not the chance of meeting the goal.",
+    "driver": "Before the durability checks (heuristics, weak evidence) the estimate is 4:27:01 with a 4% chance; the checks add 5.3 min and take the chance to 3%.",
+    "fitness": null,
+    "gaps_that_matter": [
+      "Race-day temperature was not given: see temperature_scenarios.",
+      "Course profile was not given: treated as flat.",
+      "Fuelling is not logged (this says nothing about what the runner actually ate).",
+    ],
+    "headline": "3% modelled chance of finishing in 3:45:00 or faster ("very unlikely" is just the band of that probability). Predicted finish 4:32:22; 8 in 10 outcomes fall between 4:01:07 and 5:03:36.",
+    "validation": "The model has been checked against one marathon only and its probabilities have not been calibrated across runners.",
+  },
   "prediction": {
     "central": "4:32:22",
     "central_before_durability": "4:27:01",
@@ -385,6 +397,28 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
     "name": "Chicago Marathon",
   },
   "status": "ok",
+  "temperature_scenarios": [
+    {
+      "central": "4:32:22",
+      "probability": 0.026,
+      "temp_c": 10,
+    },
+    {
+      "central": "4:32:22",
+      "probability": 0.026,
+      "temp_c": 15,
+    },
+    {
+      "central": "4:37:48",
+      "probability": 0.016,
+      "temp_c": 20,
+    },
+    {
+      "central": "4:43:15",
+      "probability": 0.01,
+      "temp_c": 25,
+    },
+  ],
 }
 `;
 
@@ -410,7 +444,7 @@ exports[`well-prepared runner, tagged half marathon, race in 14 days > matches t
       "value": 57.3,
     },
     {
-      "context": "a longest run of 25 km or more is associated with faster marathon finishes (PMC7496388)",
+      "context": "benchmark from the spec: a longest run of 25 km or more (the supporting study has not been verified)",
       "evidence": "moderate",
       "metric": "longest_run_km_12wk",
       "value": 34,
@@ -642,6 +676,18 @@ exports[`well-prepared runner, tagged half marathon, race in 14 days > matches t
       "value": null,
     },
   ],
+  "plain_language": {
+    "confidence_note": "The confidence percentage measures how complete the data is; it is not the chance of meeting the goal.",
+    "driver": "No durability penalty was applied; the estimate is 3:44:06.",
+    "fitness": null,
+    "gaps_that_matter": [
+      "Race-day temperature was not given: see temperature_scenarios.",
+      "Course profile was not given: treated as flat.",
+      "Fuelling is not logged (this says nothing about what the runner actually ate).",
+    ],
+    "headline": "54% modelled chance of finishing in 3:45:00 or faster ("toss-up" is just the band of that probability). Predicted finish 3:44:06; 8 in 10 outcomes fall between 3:31:44 and 3:56:28.",
+    "validation": "The model has been checked against one marathon only and its probabilities have not been calibrated across runners.",
+  },
   "prediction": {
     "central": "3:44:06",
     "central_before_durability": "3:44:06",
@@ -662,5 +708,27 @@ exports[`well-prepared runner, tagged half marathon, race in 14 days > matches t
     "name": "Chicago Marathon",
   },
   "status": "ok",
+  "temperature_scenarios": [
+    {
+      "central": "3:44:06",
+      "probability": 0.537,
+      "temp_c": 10,
+    },
+    {
+      "central": "3:44:06",
+      "probability": 0.537,
+      "temp_c": 15,
+    },
+    {
+      "central": "3:48:35",
+      "probability": 0.359,
+      "temp_c": 20,
+    },
+    {
+      "central": "3:53:03",
+      "probability": 0.224,
+      "temp_c": 25,
+    },
+  ],
 }
 `;

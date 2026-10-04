@@ -43,6 +43,10 @@ export const readinessShape = {
     runs_read_in_detail: z.object({ current_window: z.tuple([z.number(), z.number()]), prior_window: z.tuple([z.number(), z.number()]).nullable() }).describe('[read from raw streams, total] runs of 8 km or more in the last 6 weeks of the current block and of the prior block'),
     volume_based_repeat: hms.nullable().describe('prior marathon scaled by the change in Tanda training indices (cross-check only, not averaged in)'),
   }).optional(),
+  temperature_scenarios: z.array(z.object({ temp_c: z.number(), central: hms, probability: z.number() })).nullable().optional().describe('predicted finish and probability at race-day air temperatures; null when expected_temp_c was given'),
+  plain_language: z.object({
+    headline: z.string(), driver: z.string(), fitness: z.string().nullable(), gaps_that_matter: z.array(z.string()), confidence_note: z.string(), validation: z.string(),
+  }).describe('start the answer here: probability, range, biggest driver and the gaps that matter, in words').optional(),
   data_gaps: z.array(z.string()),
   assumptions: z.object({
     max_hr: z.number(), max_hr_source: z.enum(['user', 'observed', 'default']), max_hr_note: z.string().nullable(),
