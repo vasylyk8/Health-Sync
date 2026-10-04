@@ -4,22 +4,37 @@ import UIKit
 
 @main
 struct HealthSyncApp: App {
-    @StateObject private var model: AppModel
+    /// nil when a Release build cannot configure Firebase; the app then shows StartupUnavailableView
+    /// and never creates the model, observes HealthKit or syncs.
+    private let model: AppModel?
     @Environment(\.scenePhase) private var scenePhase
+    #if DEBUG
     private let benchMode = ProcessInfo.processInfo.arguments.contains("-healthBench")
+    #else
+    private let benchMode = false
+    #endif
 
     init() {
+        #if DEBUG
+        // Synthetic sources exist only in Debug builds; Release ignores these launch arguments.
         let args = ProcessInfo.processInfo.arguments
+        #else
+        let args: [String] = []
+        #endif
         let uiTesting = args.contains("-uiTesting")
         let scope = HealthTypes.scope(HealthTypes.loadCoverage())
         let backend: Backend
         let source: HealthSource
         let telemetry: Telemetry
-        if uiTesting || args.contains("-healthBench") || !FirebaseBackend.configure() {
+        if uiTesting || args.contains("-healthBench") {
             backend = FakeBackend(appleLinked: uiTesting && args.contains("-appleLinked"))
             source = FakeHealthSource()
             telemetry = NoTelemetry()
         } else {
+            guard FirebaseBackend.configure() else {
+                model = nil
+                return
+            }
             backend = FirebaseBackend()
             source = HealthKitSource(scope: scope)
             telemetry = FirebaseTelemetry()
@@ -60,29 +75,56 @@ struct HealthSyncApp: App {
                 }
             }
         }
-        _model = StateObject(wrappedValue: model)
+        self.model = model
     }
 
     var body: some Scene {
         WindowGroup {
-            #if DEBUG
-            if benchMode {
-                BenchView()
+            if let model {
+                #if DEBUG
+                if benchMode {
+                    BenchView()
+                } else {
+                    LiveRoot(model: model)
+                }
+                #else
+                LiveRoot(model: model)
+                #endif
             } else {
-                RootView()
-                    .environmentObject(model)
-                    .tint(Theme.accent)
+                StartupUnavailableView()
             }
-            #else
-            RootView()
-                .environmentObject(model)
-                .tint(Theme.accent)
-            #endif
         }
         .onChange(of: scenePhase) { _, phase in
+            guard let model else { return }
             if phase == .active, !benchMode { model.start() }
             if phase == .background { model.flushStats() }
         }
+    }
+}
+
+/// Observes the model for the app's lifetime (the App struct holds the strong reference).
+private struct LiveRoot: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        RootView()
+            .environmentObject(model)
+            .tint(Theme.accent)
+    }
+}
+
+struct StartupUnavailableView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("KROK is unavailable")
+                .font(.title2.bold())
+            Text("KROK couldn't start because its configuration is missing or invalid. Please update the app or reinstall it.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.background.ignoresSafeArea())
     }
 }
 

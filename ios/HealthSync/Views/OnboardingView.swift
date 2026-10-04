@@ -48,6 +48,7 @@ struct OnboardingView: View {
             .animation(change, value: onAccount)
             .padding(.bottom, 24)
             // UI tests cannot drive Apple's own sign-in sheet; this stands in for it (never shown otherwise).
+            #if DEBUG
             if onAccount, ProcessInfo.processInfo.arguments.contains("-uiTesting") {
                 Button("Continue (UI test)") {
                     Task { await model.linkAppleAccount(AppleSignInResult(idToken: "ui-test", nonce: "ui-test", authorizationCode: "ui-test")) }
@@ -56,6 +57,7 @@ struct OnboardingView: View {
                 .accessibilityIdentifier("uiTestSignIn")
                 .padding(.bottom, 24)
             }
+            #endif
         }
         .padding(.horizontal, Theme.margin)
     }

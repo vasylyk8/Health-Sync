@@ -1,74 +1,92 @@
-# App Store materials (drafts to review)
+# KROK App Store materials
 
-## Listing
-**Name:** KROK
-**Subtitle (30 chars):** Workout data for AI coaching
-**Category:** Health & Fitness (secondary: Productivity)
-**Age rating:** 17+ is not needed. Answer "None" to all content questions. Health data doesn't raise the rating.
-**Price:** Free
+Prepared October 3, 2026. Draft for the first public iPhone release; the final build is not ready. No Apple metadata was saved by this preparation. See the [release plan](app-store/RELEASE_PLAN.md), [privacy audit](app-store/PRIVACY_READINESS.md) and [Apple reviewer runbook](app-store/REVIEWER_RUNBOOK.md).
 
-**Promotional text:**
-Ask Claude or ChatGPT about your runs, rides and workouts, down to every heart rate reading and route, using your real Apple Health data.
+## Listing fields
 
-**Description:**
-KROK connects your Apple Health workouts to the AI assistant you already use, so you can ask questions like:
-• "How much time did I spend in heart rate zone 4 on my run yesterday?"
-• "Did my heart rate drift up in the second half of my long ride?"
-• "What was my fastest 5K this year, and how did I sleep the night before?"
+| Field | Proposed value | Status |
+| --- | --- | --- |
+| Name | KROK | Confirm saved record/name in Apple |
+| Subtitle | Your Health data for AI | Draft, within 30 characters |
+| Category | Health & Fitness | Proposed; optional secondary Productivity |
+| Price | Free | Existing release intent; confirm saved price schedule |
+| Availability | All supported storefronts except Russia and Belarus | Existing intent; enumerate Apple's actual territories before saving |
+| Age rating | Complete the current questionnaire and reconcile age-16 eligibility | Do not reuse the old blanket “None” answers |
+| Support URL | https://krok-1d60a.web.app/support | Public text retrieved; fresh check required before submission |
+| Privacy Policy URL | https://krok-1d60a.web.app/privacy | Public text retrieved; reconciliation open |
+| Marketing URL | https://krok-1d60a.web.app/ | Optional; verify final launch content |
+| Copyright | 2026 2ndOp Inc | Confirm publishing entity |
+| Support email | support@2ndopinions.ai | Matches current public pages |
 
-You get Apple's own workout summary, plus the full detail on request: every heart rate reading, speed, power and cadence, and your GPS route (start and end are hidden by default). The assistant can do exact calculations on it.
+Seller name comes from Apple's account. Publisher must confirm the legal entity, agreements and EU DSA trader status/contact information in Apple's secure fields. Do not reuse former personal contact details in public marketing copy.
 
-How it works
-1. Allow KROK to read your workouts (and daily and hourly summaries of sleep, heart rate and recovery) in Apple Health. Choose which extra types (nutrition, glucose, symptoms and more) to allow on Apple's sheet.
-2. Choose Claude or ChatGPT and follow three short steps to connect.
-3. Ask away. The assistant reads your data only when you ask.
+## Promotional text
 
-Private by design
-• Read-only: KROK never changes your Apple Health data.
-• Your data is stored encrypted in the EU and used only to answer your own questions.
-• Nothing is shared until you connect an assistant, and you can disconnect at any time.
-• You choose which extra data groups (nutrition, glucose, symptoms, cycle, medications…) to share, and switching one off deletes it.
-• Delete all your data from our servers with one tap.
-• No ads, and your health data is never sold or used for advertising.
+Ask Claude or ChatGPT about your workouts, heart rate, routes, sleep and recovery using the Apple Health data you choose to share.
 
-Requirements: ChatGPT connections need ChatGPT Plus or higher with Developer Mode. Claude works on all plans (the free plan allows one custom connector).
+## Description
 
-KROK is not a medical device and doesn't provide medical advice.
+KROK connects your Apple Health data to Claude or ChatGPT so you can ask questions about your training and recovery.
 
-**Keywords (100 chars):** apple health,claude,chatgpt,ai,workouts,running,heart rate,gps,fitness,coach,export,mcp,zones
+Ask questions such as:
+• What were the kilometre splits in my latest run?
+• How much time did I spend in each heart rate zone?
+• How did I sleep before my longest workout?
+• How has my training load changed over six weeks?
 
-**Support URL:** `https://krok-1d60a.web.app/support` · **Marketing URL:** optional · **Privacy Policy URL:** `https://krok-1d60a.web.app/privacy`
+WORKOUTS AND RECOVERY
+Read Apple's recorded workout summaries and available measurements such as heart rate, speed, power and cadence. Explore GPS routes, sleep, activity and recovery summaries. Available detail depends on what your devices and apps recorded and what you allow KROK to read. Incomplete data is identified in tool results.
 
-**Seller / trader info (EU DSA trader: yes):** 2ndOp Inc, 1 Yule Ave, Toronto, ON M6S 1E7, Canada · vasylyk@outlook.com
+HOW IT WORKS
+1. Connect Apple Health and choose the data types KROK may read.
+2. Sign in with Apple and let your data sync to KROK.
+3. Connect your assistant and approve its read-only access.
+4. Ask questions in Claude or ChatGPT.
 
-**Screenshots:** generated by the UI tests (GitHub Actions → ios-ci → artifact `ios-test-results/screenshots`): 01-Welcome, 02-Home, 03-Steps, 04-Connected (6.9" iPhone). Consider adding captions in App Store Connect.
+YOUR DATA, YOUR CHOICES
+KROK never changes your Apple Health records. Apple Health lets you allow or deny individual types. KROK's Your data settings let you turn additional groups off, which removes that group's server data. Medications are off by default and require a separate choice.
 
-## App Review notes (paste into "Notes")
-KROK lets users analyze their own Apple Health data with the AI assistant of their choice (Anthropic's Claude or OpenAI's ChatGPT), which they explicitly connect. The purpose is health and fitness management: users ask questions about their workouts (pace, heart rate zones, routes) and recovery, and get answers grounded in their own data.
+KROK stores the data you allow on its servers before you connect an assistant. Public OAuth routes hide their first and last 300 metres by default; exact endpoints require separate permission and an explicit request. Existing private-link connections use a different authorization model.
 
-- Data is read-only and used only to provide this service to the user. It is not used for advertising, sold, or used for data mining. No data is shared until the user connects an assistant and consents to the named recipient. Apple-linked accounts use public OAuth with explicit read-only permissions; existing anonymous accounts can use a revocable private link.
-- The user can disconnect an assistant (access stops immediately) or delete all data (••• menu → Delete All My Data).
-- Workouts (including their GPS routes), daily/hourly summaries of fitness and recovery metrics, and the enabled additional types are requested from Apple Health. Further groups of Apple Health data (nutrition and alcohol, heart alerts, glucose/insulin/blood pressure, mood and symptoms, menstrual cycle, medications, profile) are separate switches in ••• → Your data (on by default, except medications, which is off until the user turns it on); Apple Health's permission sheet lists each type and the user can deny any, and each is used by specific features (for example glucose around a workout, nutrition and recovery). The AI is instructed to describe data and trends only, with no diagnosis or medical advice. Clinical records, reproductive and sexual-health data and questionnaires are not read. Data is stored encrypted in the EU (Google Cloud, Belgium) and deleted automatically after a year of inactivity.
-- Onboarding is three screens: Welcome (Connect to Apple Health), an account page (Sign in with Apple, required) and the upload screen. Syncing begins as soon as Health access is granted, while the account page is shown.
-- To test without an AI account, the app works fully up to the connection step. Adding the connector on claude.ai (free account) takes about a minute: Settings → Connectors → Add custom connector → paste the link.
-- HealthKit data is not stored in iCloud.
+Disconnect an assistant or delete your KROK account and server data from the app. Deletion does not change Apple Health or remove information an assistant already received. Your health data is not sold or used for advertising.
 
-## App Privacy ("nutrition label") answers
-| Data type | Collected | Linked to user | Tracking | Purpose |
-|---|---|---|---|---|
-| Health & Fitness → Health | Yes | Yes (anonymous account ID) | No | App Functionality |
-| Health & Fitness → Fitness | Yes | Yes | No | App Functionality |
-| Sensitive Info (health conditions, symptoms, medications, glucose, cycle data) | Yes, only if the user enables the group | Yes | No | App Functionality |
-| Location → Precise Location (GPS routes of workouts) | Yes | Yes | No | App Functionality |
-| Identifiers → User ID | Yes (Firebase ID and linked Apple account identifier) | Yes | No | App Functionality |
-| Usage Data → Product Interaction | Yes (onboarding, sync and assistant/tool usage; no Health values or arguments) | Yes (pseudonymous KROK account) | No | Analytics |
-| Diagnostics → Crash Data | Yes | No | No | App Functionality |
-| Contact info, contacts, browsing, purchases | Not requested from Apple by KROK; review Firebase identity-token handling before attesting | | | |
+REQUIREMENTS
+An iPhone running iOS 17 or later and an Apple Account are required. Claude or ChatGPT is a separate service with its own account, availability, terms and plan requirements. Custom ChatGPT connections require developer mode on an eligible plan. Check KROK's connection instructions for the supported setup.
 
-## Export compliance
-The app uses only standard HTTPS encryption (exempt). `ITSAppUsesNonExemptEncryption` = NO is already set.
+KROK is free at this release. It is not a medical device and does not provide diagnosis, treatment or medical advice. Consult a qualified healthcare professional before making medical decisions.
 
-## Notes on sensitive groups (review before submission)
-- Each optional group can be hidden from the app for the first submission without removing code (hide it in `coverage.json` `categories`, or remove its rows from the Your data screen). Consider launching with `nutrition`, `heart`, `devices` and `profile` visible and adding `mind`, `cycle` and `medications` later if App Review pushes back.
-- Permission strings: `NSHealthShareUsageDescription` lists the groups and says each is off until switched on (see `ios/project.yml`).
-- Screenshots and the description must not promise diagnosis or medical advice.
+## Keywords
+
+apple health,claude,chatgpt,workout,running,heart rate,gps,fitness,sleep,recovery,export,mcp
+
+## Screenshots and icon
+
+Use PR30 branding and the existing 1024-pixel app icon. Capture the final release candidate using synthetic data and current native screens:
+
+1. Welcome: “Your Apple Health, meet your AI.”
+2. Synced home: workouts and recovery ready for your assistant.
+3. Apple-linked assistant setup: approve read-only access.
+4. Your data: choose additional groups.
+5. Account/privacy controls: disconnect or delete.
+
+UI tests already capture Welcome, Account, Home, medal screens and Apple OAuth setup. They also capture legacy private-link screens: do not use these to represent new-user OAuth onboarding. Simulator selection is dynamic; inspect actual image sizes against Apple's current requirements. The old fixed 6.9-inch claim was not verified. No real health records, private links or unsupported medical claims.
+
+## Draft App Review notes
+
+KROK is an iPhone health and fitness data app. It reads the Apple Health types a user permits and syncs them to KROK's backend so assistants explicitly connected by that user can answer questions about workouts and recovery. It does not write to HealthKit. Its health outbox is excluded from backup. It is not a medical device and provides no diagnosis or treatment.
+
+New-user flow: Connect to Apple Health → Sign in with Apple → upload/home → select Claude or ChatGPT → add the public MCP endpoint using OAuth → approve read-only permissions. Sync starts after Health permission is granted, while the Apple account page is shown. The assistant must authorize the same Apple-linked KROK account.
+
+Core data includes workouts, recorded measurements, routes and daily/hourly activity and recovery summaries. Additional groups are nutrition/alcohol, heart alerts/lung function, glucose/insulin/blood pressure, mood/symptoms, menstrual cycle and profile. These start enabled but Apple Health controls permission per type. Medications start disabled and require the user to enable sharing. Clinical records, pregnancy/contraception data, clinical questionnaires and ECG waveforms are not requested.
+
+The authorization page identifies the assistant and its requested permissions. Allow access is explicit. Public OAuth exact route endpoints require a separate unchecked consent option and an explicit tool request. Disconnect revokes assistant access. More → Delete All My Data initiates account deletion, revokes Apple authorization for linked accounts, cuts connector access and queues server erasure. Apple Health records are unchanged. Legacy private links remain available to existing accounts and have different scope restrictions.
+
+Before pasting: add the successfully rehearsed native review route, secure access details if applicable and review contact from the [reviewer runbook](app-store/REVIEWER_RUNBOOK.md). These notes alone are insufficient to submit. Directory credentials do not sign into the native app.
+
+## Privacy, age rating and export compliance
+
+Finalize App Privacy answers using [PRIVACY_READINESS.md](app-store/PRIVACY_READINESS.md), the [Firebase inventory](app-store/SDK_DISCLOSURES.md), and the exact release archive/SDK configuration. The old claims that crash data is unlinked and no contact data is collected are not established. Privacy labels and privacy manifests are separate requirements.
+
+Complete the current rating questionnaire honestly, including health/wellness/medical content where applicable. Resolve the terms' age-16 eligibility through Apple's supported rating/override options; do not invent a rating before inspecting the current portal.
+
+ITSAppUsesNonExemptEncryption = false is configured. Publisher must verify qualifying exempt encryption and complete Apple's export questions; the setting alone is not a legal determination.
