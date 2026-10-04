@@ -5,6 +5,7 @@ struct ConnectView: View {
     @EnvironmentObject var model: AppModel
     @State private var selected: AIProvider?
     @State private var confirmDelete = false
+    @State private var confirmLogOut = false
     /// The race medal's finish-time picker is open (the number and sync status step aside).
     @State private var editingGoal = false
 
@@ -25,6 +26,11 @@ struct ConnectView: View {
         }
         .sheet(isPresented: $model.showBenchmark, onDismiss: { model.finishSpeedTest() }) {
             speedTest
+        }
+        .confirmationDialog(Copy.LogOut.title, isPresented: $confirmLogOut, titleVisibility: .visible) {
+            Button(Copy.LogOut.confirm) { Task { await model.logOut() } }
+        } message: {
+            Text(Copy.LogOut.message)
         }
         .confirmationDialog(Copy.Delete.title, isPresented: $confirmDelete, titleVisibility: .visible) {
             Button(Copy.Delete.confirm, role: .destructive) { Task { await model.deleteAllData() } }
@@ -48,6 +54,9 @@ struct ConnectView: View {
                 }
                 if Theme.isInternalBuild {
                     Button { model.runSpeedTest() } label: { Label(Copy.Menu.speedTest, systemImage: "speedometer") }
+                }
+                if model.appleAccountLinked {
+                    Button { confirmLogOut = true } label: { Label(Copy.Menu.logOut, systemImage: "rectangle.portrait.and.arrow.right") }
                 }
                 Button { confirmDelete = true } label: { Label(Copy.Menu.deleteAll, systemImage: "trash") }
             } label: {
