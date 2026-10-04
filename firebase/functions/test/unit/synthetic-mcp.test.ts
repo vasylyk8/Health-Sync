@@ -100,6 +100,24 @@ describe('opt-in data', () => {
     } finally { delete user.raceGoals; }
   });
 
+  it('assess_race_readiness answers the synthetic runner with an honest status, never an invented score', async () => {
+    const user = s.env.meta.users.get(s.env.uid)!;
+    user.raceGoals = { 'synthetic-marathon-2024': { raceName: 'Synthetic Marathon', raceDate: '2024-04-14', goalSeconds: 13_500, updatedAt: 1 } };
+    try {
+      const r = await ask('assess_race_readiness', { as_of_date: '2024-03-04' });
+      expect(['ok', 'insufficient_data']).toContain(r.status);
+      expect(r).toMatchObject({ as_of: '2024-03-04', race: { id: 'synthetic-marathon-2024', goal_time: '3:45:00' } });
+      expect(r.caveats.length).toBeGreaterThan(0);
+      if (r.status === 'insufficient_data') {
+        expect(r.likelihood).toBeUndefined();
+        expect(r.data_gaps.length).toBeGreaterThan(0);
+      } else {
+        expect(r.likelihood.score_0_10).toBeGreaterThanOrEqual(0);
+        expect(r.confidence.components).toHaveLength(9);
+      }
+    } finally { delete user.raceGoals; }
+  });
+
   it('glucose and detailed health events are not offered in public v1 (the data is stored, the tools are off)', async () => {
     const names = (await s.client.listTools()).tools.map((t) => t.name);
     expect(names).not.toContain('get_glucose');
