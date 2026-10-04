@@ -143,7 +143,7 @@ final class AppModel: ObservableObject {
             }
             // HealthKit never reveals which read permissions were granted; we proceed either way
             // and show "No readable Health data found" later if nothing arrives.
-            // First connection: the default data groups are on (changeable in ••• → Your data).
+            // First connection: the default data groups are on (change them in Apple Health).
             let firstChoice = !consent.hasChoice
             consent.persist()
             enabledCategories = consent.enabled

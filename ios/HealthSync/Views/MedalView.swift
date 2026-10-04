@@ -96,23 +96,14 @@ private struct MedalSide: View {
 
     var body: some View {
         ZStack {
-            // The ribbon carries on up past the top of the medal, to the top of the screen, so that the medal
-            // seems to hang from above the phone (Home lets it overflow its scroll view).
-            ZStack {
-                Rectangle().fill(Theme.ink)
-                if !back {
-                    HStack(spacing: 12) {
-                        Rectangle().fill(Theme.background.opacity(0.35)).frame(width: 6)
-                        Rectangle().fill(Theme.background.opacity(0.35)).frame(width: 6)
-                    }
-                }
-            }
-            .frame(width: 44, height: 700)
-            .position(x: 120, y: 64 - 350)
             Canvas { context, _ in
                 let ink = GraphicsContext.Shading.color(Theme.ink)
                 // Ribbon: a dark band with two light stripes, ending in a small ring.
-                context.fill(Path(CGRect(x: 98, y: 0, width: 44, height: 64)), with: ink)
+                // The top of the band fades out, so it blends into the screen instead of ending in a hard line.
+                let band = GraphicsContext.Shading.linearGradient(
+                    Gradient(stops: [.init(color: Theme.ink.opacity(0), location: 0), .init(color: Theme.ink, location: 0.5)]),
+                    startPoint: CGPoint(x: 120, y: 0), endPoint: CGPoint(x: 120, y: 64))
+                context.fill(Path(CGRect(x: 98, y: 0, width: 44, height: 64)), with: band)
                 if !back {
                     for x in [108.0, 126.0] {
                         context.fill(Path(CGRect(x: x, y: 0, width: 6, height: 64)), with: .color(Theme.background.opacity(0.35)))

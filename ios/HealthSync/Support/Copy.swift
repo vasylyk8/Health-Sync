@@ -25,12 +25,6 @@ enum Copy {
         static let signIn = "Sign in with Apple"
     }
 
-    enum Choices {
-        static let title = "Your data"
-        static let header = "Data your assistant can see"
-        static let footer = "Apple Health asks for each group separately, and you can also change it in Apple Health. Switching a group off here deletes its data from KROK’s servers. Assistants describe your data and trends; they don’t give medical advice."
-    }
-
     enum Home {
         static let moreLabel = "More"
         static let estimating = "Estimating time left…"
@@ -50,7 +44,6 @@ enum Copy {
     }
 
     enum Menu {
-        static let yourData = "Your data"
         static let help = "Help & Support"
         static let privacy = "Privacy Policy"
         static let deleteAll = "Delete All My Data"
@@ -90,19 +83,24 @@ enum Copy {
             "\(name) will immediately lose access. You can also remove the KROK connector in \(name)’s settings."
         }
         static func authorizeTitle(_ name: String) -> String { "Authorize KROK in \(name)" }
-        static func oauthLead(_ name: String) -> String {
-            "Add KROK to \(name) to ask about your workouts, sleep and recovery. It takes about a minute."
-        }
         static let oauthCopyTitle = "Copy your KROK link"
-        static func oauthCopyDetail(_ name: String) -> String { "You’ll paste it into \(name)." }
-        static func oauthAddTitle(_ name: String) -> String { "Add it in \(name)" }
-        static func oauthAddDetail(chatGPT: Bool) -> String {
-            chatGPT
-                ? "Turn on Developer mode, create KROK with the link, and choose OAuth sign-in."
-                : "Customize → Connectors → Add custom connector. Paste the link, and choose OAuth sign-in."
+        static func oauthOpenTitle(chatGPT: Bool) -> String { chatGPT ? "Open ChatGPT’s plugins" : "Open Claude’s connectors" }
+        static func oauthOpenDetail(chatGPT: Bool) -> String {
+            chatGPT ? "At the top right, tap “+”, then choose:" : "At the top right, tap “+ Add”, then choose:"
         }
+        static func oauthChoice(chatGPT: Bool) -> String { chatGPT ? "Create custom MCP server" : "Add custom connector" }
+        static let oauthFormTitle = "Fill in the form"
+        static func oauthFormDetail(chatGPT: Bool) -> String {
+            chatGPT ? "Keep “Server URL” selected under Connection. Then tap Create." : "Then tap Add."
+        }
+        static let oauthName = "Name"
+        static let oauthAppName = "KROK"
+        static func oauthLinkField(chatGPT: Bool) -> String { chatGPT ? "Server URL" : "Connection" }
+        static let oauthYourLink = "Your KROK link"
+        static let oauthAuthField = "Authentication"
+        static let oauthAuthValue = "OAuth"
         static let oauthSignInTitle = "Sign in with Apple"
-        static func oauthSignInDetail(_ name: String) -> String { "Use the same Apple Account. You choose what \(name) can read." }
+        static let oauthSignInDetail = "Use the same Apple Account, then tap Allow access."
         static let copy = "Copy"
         static func connectedTitle(_ name: String) -> String { "\(name) is connected" }
         static func connectedLead(_ name: String) -> String { "\(name) can read the Apple Health data you chose to share." }
