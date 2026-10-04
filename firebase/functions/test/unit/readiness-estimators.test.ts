@@ -316,3 +316,40 @@ describe('E1s: an earlier race', () => {
     expect(estimateEarlierRace({ ...base, massNow: 60, massThen: 85, now: none, then: none }).inputs).toMatchObject({ weight_adjust_pct: -4 });
   });
 });
+
+describe('E2 at marathon effort', () => {
+  const fit = (speedAt: number) => ({ ok: true as const, n: 30, slope: 0.1, intercept: 0, speedAt, hrSd: 0.04 });
+  const bad = { ok: false as const, n: 3, reason: '3 qualifying splits (need 15)' };
+  const base = { cfg, priorSeconds: 14_340, representative: true, reasons: [] as string[] };
+
+  it('blends the aerobic and the marathon-effort speed ratios', () => {
+    const r = estimateE2({ ...base, now: fit(3.12), prior: fit(3.0), nowM: fit(3.18), priorM: fit(3.0) });
+    expect(r.rEff).toBeCloseTo(1.04, 6);
+    expect(r.rMarathon).toBeCloseTo(1.06, 6);
+    expect(r.estimate.predictedSeconds).toBeCloseTo(14_340 / 1.05, 3);
+    expect(r.estimate.sigmaPct).toBe(4);
+    expect(r.estimate.inputs).toMatchObject({ speed_ratio_used: 1.05 });
+  });
+  it('adds uncertainty when the two ratios differ by more than 3%', () => {
+    const r = estimateE2({ ...base, now: fit(3.0), prior: fit(3.0), nowM: fit(3.18), priorM: fit(3.0) });
+    expect(r.estimate.sigmaPct).toBe(5);
+    expect(r.estimate.notes.join(' ')).toContain('differ by more than 3%');
+  });
+  it('uses whichever comparison exists, and is unchanged when there is no marathon-effort data', () => {
+    const only = estimateE2({ ...base, now: bad, prior: bad, nowM: fit(3.18), priorM: fit(3.0) });
+    expect(only.estimate.available).toBe(true);
+    expect(only.estimate.predictedSeconds).toBeCloseTo(14_340 / 1.06, 3);
+    expect(only.estimate.notes.join(' ')).toContain('only the marathon-effort comparison');
+    const aerobic = estimateE2({ ...base, now: fit(3.12), prior: fit(3.0), nowM: bad, priorM: bad });
+    expect(aerobic.estimate.predictedSeconds).toBeCloseTo(14_340 / 1.04, 3);
+    expect(aerobic.estimate.notes.join(' ')).toContain('No marathon-effort comparison');
+    expect(estimateE2({ ...base, now: bad, prior: bad, nowM: bad, priorM: bad }).estimate.available).toBe(false);
+  });
+  it('selects only splits at marathon effort for the marathon-effort fit', () => {
+    const hard = raw('long1', 20, { split: { pace: (i) => 360 - i * 4, hr: (i) => 160 + (i % 6) * 2.5, gain: 2 } });
+    const pts = efficiencyPoints([hard], 190, cfg, cfg.e2.marathonEffort.hrBand);
+    expect(pts.length).toBeGreaterThan(0);
+    expect(pts.every((p) => p.hrFraction >= 0.82 && p.hrFraction <= 0.92)).toBe(true);
+    expect(efficiencyPoints([hard], 190, cfg).length).toBe(0); // none are in the aerobic 65-82% band
+  });
+});

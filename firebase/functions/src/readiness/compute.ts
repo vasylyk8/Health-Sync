@@ -115,7 +115,12 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
   // ---- E2: efficiency-adjusted repeat of the prior marathon -------------------------------------------------------
   const nowEff = fitSpeedAtHr(efficiencyPoints(analysedRaw(inputs, inputs.runs.filter((r) => inWindow(r, windowStart(asOf, w.efficiencyWeeks), asOf))), maxHr, cfg), cfg);
   const priorEff = prior ? fitSpeedAtHr(efficiencyPoints(analysedRaw(inputs, inputs.runs.filter((r) => inWindow(r, windowStart(priorBlockEnd!, w.efficiencyWeeks), priorBlockEnd!))), maxHr, cfg), cfg) : ({ ok: false, n: 0, reason: 'no prior marathon' } as const);
-  const e2res = estimateE2({ cfg, priorSeconds: prior?.seconds ?? null, priorDate: priorDate ?? undefined, representative: rep?.representative ?? true, reasons: rep?.reasons ?? [], now: nowEff, prior: priorEff });
+  // The same comparison at marathon effort, from the long runs of each block.
+  const me = cfg.e2.marathonEffort;
+  const fitM = (start: string, end: string) => fitSpeedAtHr(efficiencyPoints(analysedRaw(inputs, inputs.runs.filter((r) => inWindow(r, start, end))), maxHr, cfg, me.hrBand), cfg, { predictAt: me.predictAt, minSplits: me.minSplits, minHrSd: me.minHrSd });
+  const nowM = fitM(windowStart(asOf, w.efficiencyWeeks), asOf);
+  const priorM = prior ? fitM(windowStart(priorBlockEnd!, w.efficiencyWeeks), priorBlockEnd!) : ({ ok: false, n: 0, reason: 'no prior marathon' } as const);
+  const e2res = estimateE2({ cfg, priorSeconds: prior?.seconds ?? null, priorDate: priorDate ?? undefined, representative: rep?.representative ?? true, reasons: rep?.reasons ?? [], now: nowEff, prior: priorEff, nowM, priorM });
   const e2 = e2res.estimate;
   if (inputs.priorDisabled) e2.notes = ['Prior marathon comparison disabled by the caller.'];
 
@@ -329,6 +334,7 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
     weekly_km_now_vs_prior: [round(avgKm12), priorKm12 !== null ? round(priorKm12) : null] as [number, number | null],
     runs_30k_now_vs_prior: [runs30k, priorRuns30] as [number, number | null],
     speed_at_75pct_hrmax_ratio: e2res.rEff !== null ? round(e2res.rEff, 3) : null,
+    speed_at_marathon_effort_ratio: e2res.rMarathon !== null ? round(e2res.rMarathon, 3) : null,
     volume_based_repeat: volumeRepeatSec !== null ? hms(volumeRepeatSec) : null,
     body_mass_kg_now_vs_prior: [massNow !== null ? round(massNow) : null, massPrior !== null ? round(massPrior) : null] as [number | null, number | null],
   };

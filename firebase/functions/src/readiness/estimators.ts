@@ -180,7 +180,7 @@ export interface EfficiencyPoint {
 }
 
 /** Splits of qualifying steady, flat, aerobic-HR runs: (HR as fraction of max, speed m/s). */
-export function efficiencyPoints(runs: RunRaw[], maxHr: number, cfg: ReadinessConfig): EfficiencyPoint[] {
+export function efficiencyPoints(runs: RunRaw[], maxHr: number, cfg: ReadinessConfig, band: [number, number] = cfg.e2.efficiency.hrBand): EfficiencyPoint[] {
   const e = cfg.e2.efficiency;
   const out: EfficiencyPoint[] = [];
   for (const run of runs) {
@@ -193,7 +193,7 @@ export function efficiencyPoints(runs: RunRaw[], maxHr: number, cfg: ReadinessCo
     for (const sp of full) {
       if (sp.avg_hr === null || sp.elevation_gain_m === null || sp.elevation_gain_m >= e.maxGainPerKm || sp.pace_seconds_per_unit <= 0) continue;
       const f = sp.avg_hr / maxHr;
-      if (f >= e.hrBand[0] && f <= e.hrBand[1]) out.push({ hrFraction: f, speed: 1000 / sp.pace_seconds_per_unit });
+      if (f >= band[0] && f <= band[1]) out.push({ hrFraction: f, speed: 1000 / sp.pace_seconds_per_unit });
     }
   }
   return out;
@@ -202,43 +202,66 @@ export function efficiencyPoints(runs: RunRaw[], maxHr: number, cfg: ReadinessCo
 export type EfficiencyFit = { ok: true; n: number; slope: number; intercept: number; speedAt: number; hrSd: number } | { ok: false; n: number; reason: string };
 
 /** Least-squares speed = a + b x HR, evaluated at `cfg.e2.efficiency.predictAt` of max HR. */
-export function fitSpeedAtHr(points: EfficiencyPoint[], cfg: ReadinessConfig): EfficiencyFit {
+export function fitSpeedAtHr(points: EfficiencyPoint[], cfg: ReadinessConfig, o: { predictAt?: number; minSplits?: number; minHrSd?: number } = {}): EfficiencyFit {
   const e = cfg.e2.efficiency;
+  const minSplits = o.minSplits ?? e.minSplitsPerBlock;
+  const minHrSd = o.minHrSd ?? e.minHrSd;
   const n = points.length;
-  if (n < e.minSplitsPerBlock) return { ok: false, n, reason: `${n} qualifying splits (need ${e.minSplitsPerBlock})` };
+  if (n < minSplits) return { ok: false, n, reason: `${n} qualifying splits (need ${minSplits})` };
   const xs = points.map((p) => p.hrFraction);
   const ys = points.map((p) => p.speed);
   const mx = mean(xs)!;
   const my = mean(ys)!;
   const hrSd = sd(xs)!;
-  if (hrSd < e.minHrSd) return { ok: false, n, reason: `heart rate varies too little across splits (sd ${(hrSd * 100).toFixed(1)}% of max) to fit speed against it` };
+  if (hrSd < minHrSd) return { ok: false, n, reason: `heart rate varies too little across splits (sd ${(hrSd * 100).toFixed(1)}% of max) to fit speed against it` };
   const sxx = xs.reduce((a, x) => a + (x - mx) ** 2, 0);
   const sxy = xs.reduce((a, x, i) => a + (x - mx) * (ys[i]! - my), 0);
   const slope = sxy / sxx;
   if (!(slope > 0)) return { ok: false, n, reason: 'speed does not rise with heart rate in these splits, so the fit is not usable' };
   const intercept = my - slope * mx;
-  return { ok: true, n, slope, intercept, speedAt: intercept + slope * e.predictAt, hrSd };
+  return { ok: true, n, slope, intercept, speedAt: intercept + slope * (o.predictAt ?? e.predictAt), hrSd };
 }
 
-/** Marathon repeat adjusted for the change in speed at a fixed aerobic heart rate between the two blocks. */
-export function estimateE2(args: { cfg: ReadinessConfig; priorSeconds: number | null; priorDate?: string; representative: boolean; reasons: string[]; now: EfficiencyFit; prior: EfficiencyFit }): { estimate: Estimate; rEff: number | null } {
+/**
+ * Marathon repeat adjusted for the change in speed at a fixed heart rate between the two blocks: at an aerobic heart rate (75% of
+ * max) and, when both blocks have enough long-run splits there, at marathon effort (87%). The two ratios are blended; a gap between
+ * them widens the estimate. Either one alone is used when the other cannot be fitted.
+ */
+export function estimateE2(args: { cfg: ReadinessConfig; priorSeconds: number | null; priorDate?: string; representative: boolean; reasons: string[]; now: EfficiencyFit; prior: EfficiencyFit; nowM?: EfficiencyFit; priorM?: EfficiencyFit }): { estimate: Estimate; rEff: number | null; rMarathon: number | null } {
   const { cfg, now, prior } = args;
+  const me = cfg.e2.marathonEffort;
   const base = { name: 'E2_prior_marathon', predictedSeconds: null, sigmaPct: null };
-  if (args.priorSeconds === null) return { estimate: { ...base, available: false, inputs: {}, notes: ['No prior marathon found in the last 36 months.'] }, rEff: null };
-  if (!now.ok || !prior.ok) {
+  if (args.priorSeconds === null) return { estimate: { ...base, available: false, inputs: {}, notes: ['No prior marathon found in the last 36 months.'] }, rEff: null, rMarathon: null };
+  const r75 = now.ok && prior.ok ? now.speedAt / prior.speedAt : null;
+  const rM = args.nowM?.ok && args.priorM?.ok ? args.nowM.speedAt / args.priorM.speedAt : null;
+  if (r75 === null && rM === null) {
     const why = [!now.ok ? `current block: ${now.reason}` : null, !prior.ok ? `prior block: ${prior.reason}` : null].filter(Boolean).join('; ');
-    return { estimate: { ...base, available: false, inputs: { prior_marathon: hms(args.priorSeconds) }, notes: [`Efficiency comparison unavailable: ${why}.`] }, rEff: null };
+    return { estimate: { ...base, available: false, inputs: { prior_marathon: hms(args.priorSeconds) }, notes: [`Efficiency comparison unavailable: ${why}.`] }, rEff: null, rMarathon: null };
   }
-  const rEff = now.speedAt / prior.speedAt;
-  const sigma = cfg.e2.sigmaPct + (args.representative ? 0 : cfg.e2.nonRepresentativeSigmaAdd);
+  const rUsed = r75 !== null && rM !== null ? (1 - me.blend) * r75 + me.blend * rM : (r75 ?? rM)!;
+  let sigma = cfg.e2.sigmaPct + (args.representative ? 0 : cfg.e2.nonRepresentativeSigmaAdd);
   const notes = args.representative ? [] : [`Prior result may understate fitness (${args.reasons.join('; ')}).`];
+  if (r75 !== null && rM !== null) {
+    notes.push(`Speed at the same heart rate vs the prior block: ${round1((r75 - 1) * 100)}% at 75% of max HR, ${round1((rM - 1) * 100)}% at marathon effort (87%); blended.`);
+    if (Math.abs(rM / r75 - 1) * 100 > me.disagreementPct) {
+      sigma += me.disagreementSigmaAdd;
+      notes.push('The two comparisons differ by more than 3%, which adds uncertainty.');
+    }
+  } else if (r75 === null) notes.push('The aerobic (75%) comparison was not possible; only the marathon-effort comparison is used.');
+  else if (args.nowM && args.priorM) notes.push(`No marathon-effort comparison: ${[!args.nowM.ok ? `current block: ${args.nowM.reason}` : null, !args.priorM.ok ? `prior block: ${args.priorM.reason}` : null].filter(Boolean).join('; ')}.`);
   return {
     estimate: {
-      ...base, available: true, predictedSeconds: args.priorSeconds / rEff, sigmaPct: sigma,
-      inputs: { prior_marathon: hms(args.priorSeconds), prior_date: args.priorDate ?? null, speed_ratio_at_75pct_hrmax: Math.round(rEff * 1000) / 1000, splits_now: now.n, splits_prior: prior.n, representative: args.representative },
+      ...base, available: true, predictedSeconds: args.priorSeconds / rUsed, sigmaPct: sigma,
+      inputs: {
+        prior_marathon: hms(args.priorSeconds), prior_date: args.priorDate ?? null,
+        ...(r75 !== null ? { speed_ratio_at_75pct_hrmax: Math.round(r75 * 1000) / 1000, splits_now: now.ok ? now.n : 0, splits_prior: prior.ok ? prior.n : 0 } : {}),
+        ...(rM !== null ? { speed_ratio_at_marathon_effort: Math.round(rM * 1000) / 1000, splits_now_marathon_effort: args.nowM!.n, splits_prior_marathon_effort: args.priorM!.n } : {}),
+        speed_ratio_used: Math.round(rUsed * 1000) / 1000, representative: args.representative,
+      },
       notes,
     },
-    rEff,
+    rEff: r75,
+    rMarathon: rM,
   };
 }
 

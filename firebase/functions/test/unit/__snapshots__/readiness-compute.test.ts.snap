@@ -169,6 +169,7 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
       null,
     ],
     "speed_at_75pct_hrmax_ratio": null,
+    "speed_at_marathon_effort_ratio": null,
     "volume_based_repeat": null,
     "weekly_km_now_vs_prior": [
       40.8,
@@ -439,6 +440,7 @@ exports[`well-prepared runner, tagged half marathon, race in 14 days > matches t
       null,
     ],
     "speed_at_75pct_hrmax_ratio": null,
+    "speed_at_marathon_effort_ratio": null,
     "volume_based_repeat": null,
     "weekly_km_now_vs_prior": [
       57.3,
