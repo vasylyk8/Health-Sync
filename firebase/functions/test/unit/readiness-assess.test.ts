@@ -216,8 +216,15 @@ describe('MCP registration', () => {
     expect(toolScopes('assess_race_readiness')).toEqual(['health:workouts:read', 'health:daily:read']);
     expect(SERVER_INSTRUCTIONS).toMatch(/assess_race_readiness/);
     expect(SERVER_INSTRUCTIONS).toMatch(/do not prescribe training/);
+    // Routing: the rule leads the instructions, the tool leads with its trigger, and the neighbouring tools point to it.
+    expect(SERVER_INSTRUCTIONS.startsWith('ROUTING:')).toBe(true);
+    expect(SERVER_INSTRUCTIONS).toMatch(/call assess_race_readiness FIRST/);
     const tool = (await s.client.listTools()).tools.find((t) => t.name === 'assess_race_readiness')!;
     expect(tool.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    expect(tool.description).toMatch(/^USE THIS FIRST for questions like "am I in 3:45 shape for Chicago"/);
+    const others = (await s.client.listTools()).tools.filter((t) => ['get_race_goal', 'get_training_load'].includes(t.name));
+    expect(others).toHaveLength(2);
+    expect(others.every((t) => /assess_race_readiness/.test(t.description ?? ''))).toBe(true);
     expect(tool.description).toMatch(/not a guarantee, medical assessment, or training prescription/);
     expect(tool.description).toMatch(/more than 6 weeks away/);
     expect(Object.keys(tool.inputSchema.properties ?? {}).sort()).toEqual(['as_of_date', 'course', 'detail', 'distance_source', 'expected_temp_c', 'goal_time', 'max_hr', 'new_super_shoes', 'prior_marathon_workout_id', 'race_id', 'race_workout_ids', 'timezone']);
