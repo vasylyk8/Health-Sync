@@ -163,6 +163,7 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
       null,
       null,
     ],
+    "pace_at_same_hr": null,
     "prior_marathon": null,
     "runs_30k_now_vs_prior": [
       0,
@@ -434,6 +435,7 @@ exports[`well-prepared runner, tagged half marathon, race in 14 days > matches t
       null,
       null,
     ],
+    "pace_at_same_hr": null,
     "prior_marathon": null,
     "runs_30k_now_vs_prior": [
       6,

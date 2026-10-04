@@ -352,4 +352,18 @@ describe('E2 at marathon effort', () => {
     expect(pts.every((p) => p.hrFraction >= 0.82 && p.hrFraction <= 0.92)).toBe(true);
     expect(efficiencyPoints([hard], 190, cfg).length).toBe(0); // none are in the aerobic 65-82% band
   });
+  it('counts only sustained stretches (3+ consecutive splits) for the marathon-effort fit, so short efforts with lagging heart rate are left out', () => {
+    // 1 km at 170 bpm, then 5 easy km, then 4 km at 170 bpm: only the 4 km stretch is sustained.
+    const hr = [140, 170, 140, 140, 140, 140, 140, 170, 171, 169, 170, 140];
+    const run1 = raw('mp1', 12, { split: { pace: 330, hr: (i) => hr[i]!, gain: 1 } });
+    const band = cfg.e2.marathonEffort.hrBand;
+    expect(efficiencyPoints([run1], 195, cfg, band).length).toBe(5);
+    expect(efficiencyPoints([run1], 195, cfg, band, 3).length).toBe(4);
+    expect(efficiencyPoints([run1], 195, cfg, band, 5).length).toBe(0);
+  });
+  it('reports the heart-rate range of a fit so comparisons never extrapolate', () => {
+    const pts = [0.84, 0.86, 0.88, 0.9].map((h, i) => ({ hrFraction: h, speed: 2.9 + i * 0.1 }));
+    const f = fitSpeedAtHr(pts, cfg, { predictAt: 0.87, minSplits: 3, minHrSd: 0.01 });
+    expect(f).toMatchObject({ ok: true, hrMin: 0.84, hrMax: 0.9 });
+  });
 });

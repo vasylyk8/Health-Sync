@@ -180,7 +180,7 @@ export interface EfficiencyPoint {
 }
 
 /** Splits of qualifying steady, flat, aerobic-HR runs: (HR as fraction of max, speed m/s). */
-export function efficiencyPoints(runs: RunRaw[], maxHr: number, cfg: ReadinessConfig, band: [number, number] = cfg.e2.efficiency.hrBand): EfficiencyPoint[] {
+export function efficiencyPoints(runs: RunRaw[], maxHr: number, cfg: ReadinessConfig, band: [number, number] = cfg.e2.efficiency.hrBand, minConsecutive = 1): EfficiencyPoint[] {
   const e = cfg.e2.efficiency;
   const out: EfficiencyPoint[] = [];
   for (const run of runs) {
@@ -190,16 +190,25 @@ export function efficiencyPoints(runs: RunRaw[], maxHr: number, cfg: ReadinessCo
     const full = fullSplits(run.splits).slice(e.skipFirstKm ? 1 : 0);
     const paceCv = cv(full.map((s) => s.pace_seconds_per_unit));
     if (paceCv === null || paceCv > e.maxPaceCv) continue;
+    // Consecutive splits in the band form a sustained stretch; a split outside the band (or that is not flat) ends it. Heart rate lags pace
+    // in short efforts, so stretches shorter than minConsecutive are not used.
+    let stretch: EfficiencyPoint[] = [];
+    const flush = () => {
+      if (stretch.length >= minConsecutive) out.push(...stretch);
+      stretch = [];
+    };
     for (const sp of full) {
-      if (sp.avg_hr === null || sp.elevation_gain_m === null || sp.elevation_gain_m >= e.maxGainPerKm || sp.pace_seconds_per_unit <= 0) continue;
-      const f = sp.avg_hr / maxHr;
-      if (f >= band[0] && f <= band[1]) out.push({ hrFraction: f, speed: 1000 / sp.pace_seconds_per_unit });
+      const f = sp.avg_hr !== null ? sp.avg_hr / maxHr : null;
+      const ok = f !== null && sp.elevation_gain_m !== null && sp.elevation_gain_m < e.maxGainPerKm && sp.pace_seconds_per_unit > 0 && f >= band[0] && f <= band[1];
+      if (ok) stretch.push({ hrFraction: f!, speed: 1000 / sp.pace_seconds_per_unit });
+      else flush();
     }
+    flush();
   }
   return out;
 }
 
-export type EfficiencyFit = { ok: true; n: number; slope: number; intercept: number; speedAt: number; hrSd: number } | { ok: false; n: number; reason: string };
+export type EfficiencyFit = { ok: true; n: number; slope: number; intercept: number; speedAt: number; hrSd: number; hrMin: number; hrMax: number } | { ok: false; n: number; reason: string };
 
 /** Least-squares speed = a + b x HR, evaluated at `cfg.e2.efficiency.predictAt` of max HR. */
 export function fitSpeedAtHr(points: EfficiencyPoint[], cfg: ReadinessConfig, o: { predictAt?: number; minSplits?: number; minHrSd?: number } = {}): EfficiencyFit {
@@ -219,7 +228,7 @@ export function fitSpeedAtHr(points: EfficiencyPoint[], cfg: ReadinessConfig, o:
   const slope = sxy / sxx;
   if (!(slope > 0)) return { ok: false, n, reason: 'speed does not rise with heart rate in these splits, so the fit is not usable' };
   const intercept = my - slope * mx;
-  return { ok: true, n, slope, intercept, speedAt: intercept + slope * (o.predictAt ?? e.predictAt), hrSd };
+  return { ok: true, n, slope, intercept, speedAt: intercept + slope * (o.predictAt ?? e.predictAt), hrSd, hrMin: Math.min(...xs), hrMax: Math.max(...xs) };
 }
 
 /**

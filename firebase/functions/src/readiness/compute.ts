@@ -117,7 +117,7 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
   const priorEff = prior ? fitSpeedAtHr(efficiencyPoints(analysedRaw(inputs, inputs.runs.filter((r) => inWindow(r, windowStart(priorBlockEnd!, w.efficiencyWeeks), priorBlockEnd!))), maxHr, cfg), cfg) : ({ ok: false, n: 0, reason: 'no prior marathon' } as const);
   // The same comparison at marathon effort, from the long runs of each block.
   const me = cfg.e2.marathonEffort;
-  const fitM = (start: string, end: string) => fitSpeedAtHr(efficiencyPoints(analysedRaw(inputs, inputs.runs.filter((r) => inWindow(r, start, end))), maxHr, cfg, me.hrBand), cfg, { predictAt: me.predictAt, minSplits: me.minSplits, minHrSd: me.minHrSd });
+  const fitM = (start: string, end: string) => fitSpeedAtHr(efficiencyPoints(analysedRaw(inputs, inputs.runs.filter((r) => inWindow(r, start, end))), maxHr, cfg, me.hrBand, me.minConsecutive), cfg, { predictAt: me.predictAt, minSplits: me.minSplits, minHrSd: me.minHrSd });
   const nowM = fitM(windowStart(asOf, w.efficiencyWeeks), asOf);
   const priorM = prior ? fitM(windowStart(priorBlockEnd!, w.efficiencyWeeks), priorBlockEnd!) : ({ ok: false, n: 0, reason: 'no prior marathon' } as const);
   const e2res = estimateE2({ cfg, priorSeconds: prior?.seconds ?? null, priorDate: priorDate ?? undefined, representative: rep?.representative ?? true, reasons: rep?.reasons ?? [], now: nowEff, prior: priorEff, nowM, priorM });
@@ -335,6 +335,14 @@ export function computeReadiness(inputs: ReadinessInputs, cfg: ReadinessConfig =
     runs_30k_now_vs_prior: [runs30k, priorRuns30] as [number, number | null],
     speed_at_75pct_hrmax_ratio: e2res.rEff !== null ? round(e2res.rEff, 3) : null,
     speed_at_marathon_effort_ratio: e2res.rMarathon !== null ? round(e2res.rMarathon, 3) : null,
+    pace_at_same_hr: nowM.ok && priorM.ok ? me.paceAtBpm.map((bpm) => {
+      // Only inside the heart-rate range both blocks actually cover: no extrapolation.
+      const f = bpm / maxHr;
+      if (f < Math.max(nowM.hrMin, priorM.hrMin) || f > Math.min(nowM.hrMax, priorM.hrMax)) return { bpm, now: null, prior: null, faster_pct: null };
+      const vNow = nowM.intercept + nowM.slope * f;
+      const vPrior = priorM.intercept + priorM.slope * f;
+      return { bpm, now: paceStr(1000 / vNow), prior: paceStr(1000 / vPrior), faster_pct: round((vNow / vPrior - 1) * 100, 1) };
+    }) : null,
     volume_based_repeat: volumeRepeatSec !== null ? hms(volumeRepeatSec) : null,
     body_mass_kg_now_vs_prior: [massNow !== null ? round(massNow) : null, massPrior !== null ? round(massPrior) : null] as [number | null, number | null],
   };

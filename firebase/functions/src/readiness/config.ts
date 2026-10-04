@@ -153,6 +153,10 @@ const base = {
       predictAt: 0.87,
       minSplits: 15,
       minHrSd: 0.015,
+      /** Only stretches of at least this many consecutive splits in the band count (heart rate lags pace in short efforts). */
+      minConsecutive: 3,
+      /** Heart rates (bpm) at which the output compares pace between the two blocks. */
+      paceAtBpm: [160, 165, 170, 175],
       /** Weight of the marathon-effort ratio when both ratios exist. */
       blend: 0.5,
       disagreementPct: 3,
