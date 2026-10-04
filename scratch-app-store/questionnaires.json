@@ -1,0 +1,32 @@
+{
+  "appId": "6817135913",
+  "bundleId": "com.vasylyk.krok",
+  "ageRating": {
+    "advertising": false,
+    "ageAssurance": false,
+    "parentalControls": false,
+    "unrestrictedWebAccess": false,
+    "userGeneratedContent": false,
+    "messagingAndChat": false,
+    "socialMedia": false,
+    "socialMediaAgeRestricted": false,
+    "healthOrWellnessTopics": true,
+    "medicalOrTreatmentInformation": "INFREQUENT_OR_MILD",
+    "alcoholTobaccoOrDrugUseOrReferences": "INFREQUENT_OR_MILD",
+    "contests": "NONE",
+    "gambling": false,
+    "gamblingSimulated": "NONE",
+    "lootBox": false,
+    "gunsOrOtherWeapons": "NONE",
+    "horrorOrFearThemes": "NONE",
+    "matureOrSuggestiveThemes": "NONE",
+    "profanityOrCrudeHumor": "NONE",
+    "sexualContentGraphicAndNudity": "NONE",
+    "sexualContentOrNudity": "NONE",
+    "violenceCartoonOrFantasy": "NONE",
+    "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+    "violenceRealistic": "NONE",
+    "ageRatingOverrideV2": "SIXTEEN_PLUS",
+    "kidsAgeBand": null
+  }
+}

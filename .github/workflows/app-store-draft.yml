@@ -19,12 +19,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Save and verify public listing draft
+      - name: Save and verify supported questionnaires
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-        run: python scratch-app-store/save-draft.py
+        run: python scratch-app-store/save-questionnaires.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
