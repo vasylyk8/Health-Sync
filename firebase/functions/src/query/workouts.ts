@@ -12,6 +12,7 @@ import { isComplete, loadType, localRangeToUtc, roughUtcRange, ToolError, validT
 import { lit, withDuck } from './duck.js';
 import { dailyMaps, enabledCategories } from './health.js';
 import { findWorkout, SELECT_W, toWorkoutRow, type WorkoutRow } from './lookup.js';
+import { readinessHint } from './race.js';
 
 const MAX_LIST = 300;
 const DAY_MS = 86_400_000;
@@ -181,6 +182,8 @@ export async function getWorkouts(deps: QueryDeps, args: { start_date: string; e
     if (truncated) {
       notes.push(`More workouts match than the ${cap} shown (oldest first). To see the rest, call again starting after ${list[list.length - 1]!.start.slice(0, 10)}, or narrow the range or activity filter.`);
     }
+    const hint = await readinessHint(deps);
+    if (hint) notes.push(hint);
     return {
       ...envelope(deps, [[WORKOUT_TYPE, man]], isComplete(man, startUtc, endUtc, deps.now()), notes),
       timezone: r.tz, count: list.length, truncated, workouts: list,

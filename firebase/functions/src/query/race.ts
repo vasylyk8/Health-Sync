@@ -64,6 +64,20 @@ export async function loadRaceGoals(deps: QueryDeps, asOf?: string) {
   return { tz, races, latestUpdate: latest };
 }
 
+/**
+ * A pointer for results of the tools a model reaches for first when judging a marathon (workouts, training load): while the runner
+ * has a marathon ahead, tell it that a purpose-built tool exists. Null when there is none or the goals cannot be read.
+ */
+export async function readinessHint(deps: QueryDeps): Promise<string | null> {
+  try {
+    const { races } = await loadRaceGoals(deps);
+    if (!races.some((r) => r.marathon && r.daysUntilRace >= 0)) return null;
+    return 'The runner has an upcoming marathon goal. If the question is whether they are ready or in shape for it, do not assemble the answer from these tools: call assess_race_readiness, the purpose-built tool (0-10 likelihood, finish-time range, confidence and data gaps), and use these results only to explain its output.';
+  } catch {
+    return null;
+  }
+}
+
 /** The runner's self-set expected finish times. Not a measurement; entered deliberately, so no opt-in category. */
 export async function getRaceGoal(deps: QueryDeps): Promise<ToolResult> {
   const { tz, races, latestUpdate } = await loadRaceGoals(deps);
