@@ -74,7 +74,7 @@ describe('under-trained runner with a slow tagged 10K', () => {
     expect(out.modifiers!.find((m) => m.check === 'runs_30km_or_more')).toMatchObject({ value: 0, applied_pct: 2, status: 'not_met' });
     // 58:00 10K at 40 km/week: exponent log2(2.19) + 0.02 for low volume -> 3480 x 4.2195^1.1509 = 18 251 s.
     const e1 = out.estimators!.find((e) => e.name === 'E1_race_conversion')!;
-    expect(e1.predicted).toBe('5:04:08');
+    expect(e1.predicted).toBe('4:44:10');
     expect(e1.inputs).toMatchObject({ R_source: 'volume_adjusted' });
   });
   it('matches the snapshot', () => {
@@ -130,7 +130,7 @@ describe('edge cases', () => {
     const untagged = computeReadiness(inputs({ runs: runsNoHr, raw: noHr }), cfg);
     expect(untagged.status).toBe('ok');
     expect(untagged.estimators!.find((e) => e.name === 'E1_race_conversion')!.available).toBe(false);
-    expect(untagged.estimators!.find((e) => e.name === 'E1b_training_effort')).toMatchObject({ available: true, sigma_pct: 9 });
+    expect(untagged.estimators!.find((e) => e.name === 'E1b_training_effort')).toMatchObject({ available: true, sigma_pct: 12 });
     expect(untagged.caveats.join(' ')).toContain('No race-quality effort was found');
     expect(untagged.confidence!.components.find((c) => c.name === 'race_effort')!.points).toBe(5);
   });

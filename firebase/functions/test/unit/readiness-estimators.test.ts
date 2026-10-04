@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { READINESS_CONFIG as cfg, withConfig } from '../../src/readiness/config.js';
 import {
-  classOf, convertTime, efficiencyPoints, effortsOfRun, estimateE1, estimateE1b, estimateE2, estimateE3, fitSpeedAtHr, lowerBoundEffort, personalExponent, selectE1Source, volumeAdjustedR,
+  classOf, convertTime, efficiencyPoints, effortsOfRun, estimateE1, estimateE1b, estimateE2, estimateE3, fitSpeedAtHr, lowerBoundEffort, personalExponent, selectE1Source, toMarathon, volumeAdjustedR,
   type EfficiencyPoint,
 } from '../../src/readiness/estimators.js';
 import { adjustmentSigmaSeconds, applyAdjustments, buildAdjustments, heatPenaltyPct } from '../../src/readiness/adjust.js';
@@ -12,6 +12,16 @@ import { effort, raw, run } from '../helpers/readiness.js';
 const HM = 21_097.5;
 const MAR = 42_195;
 const R = cfg.e1.rDefault;
+
+describe('toMarathon', () => {
+  it('leaves half-marathon and longer sources on the default exponent', () => {
+    expect(hms(toMarathon(cfg, 4930, HM, R))).toBe('2:59:57');
+  });
+  it('converts 10K and 5K sources through the half marathon with the milder sub-half exponent', () => {
+    expect(hms(toMarathon(cfg, 3_253, 10_000, R))).toBe('4:21:59');
+    expect(hms(toMarathon(cfg, 1_739, 5_000, R))).toBe('4:51:59');
+  });
+});
 
 describe('race conversion', () => {
   it('converts a 1:22:10 half marathon with the default exponent (log2 of 2.19)', () => {
@@ -47,6 +57,7 @@ describe('race conversion', () => {
 describe('race efforts', () => {
   const r = run('hmrace1', '2024-06-08', 21.3, 270);
   const mk = (avgHr: number | null, extra: Partial<Parameters<typeof raw>[2]> = {}) => raw('hmrace1', 21.3, { efforts: [effort(HM, 5_700, avgHr)], ...extra });
+  const ef2 = (r2: ReturnType<typeof run>, rawRun: ReturnType<typeof raw>) => effortsOfRun({ cfg, run: r2, raw: rawRun, tagged: false, maxHr: 190, ageWeeks: 3 });
   const ef = (rawRun: ReturnType<typeof raw> | null, tagged: boolean, maxHr = 190) => effortsOfRun({ cfg, run: r, raw: rawRun, tagged, maxHr, ageWeeks: 3 });
 
   it('accepts a half-marathon effort at 88% of max HR and rejects 87%', () => {
@@ -54,10 +65,17 @@ describe('race efforts', () => {
     expect(ef(mk(0.87 * 190), false)[0]).toMatchObject({ qualifies: false, effortInferred: true });
   });
   it('needs 90% for a 10K or 5K effort', () => {
-    const tenK = raw('hmrace1', 21.3, { efforts: [effort(10_000, 2_500, 0.89 * 190), effort(5_000, 1_200, 0.91 * 190)] });
-    const out = ef(tenK, false);
-    expect(out.find((e) => e.klass === 'tenK')?.qualifies).toBe(false);
-    expect(out.find((e) => e.klass === 'fiveK')?.qualifies).toBe(true);
+    const tenRun = run('tenk0001', '2024-06-08', 10.2, 250);
+    const fiveRun = run('fivek001', '2024-06-08', 5.1, 240);
+    const tenK = ef2(tenRun, raw('tenk0001', 10.2, { efforts: [effort(10_000, 2_500, 0.89 * 190)] }));
+    const fiveK = ef2(fiveRun, raw('fivek001', 5.1, { efforts: [effort(5_000, 1_200, 0.91 * 190)] }));
+    expect(tenK.find((e) => e.klass === 'tenK')?.qualifies).toBe(false);
+    expect(fiveK.find((e) => e.klass === 'fiveK')?.qualifies).toBe(true);
+  });
+  it('never treats an effort inside a longer run as a race, even at 95% of max HR', () => {
+    const inside = raw('hmrace1', 21.3, { efforts: [effort(10_000, 2_400, 0.95 * 190), effort(5_000, 1_150, 0.95 * 190)] });
+    const out = ef(inside, false);
+    expect(out.filter((e) => e.klass !== 'half').every((e) => !e.qualifies)).toBe(true);
   });
   it('treats a tagged race as a qualifying, non-inferred source even without heart rate', () => {
     expect(ef(mk(null), true)[0]).toMatchObject({ qualifies: true, effortInferred: false, tagged: true, distanceM: HM, seconds: 5_700 });
@@ -202,7 +220,7 @@ describe('E1b: best effort inside a training run', () => {
     const e = estimateE1b({ cfg, effort: eff(), personalR: null, avgWeeklyKm: 70, runs30k: 3 });
     expect(e.name).toBe('E1b_training_effort');
     expect(e.available).toBe(true);
-    expect(e.sigmaPct).toBe(9);
+    expect(e.sigmaPct).toBe(12);
     expect(e.predictedSeconds).toBeCloseTo(7_065 * 2.19, 4); // 1:57:45 half -> 15 472 s
     expect(hms(e.predictedSeconds!)).toBe('4:17:52');
     expect(e.inputs).toMatchObject({ below_max_effort_threshold: true, hr_fraction: 0.84, R_source: 'default', source_time: '1:57:45' });

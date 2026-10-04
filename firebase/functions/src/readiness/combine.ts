@@ -10,6 +10,8 @@ export interface Combined {
   /** Combined sigma after the correlation floor, seconds. */
   sigmaCombinedSeconds: number;
   sigmaFloorApplied: boolean;
+  /** Weighted spread of the estimators around the central estimate (their disagreement), seconds. */
+  disagreementSeconds: number;
   /** Sigma including race-day uncertainty, seconds. */
   sigmaTotalSeconds: number;
   weights: { name: string; weight: number }[];
@@ -27,13 +29,16 @@ export function combineEstimates(estimates: Estimate[], cfg: ReadinessConfig, we
   const independent = Math.sqrt(1 / wSum);
   // The estimators share one runner, so they are not independent: do not let the combination look more certain than the best of them.
   const floor = cfg.combine.sigmaFloorFactor * Math.min(...parts.map((p) => p.sigma));
-  const sigmaCombined = Math.max(independent, floor);
+  // Estimators that disagree are less certain than each one claims: add their weighted spread, in quadrature.
+  const between = Math.sqrt(parts.reduce((n, p) => n + (p.w / wSum) * (p.t - central) ** 2, 0)) * cfg.combine.disagreementFactor;
+  const sigmaCombined = Math.sqrt(Math.max(independent, floor) ** 2 + between ** 2);
   const raceDay = (cfg.combine.raceDaySigmaPct / 100) * central;
   const far = weeksToRace > cfg.windows.raceWindowWeeks ? (cfg.combine.farRaceSigmaPct / 100) * central : 0;
   return {
     centralSeconds: central,
     sigmaCombinedSeconds: sigmaCombined,
     sigmaFloorApplied: floor > independent,
+    disagreementSeconds: between,
     sigmaTotalSeconds: Math.sqrt(sigmaCombined ** 2 + raceDay ** 2 + far ** 2),
     weights: parts.map((p) => ({ name: p.name, weight: p.w / wSum })),
   };

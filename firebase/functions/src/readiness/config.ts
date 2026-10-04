@@ -57,6 +57,8 @@ const base = {
     /** log2(2.19): the half -> marathon multiplier of Vickers & Vertosick (2016). Literal 1.13 gives 2:59:49 for a 1:22:10 half. */
     rDefault: Math.log2(2.19),
     rClamp: [1.04, 1.22] as [number, number],
+    /** Riegel exponent used from a source shorter than the half marathon up to the half; rDefault only applies from the half to the marathon (the range Vickers & Vertosick measured it on). */
+    belowHalfExponent: 1.06,
     volume: {
       highKmPerWeek: 90,
       highLongRuns: 3,
@@ -66,10 +68,11 @@ const base = {
       lowDelta: 0.02,
     },
     /** Absolute sigma (% of predicted time) by source. */
-    sigmaPct: { halfUnder8w: 3.5, half8to16w: 5.0, tenK: 5.0, fiveK: 7.0, /** E1b: best effort inside a training run that did not reach the max-effort HR level. */ trainingRun: 9.0 },
+    sigmaPct: { halfUnder8w: 3.5, half8to16w: 5.0, tenK: 5.0, fiveK: 7.0, /** E1b: best effort inside a training run that did not reach the max-effort HR level. */ trainingRun: 12.0 },
     personalRSigmaDelta: -1.0,
     /** Inferred max effort: average HR of the effort window as a fraction of HRmax. */
     effortHrFraction: { half: 0.88, tenK: 0.9, fiveK: 0.9 },
+    /** An inferred (untagged) effort only counts as a max effort when the whole workout is about its distance (within detect.taggedNearestTolerance): a stretch inside a longer run is training, not a race. */
     /** Source age limits (weeks) for race-conversion inputs. */
     maxSourceAgeWeeks: 16,
     halfFreshWeeks: 8,
@@ -123,6 +126,8 @@ const base = {
   combine: {
     /** Estimators share one runner: combined sigma may not fall below this multiple of the smallest single sigma. */
     sigmaFloorFactor: 0.85,
+    /** Estimators that disagree widen the combined sigma by their weighted spread (times this factor), in quadrature. */
+    disagreementFactor: 1.0,
     /** Race-day uncertainty (weather, course), % of the central time, added in quadrature. */
     raceDaySigmaPct: 2.0,
     /** Extra term, also in quadrature, when the race is further away than windows.raceWindowWeeks. */

@@ -16,14 +16,16 @@ describe('combining estimators', () => {
     expect(c.centralSeconds).toBeCloseTo(11_150.245, 2);
     // Independent sigma would be 348.4 s; the floor is 0.85 x the best single sigma (456 s) = 387.6 s.
     expect(c.sigmaFloorApplied).toBe(true);
-    expect(c.sigmaCombinedSeconds).toBeCloseTo(387.6, 6);
+    // The estimators are 600 s apart: their weighted spread (295.8 s) is added in quadrature.
+    expect(c.disagreementSeconds).toBeCloseTo(295.762, 2);
+    expect(c.sigmaCombinedSeconds).toBeCloseTo(487.554, 2);
     // + race-day 2% of the central estimate, in quadrature.
-    expect(c.sigmaTotalSeconds).toBeCloseTo(447.174, 2);
+    expect(c.sigmaTotalSeconds).toBeCloseTo(536.135, 2);
     expect(c.weights.map((w) => w.weight)).toEqual([expect.closeTo(0.41626, 4), expect.closeTo(0.58374, 4)]);
   });
   it('adds a further 1% term when the race is more than 6 weeks away', () => {
-    expect(combineEstimates(two, cfg, 6)!.sigmaTotalSeconds).toBeCloseTo(447.174, 2);
-    expect(combineEstimates(two, cfg, 6.1)!.sigmaTotalSeconds).toBeCloseTo(460.866, 2);
+    expect(combineEstimates(two, cfg, 6)!.sigmaTotalSeconds).toBeCloseTo(536.135, 2);
+    expect(combineEstimates(two, cfg, 6.1)!.sigmaTotalSeconds).toBeCloseTo(547.607, 2);
   });
   it('keeps a single estimator\'s own sigma, and does not floor a combination that is barely tighter than its best member', () => {
     const one = combineEstimates([est('A', 10_800, 5)], cfg, 2)!;
