@@ -374,7 +374,9 @@ actor SyncEngine {
     ///     instead of 0.7%; older years had been 1-3% high); noise notifications read under the identifier HealthKit
     ///     resolves (none had been read); time in bed without an in-bed record is the time asleep or awake, not first to
     ///     last segment (24 h on a night with naps).
-    static let dailyVersion = 16
+    /// 17: retain Watch workout readings with incomplete source metadata, include long samples crossing query boundaries,
+    ///     and report the main overnight sleep's bedtime/wake time while retaining naps in total duration.
+    static let dailyVersion = 17
 
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }
@@ -474,7 +476,8 @@ actor SyncEngine {
     /// 11: a statistics query failing with "invalid argument" (whole years of hourly heart rate on a restored iPhone) is
     ///     filled from the raw readings instead of the series being left out; steps merged as in daily version 15.
     /// 12: steps merged as in daily version 16.
-    static let hourlyVersion = 12
+    /// 13: retain Watch workout readings and fill missing hours within days that already have statistics.
+    static let hourlyVersion = 13
 
     private func hourlyHistory() async throws {
         guard !scope.hourly.isEmpty else { return }

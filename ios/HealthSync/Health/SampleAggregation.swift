@@ -33,6 +33,12 @@ struct RawReading: Equatable, Sendable {
         self.watch = watch
     }
 
+    /// Workout samples can lack a source-revision product type even though their HKDevice identifies the Watch.
+    static func isWatch(productType: String?, model: String?, hardware: String?) -> Bool {
+        productType?.hasPrefix("Watch") == true || hardware?.hasPrefix("Watch") == true ||
+            model?.caseInsensitiveCompare("Watch") == .orderedSame || model?.caseInsensitiveCompare("Apple Watch") == .orderedSame
+    }
+
     /// Apple's own devices (Watch, iPhone) write as com.apple.health.<id>.
     var apple: Bool { source.hasPrefix("com.apple.health") }
 }
@@ -111,6 +117,9 @@ struct SampleAggregator {
 
     mutating func add(_ r: RawReading) {
         guard r.value.isFinite, r.end >= r.start else { return }
+        // Only cumulative duplicate handling needs neighbouring readings outside the range. The other styles follow
+        // HealthKit's overlap predicate, so the five-minute read margin cannot add values after the requested end.
+        if style != .cumulative, r.start >= to || r.end < from { return }
         if style == .cumulative { addCumulative(r) } else { addDiscrete(r) }
     }
 
@@ -176,7 +185,10 @@ struct SampleAggregator {
     /// The Watch's spans merged where they overlap, in time order.
     private func watchUnion() -> [(start: Date, end: Date)] {
         var out: [(start: Date, end: Date)] = []
-        for s in watchSpans.sorted(by: { $0.start < $1.start }) {
+        // Reserved Apple source IDs belong to a device. A reading with missing device metadata from a source already
+        // identified as a Watch must not be discarded as an iPhone duplicate. Include its span before judging phones.
+        let inferred = deferred.filter { watches.contains($0.source) }.map { (start: $0.start, end: $0.end) }
+        for s in (watchSpans + inferred).sorted(by: { $0.start < $1.start }) {
             if let last = out.last, s.start <= last.end {
                 out[out.count - 1].end = Swift.max(last.end, s.end)
             } else {
@@ -198,7 +210,7 @@ struct SampleAggregator {
                 let m = (a + b) / 2
                 if spans[m].end < lo { a = m + 1 } else { b = m }
             }
-            if a < spans.count, spans[a].start <= r.end.addingTimeInterval(Self.nearWatch) { continue }
+            if !watches.contains(r.source), a < spans.count, spans[a].start <= r.end.addingTimeInterval(Self.nearWatch) { continue }
             for (slot, share) in Self.slotShares(r, from: from, to: to) { slots[slot, default: [:]][r.source, default: 0] += share }
         }
         return slots.map { slot, sources -> (Date, Double) in
@@ -305,6 +317,17 @@ struct SampleAggregator {
             guard let acc = discrete[hour] else { return nil }
             return HourBucket(t: hour.msValue, v: avg ? average(acc, bucket: hour) : nil, lo: min ? acc.min : nil, hi: max ? acc.max : nil)
         }
+    }
+
+    static func hasMissingHours(_ timestamps: [Int64], from: Date, to: Date, calendar: Calendar) -> Bool {
+        guard to > from, var hour = calendar.dateInterval(of: .hour, for: from)?.start else { return false }
+        let present = Set(timestamps)
+        while hour < to {
+            if !present.contains(hour.msValue) { return true }
+            guard let next = calendar.date(byAdding: .hour, value: 1, to: hour), next > hour else { return false }
+            hour = next
+        }
+        return false
     }
 
     /// Local calendar days from the day of `from` up to `to` (a day that has started counts).

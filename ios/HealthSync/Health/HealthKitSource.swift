@@ -786,20 +786,24 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     /// Every reading of `type` that touches [from, to), read a month at a time so years of heart rate never sit in memory at
-    /// once. Each reading is delivered once (the month it starts in); readings that start up to a day before `from` are
-    /// included, because they can reach into the range.
+    /// once. The first query includes all readings overlapping its range, even ones starting more than a day earlier.
+    /// Later queries deliver only readings that start in that month, so cross-month readings are not delivered twice.
+    /// A five-minute margin supplies the neighbouring Watch spans used for cumulative duplicate handling.
     private func forEachRawReading(_ type: HKQuantityType, unit: HKUnit, scale: Double, from: Date, to: Date,
                                    _ body: (RawReading) -> Void) async throws {
         let cal = Calendar.current
-        var cursor = from.addingTimeInterval(-86_400)
-        while cursor < to {
-            let next = min(cal.date(byAdding: .month, value: 1, to: cursor) ?? to, to)
-            let window = HKQuery.predicateForSamples(withStart: cursor, end: next, options: .strictStartDate)
+        var cursor = from.addingTimeInterval(-SampleAggregator.nearWatch)
+        let end = to.addingTimeInterval(SampleAggregator.nearWatch)
+        var first = true
+        while cursor < end {
+            let next = min(cal.date(byAdding: .month, value: 1, to: cursor) ?? end, end)
+            let window = HKQuery.predicateForSamples(withStart: cursor, end: next, options: [])
             let samples = try await fetch(type, predicate: window, sort: nil)
-            for case let sample as HKQuantitySample in samples where sample.startDate >= cursor && sample.startDate < next {
+            for case let sample as HKQuantitySample in samples where sample.startDate < next && (first || sample.startDate >= cursor) {
                 if let reading = Self.reading(sample, unit: unit, scale: scale) { body(reading) }
             }
             cursor = next
+            first = false
         }
     }
 
@@ -814,9 +818,9 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
     }
 
-    private static func reading(_ sample: HKQuantitySample, unit: HKUnit, scale: Double) -> RawReading? {
+    static func reading(_ sample: HKQuantitySample, unit: HKUnit, scale: Double) -> RawReading? {
         let source = sample.sourceRevision.source.bundleIdentifier
-        let watch = sample.sourceRevision.productType?.hasPrefix("Watch") ?? false
+        let watch = RawReading.isWatch(productType: sample.sourceRevision.productType, model: sample.device?.model, hardware: sample.device?.hardwareVersion)
         // A series reading (e.g. heart rate during a workout) holds several values: its average, extremes and last value.
         if let d = sample as? HKDiscreteQuantitySample, d.count > 1 {
             return RawReading(start: d.startDate, end: d.endDate, value: d.averageQuantity.doubleValue(for: unit) * scale,
@@ -989,7 +993,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         return records
     }
 
-    private func hourlyBuckets(_ metric: HourlyMetric, from: Date, to: Date) async throws -> [HourBucket] {
+    func hourlyBuckets(_ metric: HourlyMetric, from: Date, to: Date) async throws -> [HourBucket] {
         var options: HKStatisticsOptions = []
         if metric.cumulative {
             options = .cumulativeSum
@@ -1012,12 +1016,11 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             out = (try? await hourlyBucketsOnce(metric, from: anchor, to: to, predicate: Self.and(range, sources), options: options)) ?? []
             if !out.isEmpty { recordFallback(metric.type, mode: "sources", hourly: true) }
         }
-        // Statistics that leave whole days out (seen on a restored iPhone, whole years at a time) are filled hour by hour from
-        // the raw readings; hours HealthKit did calculate are kept as they are.
+        // A day with one result may still have missing hours. Read raw samples whenever an hour is absent, and fill
+        // only hours that actually have readings. Empty hours stay empty; Apple's existing statistics are preserved.
         let cal = Calendar.current
-        let days = SampleAggregator.localDays(from: anchor, to: min(to, Date()), calendar: cal)
-        let covered = Set(out.map { SleepNights.dayKey(Date(timeIntervalSince1970: Double($0.t) / 1000), calendar: cal) }).count
-        guard covered < days, try await hasQuantitySamples(metric.type, predicate: range) else { return out }
+        guard SampleAggregator.hasMissingHours(out.map(\.t), from: anchor, to: min(to, Date()), calendar: cal),
+              try await hasQuantitySamples(metric.type, predicate: range) else { return out }
         let raw = try await rawHourlyBuckets(metric, from: anchor, to: to)
         let existing = Set(out.map(\.t))
         let missing = raw.filter { !existing.contains($0.t) }
@@ -1056,12 +1059,19 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             }
             if bucket.v != nil || bucket.lo != nil || bucket.hi != nil { out.append(bucket) }
         }
+        #if DEBUG
+        if debugPartialHourlyStatistics {
+            var days = Set<String>()
+            return out.filter { days.insert(SleepNights.dayKey(Date(timeIntervalSince1970: Double($0.t) / 1000), calendar: Calendar.current)).inserted }
+        }
+        #endif
         return out
     }
 
     #if DEBUG
     /// Daily check only: every statistics query comes back empty, as on the restored iPhone, so the raw fill is tested end to end.
     var debugEmptyStatistics = false
+    var debugPartialHourlyStatistics = false
     /// Daily check only: every statistics query fails as the restored iPhone's hourly heart rate did ("invalid argument"),
     /// so the raw fill is tested as the path taken when HealthKit's statistics error.
     var debugFailingStatistics = false

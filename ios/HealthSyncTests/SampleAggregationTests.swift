@@ -236,4 +236,62 @@ final class SampleAggregationTests: XCTestCase {
         XCTAssertEqual(d?.max ?? -1, 10, accuracy: 1e-9)
         XCTAssertNil(SampleAggregator.difference(reference: [], other: [("a", 1)]))
     }
+    func testWatchIdentificationAcceptsDeviceMetadataWhenRevisionIsMissing() {
+        XCTAssertTrue(RawReading.isWatch(productType: nil, model: "Watch", hardware: "Watch6,1"))
+        XCTAssertTrue(RawReading.isWatch(productType: nil, model: "Apple Watch", hardware: nil))
+        XCTAssertTrue(RawReading.isWatch(productType: "Watch6,1", model: nil, hardware: nil))
+        XCTAssertTrue(RawReading.isWatch(productType: "iPhone", model: "Watch", hardware: "Watch6,1"))
+        XCTAssertFalse(RawReading.isWatch(productType: "iPhone", model: "iPhone", hardware: "iPhone16,1"))
+        XCTAssertFalse(RawReading.isWatch(productType: nil, model: nil, hardware: nil))
+    }
+
+    func testWatchSourceWithIncompleteWorkoutMetadataKeepsItsIncrementsInAnyReadOrder() {
+        let watch = "com.apple.health.W", phone = "com.apple.health.P"
+        let readings = [
+            RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 5), value: 100, source: watch, watch: true),
+            RawReading(start: at(2026, 5, 3, 9, 5), end: at(2026, 5, 3, 9, 10), value: 900, source: watch),
+            RawReading(start: at(2026, 5, 3, 9, 10), end: at(2026, 5, 3, 9, 15), value: 800, source: watch),
+            RawReading(start: at(2026, 5, 3, 9, 15), end: at(2026, 5, 3, 9, 20), value: 100, source: watch, watch: true),
+            RawReading(start: at(2026, 5, 3, 9, 5), end: at(2026, 5, 3, 9, 15), value: 2000, source: phone),
+        ]
+        for values in [readings, Array(readings.reversed()), Array(readings.dropFirst()) + [readings[0]]] {
+            for granularity in [SampleAggregator.Granularity.day, .hour] {
+                var a = aggregator(at(2026, 5, 3), at(2026, 5, 4), cumulative: true, granularity)
+                for r in values { a.add(r) }
+                XCTAssertEqual(a.daily(.sum).first!.1, 1900, accuracy: 1e-9)
+                XCTAssertEqual(a.hourly(avg: true, min: false, max: false).compactMap(\.v).reduce(0, +), 1900, accuracy: 1e-9)
+            }
+        }
+    }
+
+    func testUnknownAppleDeviceIsNotAssumedToBeAWatch() {
+        var a = aggregator(at(2026, 5, 3), at(2026, 5, 4), cumulative: true)
+        a.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 10), value: 100, source: "com.apple.health.W", watch: true))
+        a.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 10), value: 200, source: "com.apple.health.unknown"))
+        XCTAssertEqual(a.daily(.sum).first!.1, 100)
+    }
+
+    func testPartialDaysStillHaveMissingHoursAndDSTHoursAreDistinct() {
+        XCTAssertTrue(SampleAggregator.hasMissingHours([at(2026, 5, 3, 9).msValue], from: at(2026, 5, 3, 9), to: at(2026, 5, 3, 11), calendar: cal))
+        XCTAssertFalse(SampleAggregator.hasMissingHours([at(2026, 5, 3, 9).msValue, at(2026, 5, 3, 10).msValue], from: at(2026, 5, 3, 9), to: at(2026, 5, 3, 11), calendar: cal))
+        for (from, to, count) in [(at(2026, 3, 8), at(2026, 3, 9), 23), (at(2026, 11, 1), at(2026, 11, 2), 25)] {
+            var times: [Int64] = [], cursor = from
+            while cursor < to { times.append(cursor.msValue); cursor = cal.date(byAdding: .hour, value: 1, to: cursor)! }
+            XCTAssertEqual(times.count, count)
+            XCTAssertFalse(SampleAggregator.hasMissingHours(times, from: from, to: to, calendar: cal))
+            XCTAssertTrue(SampleAggregator.hasMissingHours(Array(times.dropFirst()), from: from, to: to, calendar: cal))
+        }
+    }
+
+    func testNeighbourReadMarginDoesNotAddDiscreteValuesOutsideTheRequestedRange() {
+        for style in [SampleAggregator.Style.arithmetic, .timeWeighted, .equivalentLevel] {
+            var a = SampleAggregator(calendar: cal, from: at(2026, 5, 3, 12, 15), to: at(2026, 5, 3, 12, 45), style: style, granularity: .hour)
+            a.add(RawReading(start: at(2026, 5, 3, 12, 14), end: at(2026, 5, 3, 12, 14), value: 999, source: "w"))
+            a.add(RawReading(start: at(2026, 5, 3, 12, 30), end: at(2026, 5, 3, 12, 31), value: 60, source: "w"))
+            a.add(RawReading(start: at(2026, 5, 3, 12, 46), end: at(2026, 5, 3, 12, 46), value: 999, source: "w"))
+            XCTAssertEqual(a.hourly(avg: true, min: false, max: false).count, 1)
+            XCTAssertEqual(a.hourly(avg: true, min: false, max: false).first!.v!, 60, accuracy: 1e-9)
+        }
+    }
+
 }

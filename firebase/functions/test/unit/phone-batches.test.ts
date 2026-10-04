@@ -107,6 +107,13 @@ describe.skipIf(!dir)('what the phone sends is what an AI gets back', () => {
     expect(wrong.slice(0, 10)).toEqual([]);
   });
 
+  it('a long resting-HR reading crossing the phone query boundary survives upload, storage and retrieval', async () => {
+    const date = new Date(Date.now() - 960 * 86_400_000).toISOString().slice(0, 10);
+    const r = await s.call('get_daily_context', { start_date: date, end_date: date, metrics: ['restingHr'] });
+    expect(r.isError, r.text.slice(0, 300)).toBe(false);
+    expect(r.json.days).toEqual([{ date, restingHr: 51 }]);
+  });
+
   it('the diagnostic note travels with the daily batches and the server accepted it', () => {
     const notes: string[] = [];
     for (const f of readdirSync(dir!).filter((x) => x.endsWith('.ndjson.gz'))) {
