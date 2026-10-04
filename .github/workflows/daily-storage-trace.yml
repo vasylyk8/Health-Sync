@@ -1,0 +1,116 @@
+name: daily-storage-trace
+on:
+  push:
+    branches: ['audit/build53-storage-trace']
+    paths: ['.github/workflows/daily-storage-trace.yml']
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install read-only inspection clients
+        run: pip install google-cloud-firestore google-cloud-storage pyarrow
+      - name: Inspect identity and stored daily rows without printing health values
+        shell: python
+        run: |
+          import hashlib, io, json, os, subprocess
+          from google.cloud import firestore, storage
+          import pyarrow.parquet as pq
+          
+          def digest(value):
+              return hashlib.sha256(str(value).encode()).hexdigest()
+          def emit(stage, **fields):
+              print(json.dumps({"stage": stage, **fields}, sort_keys=True), flush=True)
+          
+          def main():
+              project = os.environ["GCP_PROJECT_ID"]
+              result = subprocess.run(["gcloud", "logging", "read",
+                  'resource.type="cloud_run_revision" AND resource.labels.service_name="ingest" AND jsonPayload.note:*',
+                  "--project", project, "--freshness=12h", "--limit=1000", "--format=json"],
+                  check=True, capture_output=True, text=True)
+              logs = json.loads(result.stdout)
+              assert len(logs) < 1000, "log scan cap reached"
+              selected = [x for x in logs if digest(x.get("jsonPayload", {}).get("uid", "")) ==
+                  "06b141e46d87ef3dc3276b1fd01e7d3cb470603882e566fb4ee9a4e5927b0bad"]
+              assert selected, "target sync absent"
+              uid = selected[0]["jsonPayload"]["uid"]
+              db = firestore.Client(project=project)
+              user_ref = db.collection("users").document(uid)
+              user = user_ref.get().to_dict()
+              matched = digest(user.get("oauthProfileId", "")) == "b62f4bef83ac37f81669e66f258300b8846399956e68a8a5fea4475daca6a888"
+              emit("identity", account_matches=matched)
+              assert matched, "identity mismatch"
+              assert not user.get("deleting"), "user deletion in progress"
+              man = user_ref.collection("types").document("_daily").get().to_dict()
+              files = man.get("files", {}).get("2026-05", [])
+              assert files and len(files) <= 60, "partition file cap or absent"
+              assert sum(f["bytes"] for f in files) <= 25000000, "partition byte cap"
+              client = storage.Client(project=project)
+              bucket = client.bucket(project + "-data")
+              targets = ["2026-05-11", "2026-05-12", "2026-05-13"]
+              daily_rows = []
+              for f in files:
+                  assert f["path"].startswith("data/" + uid + "/_daily/2026-05/"), "unexpected storage path"
+                  data = bucket.blob(f["path"]).download_as_bytes()
+                  table = pq.read_table(io.BytesIO(data), columns=["id", "k", "extra", "seq", "batch"])
+                  for row in table.to_pylist():
+                      if row["id"] in targets and row["k"] == "day":
+                          row["metrics"] = json.loads(row["extra"] or "{}").get("m", {})
+                          daily_rows.append(row)
+              emit("partition", files_read=len(files), target_rows=len(daily_rows))
+              for day in targets:
+                  versions = sorted([r for r in daily_rows if r["id"] == day], key=lambda r:(r["seq"], r["batch"]))
+                  merged = {}
+                  for r in versions:
+                      merged.update(r["metrics"])
+                  emit("stored_day", day=day, versions=len(versions),
+                       versions_with_resting_hr=sum("restingHr" in r["metrics"] for r in versions),
+                       merged_has_resting_hr="restingHr" in merged,
+                       batch_tags=[digest(r["batch"])[:12] for r in versions])
+              target_logs = [x for x in selected if x["jsonPayload"].get("type") == "_daily" and
+                  "from=2025-07-14 to=2026-07-14" in x["jsonPayload"].get("note", "") and
+                  " counts=" in x["jsonPayload"].get("note", "")]
+              assert target_logs, "new collection note absent"
+              newest = max(target_logs, key=lambda x:x["timestamp"])
+              payload = newest["jsonPayload"]
+              batch = payload["batchId"]
+              state = user_ref.collection("batches").document(batch).get().to_dict()
+              incoming = client.bucket(project + "-incoming").blob("incoming/" + uid + "/" + batch + ".ndjson.gz")
+              target_version = [r for r in daily_rows if r["id"] == "2026-05-12" and r["batch"] == batch]
+              emit("published_batch", batch_tag=digest(batch)[:12],
+                   published=payload.get("result") == "published",
+                   state_published=(state or {}).get("state") == "published",
+                   note_timestamp=newest["timestamp"],
+                   missing_result_slots_zero=" lost=0(" in payload["note"],
+                   day_rows_from_batch=len(target_version),
+                   row_has_resting_hr=any("restingHr" in r["metrics"] for r in target_version),
+                   incoming_body_still_exists=incoming.exists())
+              tombs = man.get("files", {}).get("_tombstones", [])
+              assert len(tombs) <= 60 and sum(f["bytes"] for f in tombs) <= 25000000, "tombstone cap"
+              deleted = set()
+              for f in tombs:
+                  assert f["path"].startswith("data/" + uid + "/_daily/"), "unexpected tombstone path"
+                  data = bucket.blob(f["path"]).download_as_bytes()
+                  deleted.update(pq.read_table(io.BytesIO(data), columns=["id"]).column("id").to_pylist())
+              emit("retrieval_filter", target_day_tombstoned="2026-05-12" in deleted)
+              emit("done", writes_performed=0, health_values_printed=0)
+          
+          try:
+              main()
+          except Exception as error:
+              print(json.dumps({"stage":"failed", "error_class":type(error).__name__}), flush=True)
+              raise SystemExit(1)
+          
