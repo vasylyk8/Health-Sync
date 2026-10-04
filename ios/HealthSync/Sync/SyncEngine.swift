@@ -368,7 +368,9 @@ actor SyncEngine {
     ///     rate came back empty for every past year on a restored iPhone); a reading counts on the day holding most of it.
     /// 14: in an hour Apple's own devices recorded, other apps' cumulative readings are left out (a scale app's whole-day
     ///     resting energy written at each weigh-in had been taken instead of the Watch's).
-    static let dailyVersion = 14
+    /// 15: cumulative readings merged per 5 minutes with the Watch first (steps 0.7% from HealthKit's own totals instead of
+    ///     1.3% by the largest Apple device per hour, measured on a real iPhone).
+    static let dailyVersion = 15
 
     private func dailyContext() async throws {
         guard !scope.dailyMetrics.isEmpty else { return }
@@ -465,7 +467,9 @@ actor SyncEngine {
     /// 9: hours of days the statistics leave out are filled from the raw readings for every series (heart rate, steps).
     /// 10: a statistics query that fails (not only one that comes back empty) is filled from the raw readings; heart rate
     ///     for whole years had been left out after repeated statistics errors.
-    static let hourlyVersion = 10
+    /// 11: a statistics query failing with "invalid argument" (whole years of hourly heart rate on a restored iPhone) is
+    ///     filled from the raw readings instead of the series being left out; steps merged as in daily version 15.
+    static let hourlyVersion = 11
 
     private func hourlyHistory() async throws {
         guard !scope.hourly.isEmpty else { return }

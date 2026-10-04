@@ -122,11 +122,12 @@ final class SampleAggregationTests: XCTestCase {
     /// Watch and iPhone both counting the same walk: counted once (the larger), never added together.
     func testOverlappingSourcesAreNotAddedTogether() {
         var a = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: true)
-        a.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 30), value: 1000, source: "com.apple.health.watch"))
+        a.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 30), value: 1000, source: "com.apple.health.watch", watch: true))
         a.add(RawReading(start: at(2026, 5, 3, 9, 5), end: at(2026, 5, 3, 9, 35), value: 1100, source: "com.apple.health.phone"))
         // Only the phone was carried in the afternoon: those steps count.
         a.add(RawReading(start: at(2026, 5, 3, 15), end: at(2026, 5, 3, 15, 20), value: 400, source: "com.apple.health.phone"))
-        XCTAssertEqual(dict(a.daily(.sum))["2026-05-03"]!, 1100 + 400, accuracy: 1e-9)
+        // 09:00-09:30 the Watch's 1000; 09:30-09:35 the phone's share (1100 x 5/30); the afternoon 400.
+        XCTAssertEqual(dict(a.daily(.sum))["2026-05-03"]!, 1000 + 1100.0 * 5 / 30 + 400, accuracy: 1e-9)
     }
 
     /// A scale app writes a whole day's resting energy (2,300 kcal) at the weigh-in; HealthKit's daily total keeps the Watch's.
@@ -136,21 +137,27 @@ final class SampleAggregationTests: XCTestCase {
         a.add(RawReading(start: at(2026, 5, 3, 8, 58), end: at(2026, 5, 3, 8, 58), value: 2300, source: "com.renpho.health"))
         // An hour only an app recorded (the Watch off) still counts.
         a.add(RawReading(start: at(2026, 5, 4, 10), end: at(2026, 5, 4, 10, 30), value: 50, source: "com.strava"))
+        // The Watch off in the 5 minutes of a weigh-in but on earlier in that hour: the app is still left out.
+        a.add(RawReading(start: at(2026, 5, 5, 8), end: at(2026, 5, 5, 8, 30), value: 40, source: "com.apple.health.watch"))
+        a.add(RawReading(start: at(2026, 5, 5, 8, 58), end: at(2026, 5, 5, 8, 58), value: 2300, source: "com.renpho.health"))
         let days = dict(a.daily(.sum))
         XCTAssertEqual(days["2026-05-03"]!, 24 * 85, accuracy: 1e-6)
         XCTAssertEqual(days["2026-05-04"]!, 50, accuracy: 1e-6)
+        XCTAssertEqual(days["2026-05-05"]!, 40, accuracy: 1e-6)
     }
 
-    func testMergeVariantsForMeasurement() {
-        var a = SampleAggregator(calendar: cal, from: at(2026, 5, 1), to: at(2026, 6, 1), style: .cumulative, granularity: .day, measureVariants: true)
+    /// Per 5 minutes the Watch counts where it recorded, the iPhone fills the rest (measured closest to HealthKit's totals).
+    func testWatchCountsFirstPerFiveMinutes() {
+        var a = aggregator(at(2026, 5, 1), at(2026, 6, 1), cumulative: true)
         // 09:00-09:10: Watch 100 steps, iPhone 130 for the same walk; 09:30-09:35 only the iPhone, 40.
         a.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 10), value: 100, source: "com.apple.health.W", watch: true))
         a.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 10), value: 130, source: "com.apple.health.P"))
         a.add(RawReading(start: at(2026, 5, 3, 9, 30), end: at(2026, 5, 3, 9, 35), value: 40, source: "com.apple.health.P"))
-        XCTAssertEqual(dict(a.daily(.sum))["2026-05-03"]!, 170, accuracy: 1e-6)
-        let v = a.dailyVariants()
-        XCTAssertEqual(dict(v["a5"]!)["2026-05-03"]!, 170, accuracy: 1e-6)
-        XCTAssertEqual(dict(v["w5"]!)["2026-05-03"]!, 140, accuracy: 1e-6)
+        XCTAssertEqual(dict(a.daily(.sum))["2026-05-03"]!, 140, accuracy: 1e-6)
+        var h = SampleAggregator(calendar: cal, from: at(2026, 5, 1), to: at(2026, 6, 1), style: .cumulative, granularity: .hour)
+        h.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 10), value: 100, source: "com.apple.health.W", watch: true))
+        h.add(RawReading(start: at(2026, 5, 3, 9), end: at(2026, 5, 3, 9, 10), value: 130, source: "com.apple.health.P"))
+        XCTAssertEqual(h.hourly(avg: true, min: false, max: false).compactMap(\.v), [100])
     }
 
     func testOneSourceAddsUpLikeHealthKit() {
