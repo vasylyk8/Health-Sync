@@ -45,6 +45,16 @@ describe('get_race_goal', () => {
     expect(trot).toMatchObject({ goalTime: '0:25:00', daysUntilRace: 53 });
     expect(trot).not.toHaveProperty('goalPacePerKm');
     expect(JSON.stringify(r.notes)).toMatch(/not a measured/);
+    // Points readiness questions at assess_race_readiness while a race is still ahead.
+    expect(JSON.stringify(r.notes)).toMatch(/call assess_race_readiness/);
+  });
+
+  it('does not point at the readiness tool when there is no race ahead', async () => {
+    const env = makeEnv(Date.UTC(2026, 9, 20));
+    env.meta.addUser(env.uid, { tz: 'UTC', raceGoals: { 'old-marathon': { raceName: 'Old', raceDate: '2026-10-11', goalSeconds: 12_600, updatedAt: 1 } } });
+    const q = { uid: env.uid, meta: env.meta, data: env.data, now: () => env.now, tz: 'UTC' };
+    expect(JSON.stringify((await getRaceGoal(q)).notes)).not.toMatch(/assess_race_readiness/);
+    expect(JSON.stringify((await getRaceGoal({ ...q, uid: 'nobody' })).notes)).not.toMatch(/assess_race_readiness/);
   });
 
   it('falls back to UTC for a missing or invalid timezone and handles no goal', async () => {
