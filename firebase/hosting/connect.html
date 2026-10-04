@@ -2,15 +2,15 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Connect KROK</title><link rel="stylesheet" href="/style.css"><script type="module" src="/connect.js"></script></head>
 <body><header class="top"><a class="brand" href="/"><img src="/icon.png" alt="" width="32" height="32">KROK</a><nav aria-label="Main"><a href="/mcp-docs">Connect</a><a href="/support">Support</a><a href="/privacy">Privacy</a></nav></header>
-<main><h1>Connect KROK to your assistant</h1><p id="status" role="status" aria-live="polite">Loading sign-in…</p>
-
+<main><h1>Connect KROK to your assistant</h1><ol id="progress" class="progress" aria-label="Progress" hidden><li id="step-signin" class="current"><span>1</span>Sign in with Apple</li><li id="step-allow"><span>2</span>Allow access</li></ol>
+<p id="status" role="status" aria-live="polite">Loading sign-in…</p>
 <button id="sign-in" type="button" hidden>Sign in with Apple</button>
-<button id="switch-account" type="button" hidden>Use a different account</button>
 <section id="consent" class="card" hidden><h2>Allow <span id="assistant">your assistant</span> to read your data?</h2>
 <p id="client"></p><ul id="permissions"></ul>
 <p id="full-route-option" hidden><label><input id="full-routes" type="checkbox"> Also allow exact start/end locations when I request them.</label></p>
-<p>Access is read-only. Your assistant processes the data it requests under its own terms. You can disconnect it or delete your server data in KROK at any time.</p>
-<p class="actions"><button id="approve" type="button" disabled>Allow access</button><button id="deny" type="button">Cancel</button></p>
+<p class="small">Access is read-only. Your assistant processes the data it requests under its own terms. You can disconnect it or delete your server data in KROK at any time.</p>
+<div class="actions"><button id="approve" type="button" disabled>Allow access</button><button id="deny" type="button">Cancel</button></div>
+<p class="center"><button id="switch-account" class="link" type="button" hidden>Use a different account</button></p>
 <details class="reviewer"><summary>Directory reviewer access</summary><form id="reviewer-form"><p><label>Email <input id="reviewer-email" type="email" autocomplete="username" required></label></p>
 <p><label>Password <input id="reviewer-password" type="password" autocomplete="current-password" required></label></p><button type="submit">Sign in to review account</button></form></details>
 </section><section id="iphone-setup" class="card" aria-labelledby="iphone-setup-title"><h2 id="iphone-setup-title">New to KROK? Start on your iPhone.</h2>
