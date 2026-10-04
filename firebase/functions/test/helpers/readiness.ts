@@ -52,7 +52,7 @@ export const effort = (distanceM: number, movingSec: number, avgHr: number | nul
 export function inputs(o: Partial<ReadinessInputs> & { runs?: RunSummary[] } = {}): ReadinessInputs {
   return {
     asOf: '2024-06-29', tz: 'UTC', race: { id: 'chicago-marathon-2024', name: 'Chicago Marathon', date: '2024-07-13', daysUntil: 14 }, goalSeconds: 13_500,
-    maxHr: { value: 190, source: 'user' }, sex: 'male', bodyFatPct: 14, runs: [], raw: new Map(), rawSkipped: [], taggedRaceIds: [], priorMarathon: null, priorDisabled: false,
+    maxHr: { value: 190, source: 'user' }, sex: 'male', bodyFatPct: 14, bodyMassKg: [], runs: [], raw: new Map(), rawSkipped: [], taggedRaceIds: [], priorMarathon: null, priorDisabled: false,
     nutrition: { enabled: true, carbRunIds: [] }, context: { course: null, expectedTempC: null, newSuperShoes: false }, gaps: [], notes: [], ...o,
   };
 }

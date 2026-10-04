@@ -307,3 +307,40 @@ describe('heat in the source efforts', () => {
     expect(e1.inputs).not.toHaveProperty('heat_adjusted_pct');
   });
 });
+
+describe('an earlier race outside the current block', () => {
+  function earlier(extra: Partial<Parameters<typeof inputs>[0]> = {}, weeks = 16) {
+    const t = trainingBlock({ asOf: AS_OF, weeks, longKm: (w) => LONG[w % LONG.length]!, longPace: 330 });
+    const hm = run('hm-old1', addDays(AS_OF, -26 * 7), 21.2, 6036 / 21.0975, { hr: 178 });
+    t.runs.push(hm);
+    t.raw.set(hm.id, raw(hm.id, 21.2, { split: { pace: 286, hr: 178, gain: 1 }, efforts: [effort(HM, 6036, 178)], gainPerKm: 1 }));
+    return inputs({ runs: t.runs, raw: t.raw, ...extra });
+  }
+  it('is used as a lower-weight estimator with extra uncertainty, and earns partial race-effort confidence', () => {
+    const out = computeReadiness(earlier(), cfg);
+    expect(out.status).toBe('ok');
+    expect(out.estimators!.find((e) => e.name === 'E1_race_conversion')!.available).toBe(false);
+    const e1s = out.estimators!.find((e) => e.name === 'E1s_earlier_race')!;
+    // 6.5 + 1.0 (26 weeks old) + 2 (no runs between that race and the current block: a break) + 1 (no efficiency comparison)
+    expect(e1s).toMatchObject({ available: true, sigma_pct: 10.5 });
+    expect(e1s.notes.join(' ')).toContain('gap of');
+    expect(e1s.weight).toBeGreaterThan(0);
+    expect(out.confidence!.components.find((c) => c.name === 'race_effort')!.points).toBe(12);
+    expect(readinessSchema.safeParse(out).success).toBe(true);
+  });
+  it('has less uncertainty when training continued between that race and now', () => {
+    const e1s = computeReadiness(earlier({}, 27), cfg).estimators!.find((e) => e.name === 'E1s_earlier_race')!;
+    expect(e1s.sigma_pct).toBeLessThan(10.5);
+    expect(e1s.inputs).toMatchObject({ volume_maintained: true });
+  });
+  it('stays out of the way of a recent race effort', () => {
+    const base = wellPrepared();
+    const hm = run('hm-old1', addDays(AS_OF, -26 * 7), 21.2, 6036 / 21.0975, { hr: 178 });
+    base.runs.push(hm);
+    base.raw.set(hm.id, raw(hm.id, 21.2, { split: { pace: 286, hr: 178, gain: 1 }, efforts: [effort(HM, 6036, 178)], gainPerKm: 1 }));
+    const out = computeReadiness(base, cfg);
+    expect(out.estimators!.find((e) => e.name === 'E1_race_conversion')).toMatchObject({ available: true });
+    expect(out.estimators!.find((e) => e.name === 'E1s_earlier_race')!.available).toBe(true);
+    expect(out.confidence!.components.find((c) => c.name === 'race_effort')!.points).toBe(25);
+  });
+});

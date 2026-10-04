@@ -159,6 +159,10 @@ exports[`under-trained runner with a slow tagged 10K > matches the snapshot 1`] 
     },
   ],
   "block_comparison": {
+    "body_mass_kg_now_vs_prior": [
+      null,
+      null,
+    ],
     "prior_marathon": null,
     "runs_30k_now_vs_prior": [
       0,
@@ -425,6 +429,10 @@ exports[`well-prepared runner, tagged half marathon, race in 14 days > matches t
     },
   ],
   "block_comparison": {
+    "body_mass_kg_now_vs_prior": [
+      null,
+      null,
+    ],
     "prior_marathon": null,
     "runs_30k_now_vs_prior": [
       6,

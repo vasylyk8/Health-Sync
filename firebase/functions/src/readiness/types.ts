@@ -73,6 +73,8 @@ export interface ReadinessInputs {
   maxHr: MaxHrInfo;
   sex: 'male' | 'female' | null;
   bodyFatPct: number | null;
+  /** Body mass readings (kg) over the last three years, one per day, oldest first. */
+  bodyMassKg: { date: string; kg: number }[];
   /** Deduplicated running workouts from (as_of - lookback) to as_of. */
   runs: RunSummary[];
   /** Runs whose raw streams were analysed. */

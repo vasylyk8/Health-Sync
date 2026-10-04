@@ -78,6 +78,39 @@ const base = {
     halfFreshWeeks: 8,
   },
 
+  /**
+   * An earlier race (older than the current block, up to maxAgeWeeks) as a personal-data estimator. Its sizes are heuristics:
+   * published models that add a prior race to training data improve marathon prediction only modestly, so it is weighted like
+   * the training formula, not above it.
+   */
+  earlier: {
+    maxAgeWeeks: 36,
+    sigmaPct: 6.5,
+    /** Extra sigma per week the race is older than the current block. */
+    sigmaPctPerWeekBeyondBlock: 0.1,
+    /** Volume since the race below this fraction of the volume before it, or a longer gap than maxGapDays, means fitness is less certain. */
+    maintainedVolumeFraction: 0.9,
+    maxGapDays: 14,
+    notMaintainedSigmaAdd: 2,
+    noEfficiencySigmaAdd: 1,
+    /** Largest speed gain credited since the race (%). */
+    maxFitnessCreditPct: 5,
+    /** A personal exponent from a single race pair is noisy and mixes in fitness change: move this fraction of the way from the default to it. */
+    personalRShrink: 0.5,
+    /** Earlier races and the prior marathon are searched this many weeks back, and body mass is averaged over this many days. */
+    massWindowDays: 28,
+    /** Shortlist: HR fraction above which an earlier run of a standard distance is worth reading raw. */
+    candidateHrFraction: 0.85,
+    candidates: 4,
+  },
+
+  /** Body mass: fitness gain is already in the efficiency comparison, so this only applies where there is none. */
+  weight: {
+    /** % change in finish time per % change in body mass (weak evidence; coach rules of thumb are higher). */
+    pctTimePerPctMass: 0.5,
+    capPct: 4,
+  },
+
   e2: {
     sigmaPct: 4.0,
     /** Added when the prior marathon is not representative (hot, positive split, walk-heavy, pacing duty). */
@@ -205,7 +238,7 @@ const base = {
       fueling: 5,
       timeToRace: 10,
     },
-    raceEffort: { halfFresh: 25, tenKFresh: 18, older: 10, lowerBoundOnly: 5 },
+    raceEffort: { halfFresh: 25, tenKFresh: 18, older: 10, earlier: 12, lowerBoundOnly: 5 },
     continuity: { fullWeeks: 12, maxGapDays: 10, gapPenaltyFactor: 0.5 },
     longRuns: { minKm: 30, fullCount: 3 },
     hrCoverage: { full: 0.8 },

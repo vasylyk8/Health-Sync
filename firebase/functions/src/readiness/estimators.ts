@@ -278,3 +278,53 @@ export function volumeBasedRepeat(args: { cfg: ReadinessConfig; priorSeconds: nu
   const bf = t.e * Math.exp(t.f * args.cfg.e3.defaultBodyFatPct);
   return args.priorSeconds * ((f(args.nowKm, args.nowPace) + bf) / (f(args.priorKm, args.priorPace) + bf));
 }
+
+/**
+ * An earlier race (older than the current block) as a personal-data estimator: the race is converted to a marathon, then moved by
+ * how much fitter the runner measurably is now (speed at a fixed heart rate; with no such comparison only if volume was maintained).
+ * Body mass is applied only when there is no efficiency comparison, because a lighter runner already runs faster at the same heart rate.
+ */
+export function estimateEarlierRace(args: {
+  cfg: ReadinessConfig; source: RaceEffort; personalR: number | null; avgWeeklyKm: number; runs30k: number;
+  now: EfficiencyFit; then: EfficiencyFit; weeklyKmThen: number; maintained: boolean; gapDays: number;
+  /** Time multiplier from Tanda training indices then -> now (below 1 = faster now); null when not computable. */
+  volumeTimeRatio: number | null; massNow: number | null; massThen: number | null;
+}): Estimate {
+  const { cfg } = args;
+  const e = cfg.earlier;
+  const base = estimateE1({ cfg, source: args.source, personalR: args.personalR, avgWeeklyKm: args.avgWeeklyKm, runs30k: args.runs30k });
+  const notes = [...base.notes, `Race is ${round1(args.source.ageWeeks)} weeks old, older than the current block: used with extra uncertainty.`];
+  let predicted = base.predictedSeconds!;
+  let basis: 'efficiency' | 'volume' | 'none' = 'none';
+  let ratio = 1;
+  const credit = 1 + e.maxFitnessCreditPct / 100;
+  if (args.now.ok && args.then.ok) {
+    ratio = Math.min(credit, Math.max(1 / credit, args.now.speedAt / args.then.speedAt));
+    predicted /= ratio;
+    basis = 'efficiency';
+    notes.push(`Speed at 75% of max HR is ${ratio >= 1 ? '+' : ''}${round1((ratio - 1) * 100)}% vs the block before that race; the conversion is moved by that much.`);
+  } else if (args.maintained && args.volumeTimeRatio !== null) {
+    ratio = Math.max(1 / credit, args.volumeTimeRatio);
+    predicted *= ratio;
+    basis = 'volume';
+    notes.push('No efficiency comparison with that block, so the change is taken from training volume and pace alone (population formula).');
+  } else notes.push(args.maintained ? 'No comparison with the fitness at that race was possible, so no fitness change is credited.' : 'Volume fell or there was a long break since that race, so no fitness gain is credited.');
+  let weightPct = 0;
+  if (basis !== 'efficiency' && args.massNow !== null && args.massThen !== null && args.massThen > 0) {
+    const massPct = ((args.massNow - args.massThen) / args.massThen) * 100;
+    weightPct = Math.max(-cfg.weight.capPct, Math.min(cfg.weight.capPct, cfg.weight.pctTimePerPctMass * massPct));
+    predicted *= 1 + weightPct / 100;
+    notes.push(`Body mass ${round1(args.massThen)} -> ${round1(args.massNow)} kg moves the time by ${weightPct >= 0 ? '+' : ''}${round1(weightPct)}% (weak evidence).`);
+  }
+  let sigma = e.sigmaPct + e.sigmaPctPerWeekBeyondBlock * Math.max(0, args.source.ageWeeks - cfg.windows.blockWeeks);
+  if (!args.maintained) {
+    sigma += e.notMaintainedSigmaAdd;
+    notes.push(args.gapDays > e.maxGapDays ? `A gap of ${args.gapDays} days since that race adds uncertainty.` : 'Weekly volume since that race is below its level before it, which adds uncertainty.');
+  }
+  if (basis !== 'efficiency') sigma += e.noEfficiencySigmaAdd;
+  return {
+    name: 'E1s_earlier_race', available: true, predictedSeconds: predicted, sigmaPct: sigma,
+    inputs: { ...base.inputs, fitness_basis: basis, fitness_ratio: Math.round(ratio * 1000) / 1000, volume_maintained: args.maintained, weekly_km_then: Math.round(args.weeklyKmThen * 10) / 10, ...(weightPct !== 0 ? { weight_adjust_pct: Math.round(weightPct * 100) / 100 } : {}) },
+    notes,
+  };
+}

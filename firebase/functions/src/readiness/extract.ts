@@ -75,6 +75,23 @@ export function selectForRawAnalysis(a: ShortlistArgs): { id: string; why: strin
     add(newestFirst(priorBlock.filter((r) => inWindow(r, windowStart(end, cfg.windows.efficiencyWeeks), end) && steady(r))), 'steady run (prior block)', b.steadyRunsPerBlock);
     add(fastestFirst(priorBlock.filter((r) => runKm(r) >= b.effortCandidateMinKm)), 'possible max effort (prior block)', b.candidatesPerBlock);
   }
+  // Earlier races (older than the current block): the likeliest race-like runs, and the steady runs of the block before the first one
+  // so the fitness change since then can be measured. Also races in the lead-up to the prior marathon (personal exponent).
+  const raceLike = (r: RunSummary) => {
+    const km = runKm(r);
+    return km >= 4.8 && km <= 22.5 && r.avgHr !== null && r.avgHr / a.maxHr >= cfg.earlier.candidateHrFraction;
+  };
+  const prefer = (xs: RunSummary[]) => [...xs].sort((x, y) => Number(runKm(y) >= 19.5) - Number(runKm(x) >= 19.5) || y.startMs - x.startMs);
+  const earlier = prefer(runs.filter((r) => r.date >= windowStart(a.asOf, cfg.earlier.maxAgeWeeks) && r.date < blockStart && raceLike(r)));
+  add(earlier, 'earlier race candidate', cfg.earlier.candidates);
+  if (earlier[0]) {
+    const end = addDays(earlier[0].date, -1);
+    add(newestFirst(runs.filter((r) => inWindow(r, windowStart(end, cfg.windows.efficiencyWeeks), end) && steady(r))), 'steady run (earlier race block)', b.steadyRunsPerBlock);
+  }
+  if (a.prior) {
+    const end = addDays(a.prior.date, -1);
+    add(prefer(runs.filter((r) => inWindow(r, windowStart(end, cfg.earlier.maxAgeWeeks), end) && raceLike(r))), 'race before prior marathon', cfg.earlier.candidates);
+  }
   return out.slice(0, b.maxRawRuns);
 }
 
@@ -257,13 +274,17 @@ export async function gatherInputs(deps: QueryDeps, a: GatherArgs): Promise<{ in
     const maxHr = resolveMaxHr({ user: a.maxHr, runs, asOf: a.asOf, ageYears: age, cfg });
 
     let bodyFatPct: number | null = null;
+    let bodyMassKg: { date: string; kg: number }[];
     {
       const from = windowStart(a.asOf, cfg.windows.durabilityWeeks);
-      const startMs = Date.parse(from + 'T00:00:00Z');
-      const { byDay, mans } = await dailyMaps(c, dir, deps, cats, startMs - DAY_MS, Date.parse(a.asOf + 'T00:00:00Z') + 2 * DAY_MS, from, a.asOf);
+      // Body mass is compared across the prior-marathon lookback, so the daily rows are read for that whole span.
+      const massFrom = addMonths(a.asOf, -(cfg.windows.priorMarathonLookbackMonths + 1));
+      const startMs = Date.parse(massFrom + 'T00:00:00Z');
+      const { byDay, mans } = await dailyMaps(c, dir, deps, cats, startMs - DAY_MS, Date.parse(a.asOf + 'T00:00:00Z') + 2 * DAY_MS, massFrom, a.asOf);
       coverage.push(...mans.filter(([t]) => t === DAILY_TYPE));
-      const days = [...byDay.entries()].filter(([, m]) => typeof m.bodyFatPct === 'number').sort((x, y) => y[0].localeCompare(x[0]));
+      const days = [...byDay.entries()].filter(([d, m]) => d >= from && typeof m.bodyFatPct === 'number').sort((x, y) => y[0].localeCompare(x[0]));
       if (days.length) bodyFatPct = days[0]![1].bodyFatPct as number;
+      bodyMassKg = [...byDay.entries()].filter(([, m]) => typeof m.bodyMassKg === 'number' && (m.bodyMassKg as number) > 20).map(([date, m]) => ({ date, kg: m.bodyMassKg as number })).sort((x, y) => x.date.localeCompare(y.date));
     }
 
     // ---- Prior marathon and shortlist -------------------------------------------------------------------------------
@@ -321,7 +342,7 @@ export async function gatherInputs(deps: QueryDeps, a: GatherArgs): Promise<{ in
 
     if (daysBetween(a.asOf, a.race.date) < 0) gaps.push('The race date is before as_of_date.');
     const inputs: ReadinessInputs = {
-      asOf: a.asOf, tz: a.tz, race: a.race, goalSeconds: a.goalSeconds, maxHr, sex, bodyFatPct, runs, raw, rawSkipped: skipped,
+      asOf: a.asOf, tz: a.tz, race: a.race, goalSeconds: a.goalSeconds, maxHr, sex, bodyFatPct, bodyMassKg, runs, raw, rawSkipped: skipped,
       taggedRaceIds: a.raceWorkoutIds, priorMarathon: prior, priorDisabled, nutrition, context: a.context, gaps, notes,
     };
     return { inputs, coverage, complete };
