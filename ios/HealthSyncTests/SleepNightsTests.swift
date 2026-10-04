@@ -82,5 +82,41 @@ final class SleepNightsTests: XCTestCase {
         let m = SleepNights.nights(segs, calendar: cal)["2024-06-20"]!
         XCTAssertEqual(num(m["sleepAsleepMin"]), 90 + 240 + 230 + 60, "naps still count as time asleep")
         XCTAssertEqual(num(m["sleepInBedMin"]), 90 + 480 + 60)
+        XCTAssertEqual(m["sleepBedtime"], .string("23:00"))
+        XCTAssertEqual(m["sleepWakeTime"], .string("07:00"))
     }
+    func testLongAwakeningDoesNotSplitTheMainNightAndAfternoonNapDoesNotMoveWake() {
+        let w = "Watch"
+        let segs = [
+            SleepSegment(start: d(19, 23), end: d(20, 1), value: SleepNights.core, source: w),
+            SleepSegment(start: d(20, 3, 30), end: d(20, 7), value: SleepNights.rem, source: w),
+            SleepSegment(start: d(20, 15), end: d(20, 16), value: SleepNights.core, source: w),
+            SleepSegment(start: d(19, 19), end: d(19, 19, 1), value: SleepNights.inBed, source: "old phone"),
+        ]
+        let m = SleepNights.nights(segs, calendar: cal)["2024-06-20"]!
+        XCTAssertEqual(m["sleepBedtime"], .string("23:00"))
+        XCTAssertEqual(m["sleepWakeTime"], .string("07:00"))
+        XCTAssertEqual(num(m["sleepAsleepMin"]), 390)
+    }
+
+    func testExplicitAwakeBridgePreservesAnInterruptedNight() {
+        let w = "Watch"
+        let segs = [
+            SleepSegment(start: d(19, 23), end: d(20, 1), value: SleepNights.core, source: w),
+            SleepSegment(start: d(20, 1), end: d(20, 5), value: SleepNights.awake, source: w),
+            SleepSegment(start: d(20, 5), end: d(20, 7), value: SleepNights.rem, source: w),
+        ]
+        let m = SleepNights.nights(segs, calendar: cal)["2024-06-20"]!
+        XCTAssertEqual(m["sleepBedtime"], .string("23:00"))
+        XCTAssertEqual(m["sleepWakeTime"], .string("07:00"))
+        XCTAssertEqual(num(m["sleepAwakeMin"]), 240)
+    }
+
+    func testDaytimeOnlySleepStillHasTimes() {
+        let segs = [SleepSegment(start: d(20, 13), end: d(20, 15), value: SleepNights.core, source: "Watch")]
+        let m = SleepNights.nights(segs, calendar: cal)["2024-06-20"]!
+        XCTAssertEqual(m["sleepBedtime"], .string("13:00"))
+        XCTAssertEqual(m["sleepWakeTime"], .string("15:00"))
+    }
+
 }

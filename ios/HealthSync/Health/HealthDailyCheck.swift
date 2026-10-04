@@ -244,6 +244,50 @@ enum DailyCheck {
         }
     }
 
+    /// Partial hourly statistics and a reading starting more than a day before the query: both previously lost data.
+    private static func checkCompleteness(_ m: BenchModel, store: HKHealthStore, scope: SyncScope, today: Date, calendar cal: Calendar) async {
+        do {
+            let hourly = HealthKitSource(scope: scope)
+            hourly.debugPartialHourlyStatistics = true
+            let day = cal.date(byAdding: .day, value: -5, to: today)!
+            let end = cal.date(byAdding: .day, value: 1, to: day)!
+            guard let metric = scope.hourly.first(where: { $0.name == "StepCount" }) else {
+                m.log("DAILYCOMPLETE FAIL hourly steps unavailable")
+                return
+            }
+            let buckets = try await hourly.hourlyBuckets(metric, from: day, to: end)
+            let total = buckets.compactMap(\.v).reduce(0, +)
+            guard buckets.count == 3 && abs(total - 2415) < 1e-6 else {
+                m.log("DAILYCOMPLETE FAIL partial hourly statistics: buckets=\(buckets.count) total=\(total)")
+                return
+            }
+            let target = cal.date(byAdding: .day, value: -960, to: today)!
+            let start = cal.date(byAdding: .hour, value: -40, to: target)!
+            let finish = cal.date(byAdding: .hour, value: 10, to: target)!
+            let bpm = HKUnit.count().unitDivided(by: .minute())
+            try await store.save(HKQuantitySample(type: HKQuantityType(.restingHeartRate), quantity: HKQuantity(unit: bpm, doubleValue: 51), start: start, end: finish))
+            let raw = HealthKitSource(scope: scope)
+            raw.debugEmptyStatistics = true
+            let to = cal.date(byAdding: .hour, value: 12, to: target)!
+            let batches = try await raw.dailyContextBatches(from: target, to: to, categories: [])
+            let rows = batches.flatMap(\.records)
+            let key = SleepNights.dayKey(target, calendar: cal)
+            guard let row = rows.first(where: { $0["day"] == .string(key) }), case .object(let values)? = row["m"],
+                  case .double(let resting)? = values["restingHr"], abs(resting - 51) < 1e-6 else {
+                m.log("DAILYCOMPLETE FAIL long reading crossing query start")
+                return
+            }
+            for batch in batches where !batch.records.isEmpty {
+                let header = BatchHeader(type: batch.typeId, mode: .stats, seq: Outbox.seqFloor(), window: (target, to), checkedAt: Date())
+                let made = try BatchWriter.make(header: header, records: batch.records, nextSeq: { Outbox.seqFloor() + 1 }, tz: TimeZone.current.identifier, device: "daily-check", appVersion: "ci")
+                for b in made { emitBatch(m, id: b.id, gz: b.gz) }
+            }
+            m.log("DAILYCOMPLETE OK partial hours and long boundary readings")
+        } catch {
+            m.log("DAILYCOMPLETE FAIL \(error)")
+        }
+    }
+
     static func run(_ m: BenchModel) async {
         let store = HKHealthStore()
         let scope = HealthTypes.scope(HealthTypes.loadCoverage())
@@ -324,6 +368,7 @@ enum DailyCheck {
         await checkWithoutStatistics(m, scope: scope, expected: expected, today: today, calendar: cal)
         await dumpBatches(m, source: source, from: cal.date(byAdding: .day, value: -11, to: today)!)
         await runHistory(m, store: store, scope: scope, today: today, calendar: cal)
+        await checkCompleteness(m, store: store, scope: scope, today: today, calendar: cal)
         m.log("BENCH DONE")
     }
 }
