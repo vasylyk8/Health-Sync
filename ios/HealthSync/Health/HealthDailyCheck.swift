@@ -86,7 +86,11 @@ enum DailyCheck {
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("dailycheck-\(UUID().uuidString)")
         let uploader = CaptureUploader()
-        let engine = SyncEngine(source: HealthKitSource(scope: scope), uploader: uploader, outbox: Outbox(root: root), scope: scope, categories: { ["core"] })
+        // Statistics switched off, as on the restored iPhone where they came back empty for every past year: every day and hour
+        // the server job checks then comes from the raw-reading fill.
+        let source = HealthKitSource(scope: scope)
+        source.debugEmptyStatistics = true
+        let engine = SyncEngine(source: source, uploader: uploader, outbox: Outbox(root: root), scope: scope, categories: { ["core"] })
         let started = Date()
         do {
             _ = try await engine.run()
@@ -100,10 +104,87 @@ enum DailyCheck {
         m.log("DAILYCHECK history done")
     }
 
+    /// HealthKit's own statistics and the raw-reading aggregation must agree value for value, including the cases where the
+    /// rules matter: a reading that crosses midnight, a heart-rate series reading next to single readings, cumulative readings
+    /// across hour and day boundaries, two body-mass readings on one day. Written about 825 days back, outside the days the
+    /// other checks look at.
+    private static func checkSemantics(_ m: BenchModel, store: HKHealthStore, scope: SyncScope, today: Date, calendar cal: Calendar) async {
+        let day = cal.date(byAdding: .day, value: -825, to: today)!
+        let bpm = HKUnit.count().unitDivided(by: .minute())
+        func at(_ hour: Double, _ base: Date) -> Date { base.addingTimeInterval(hour * 3600) }
+        func q(_ id: HKQuantityTypeIdentifier, _ unit: HKUnit, _ v: Double, _ start: Date, _ end: Date) -> HKQuantitySample {
+            HKQuantitySample(type: HKQuantityType(id), quantity: HKQuantity(unit: unit, doubleValue: v), start: start, end: end)
+        }
+        let before = cal.date(byAdding: .day, value: -1, to: day)!
+        let samples: [HKSample] = [
+            // The only respiratory-rate reading in these days, from 22:00 to 02:00: which day(s) does HealthKit count it on?
+            q(.respiratoryRate, bpm, 14, at(22, before), at(2, day)),
+            // Steps from 23:30 to 00:30 and from 14:45 to 15:15: spread over the days and hours by time.
+            q(.stepCount, .count(), 600, at(23.5, before), at(0.5, day)),
+            q(.stepCount, .count(), 120, at(14.75, day), at(15.25, day)),
+            // Two single heart-rate readings next to the series written below.
+            q(.heartRate, bpm, 60, at(8, day), at(8, day)),
+            q(.heartRate, bpm, 70, at(20, day), at(20, day)),
+            // Two weigh-ins: the day's value is the later one.
+            q(.bodyMass, .gramUnit(with: .kilo), 80, at(7, day), at(7, day)),
+            q(.bodyMass, .gramUnit(with: .kilo), 81, at(19, day), at(19, day)),
+        ]
+        do {
+            try await store.save(samples)
+            // A heart-rate series reading (as a workout records it): ten values, 100 to 190.
+            let builder = HKQuantitySeriesSampleBuilder(healthStore: store, quantityType: HKQuantityType(.heartRate), startDate: at(12, day), device: nil)
+            for i in 0 ..< 10 {
+                try builder.insert(HKQuantity(unit: bpm, doubleValue: Double(100 + 10 * i)), at: at(12, day).addingTimeInterval(Double(i) * 10))
+            }
+            _ = try await builder.finishSeries(metadata: nil, endDate: at(12, day).addingTimeInterval(100))
+        } catch {
+            m.log("DAILYSEM FAIL could not save readings: \(error)")
+            return
+        }
+        let source = HealthKitSource(scope: scope)
+        do {
+            var differences: [String] = []
+            var compared = 0
+            for (from, to) in [(before, cal.date(byAdding: .day, value: 2, to: day)!), (cal.date(byAdding: .day, value: -11, to: today)!, Date())] {
+                let r = try await source.statisticsVersusRaw(from: from, to: to)
+                compared += r.compared
+                differences += r.differences
+            }
+            m.log("DAILYSEM compared \(compared) days and hours, \(differences.count) differ")
+            for d in differences.prefix(40) { m.log("DAILYSEM DIFF \(d)") }
+            m.log(differences.isEmpty && compared > 0 ? "DAILYSEM OK" : "DAILYSEM FAIL raw aggregation differs from HealthKit's statistics")
+        } catch {
+            m.log("DAILYSEM FAIL comparison threw: \(error)")
+        }
+    }
+
+    /// The same ten days read with every statistics query coming back empty: every metric must still come out on every day,
+    /// from the raw readings alone.
+    private static func checkWithoutStatistics(_ m: BenchModel, scope: SyncScope, expected: Set<String>, today: Date, calendar cal: Calendar) async {
+        let source = HealthKitSource(scope: scope)
+        source.debugEmptyStatistics = true
+        do {
+            let records = try await source.dailyContext(from: cal.date(byAdding: .day, value: -11, to: today)!, to: Date())
+            var missingDays: [String] = []
+            for d in 1 ... 10 {
+                let day = SleepNights.dayKey(cal.date(byAdding: .day, value: -d, to: today)!, calendar: cal)
+                let row = records.first { $0["day"] == .string(day) }
+                let keys: Set<String>
+                if case .object(let values)? = row?["m"] { keys = Set(values.keys) } else { keys = [] }
+                let absent = expected.subtracting(keys).sorted()
+                if !absent.isEmpty { missingDays.append("\(day):\(absent.joined(separator: ","))") }
+            }
+            m.log("DAILYRAW note: \(source.dailyDiagnosticNote() ?? "-")")
+            m.log(missingDays.isEmpty ? "DAILYRAW OK" : "DAILYRAW FAIL without statistics, missing: \(missingDays.joined(separator: "; "))")
+        } catch {
+            m.log("DAILYRAW FAIL daily pass threw: \(error)")
+        }
+    }
+
     static func run(_ m: BenchModel) async {
         let store = HKHealthStore()
         let scope = HealthTypes.scope(HealthTypes.loadCoverage())
-        var share: Set<HKSampleType> = [HKCategoryType(.sleepAnalysis)]
+        var share: Set<HKSampleType> = [HKCategoryType(.sleepAnalysis), HKQuantityType(.heartRate)]
         for s in seeds { share.insert(HKQuantityType(s.0)) }
         m.log("DAILYCHECK authorizing")
         do {
@@ -176,6 +257,8 @@ enum DailyCheck {
         } catch {
             m.log("DAILYCHECK FAIL daily pass threw: \(error) · report: \(source.dailyReport)")
         }
+        await checkSemantics(m, store: store, scope: scope, today: today, calendar: cal)
+        await checkWithoutStatistics(m, scope: scope, expected: expected, today: today, calendar: cal)
         await dumpBatches(m, source: source, from: cal.date(byAdding: .day, value: -11, to: today)!)
         await runHistory(m, store: store, scope: scope, today: today, calendar: cal)
         m.log("BENCH DONE")

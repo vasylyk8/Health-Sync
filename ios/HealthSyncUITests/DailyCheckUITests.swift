@@ -40,5 +40,7 @@ final class DailyCheckUITests: XCTestCase {
         XCTAssertTrue(output.label.contains("DAILYCHECK history done"), "the multi-year sync did not finish: " + output.label.components(separatedBy: "\n").filter { $0.contains("history") }.joined(separator: " | "))
         XCTAssertFalse(output.label.contains("DAILYCHECK FAIL history"), "multi-year sync: " + output.label.components(separatedBy: "\n").filter { $0.contains("FAIL history") }.joined(separator: " | "))
         XCTAssertTrue(output.label.contains("DAILYCHECK OK"), "daily metrics missing: " + output.label.components(separatedBy: "\n").filter { $0.contains("DAILYCHECK") }.joined(separator: " | "))
+        XCTAssertTrue(output.label.contains("DAILYSEM OK"), "raw aggregation vs HealthKit statistics: " + output.label.components(separatedBy: "\n").filter { $0.contains("DAILYSEM") }.joined(separator: " | "))
+        XCTAssertTrue(output.label.contains("DAILYRAW OK"), "daily pass without statistics: " + output.label.components(separatedBy: "\n").filter { $0.contains("DAILYRAW") }.joined(separator: " | "))
     }
 }
