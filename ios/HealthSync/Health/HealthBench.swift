@@ -64,7 +64,7 @@ enum HealthBench {
         let count = args.firstIndex(of: "-benchCount").flatMap { Int(args[$0 + 1]) } ?? 300
         let store = HKHealthStore()
         let scope = HealthTypes.scope(HealthTypes.loadCoverage())
-        let share = HealthLab.shareTypes
+        let share = HealthLab.shareTypes.union([HKQuantityType(.restingHeartRate), HKQuantityType(.heartRateVariabilitySDNN)])
         let read = HealthTypes.readPermissions(for: scope).union(share)
         m.log("authorizing")
         // One request only: a second permission request right after a first one never answers in the
@@ -77,10 +77,16 @@ enum HealthBench {
             return
         }
         m.log("authorized")
+        let shared = args.contains("-benchShared")
         let heavy = args.firstIndex(of: "-benchHeavy").flatMap { Int(args[$0 + 1]) } ?? 60
         let light = max(0, count - heavy)
-        await HealthLab.seed(store, heavy: heavy, light: light, m)
+        await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: shared ? 9 : 1.3, heavyStride: shared ? 6 : 1, m)
         await seedBackground(store, count: 100_000, m)
+        if shared {
+            await SharedReadBenchmark.run(scope, store: store, model: m, expected: count)
+            m.log("BENCH DONE")
+            return
+        }
         if args.contains("-benchLab") { await HealthLab.run(store, scope: scope, m) }
         // The in-app speed test, exactly as on a phone (its rows are logged as they appear).
         let printed = BenchCounter()

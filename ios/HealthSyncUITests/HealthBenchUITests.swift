@@ -7,7 +7,9 @@ final class HealthBenchUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         let count = ProcessInfo.processInfo.environment["BENCH_COUNT"] ?? "300"
+        let shared = ProcessInfo.processInfo.environment["BENCH_SHARED"] == "1"
         app.launchArguments = ["-healthBench", "-benchCount", count]
+        if shared { app.launchArguments += ["-benchShared", "-benchHeavy", "24"] }
         app.launch()
 
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -40,5 +42,11 @@ final class HealthBenchUITests: XCTestCase {
         shot.lifetime = .keepAlways
         add(shot)
         XCTAssertTrue(output.label.contains("BENCH DONE"), "benchmark did not finish")
+        if shared {
+            XCTAssertTrue(output.label.contains("SHARED CHECK OK"), output.label)
+            XCTAssertTrue(output.label.contains(", 0 failures,"))
+            XCTAssertFalse(output.label.contains("SHARED seed failed"))
+            XCTAssertFalse(output.label.contains("background save error"))
+        }
     }
 }

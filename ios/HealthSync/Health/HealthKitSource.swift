@@ -35,6 +35,18 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     private let cacheLock = NSLock()
     private var workoutCache: [String: HKWorkout] = [:]
 
+    #if DEBUG
+    /// Reference reader for accuracy tests only; Release always shares within a sync.
+    var debugDisableSharedHistory = false
+    #endif
+
+    private var rawHistoryCache: RawHistoryCache? {
+        #if DEBUG
+        if debugDisableSharedHistory { return nil }
+        #endif
+        return SharedRawHistory.cache
+    }
+
     init(scope: SyncScope) {
         self.scope = scope
         quantitiesById = Dictionary(scope.workoutQuantities.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -780,6 +792,9 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     private func rawDailyStatistics(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date,
                                     calendar: Calendar) async throws -> [(String, Double)] {
+        if let cache = rawHistoryCache {
+            return try await sharedRawSummary(type, unit: unit, scale: scale, from: from, to: to, calendar: calendar, cache: cache).daily[agg.rawValue] ?? []
+        }
         var aggregator = SampleAggregator(calendar: calendar, from: from, to: to, style: Self.aggregationStyle(type), granularity: .day)
         try await forEachRawReading(type, unit: unit, scale: scale, from: from, to: to) { aggregator.add($0) }
         return aggregator.daily(agg)
@@ -796,6 +811,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let end = to.addingTimeInterval(SampleAggregator.nearWatch)
         var first = true
         while cursor < end {
+            try Task.checkCancellation()
             let next = min(cal.date(byAdding: .month, value: 1, to: cursor) ?? end, end)
             let window = HKQuery.predicateForSamples(withStart: cursor, end: next, options: [])
             let samples = try await fetch(type, predicate: window, sort: nil)
@@ -1131,9 +1147,39 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     #endif
 
     private func rawHourlyBuckets(_ metric: HourlyMetric, from: Date, to: Date) async throws -> [HourBucket] {
+        if let cache = rawHistoryCache {
+            let summary = try await sharedRawSummary(metric.type, unit: metric.unit, scale: 1, from: from, to: to, calendar: Calendar.current, cache: cache)
+            return summary.hourly.map { HourBucket(t: $0.t, v: metric.cols.contains("avg") || metric.cumulative ? $0.v : nil,
+                                                    lo: metric.cols.contains("min") ? $0.lo : nil, hi: metric.cols.contains("max") ? $0.hi : nil) }
+        }
         var aggregator = SampleAggregator(calendar: Calendar.current, from: from, to: to, style: Self.aggregationStyle(metric.type), granularity: .hour)
         try await forEachRawReading(metric.type, unit: metric.unit, scale: 1, from: from, to: to) { aggregator.add($0) }
         return aggregator.hourly(avg: metric.cols.contains("avg"), min: metric.cols.contains("min"), max: metric.cols.contains("max"))
+    }
+
+    private func sharedRawSummary(_ type: HKQuantityType, unit: HKUnit, scale: Double, from: Date, to: Date,
+                                  calendar: Calendar, cache: RawHistoryCache) async throws -> RawHistorySummary {
+        let key = RawHistoryKey(type: type.identifier, unit: unit.unitString, scale: scale, from: from, to: to,
+                                calendar: String(describing: calendar.identifier), timeZone: calendar.timeZone.identifier)
+        // Build hourly values only for quantities that actually have an hourly consumer with these units.
+        let wantsHourly = scale == 1 && scope.hourly.contains { $0.type.identifier == type.identifier && $0.unit.unitString == unit.unitString }
+        return try await cache.value(key) { [self] in
+            let style = Self.aggregationStyle(type)
+            var day = SampleAggregator(calendar: calendar, from: from, to: to, style: style, granularity: .day)
+            var hour = SampleAggregator(calendar: calendar, from: from, to: to, style: style, granularity: .hour)
+            try await forEachRawReading(type, unit: unit, scale: scale, from: from, to: to) {
+                day.add($0)
+                if wantsHourly { hour.add($0) }
+            }
+            let daily: [String: [(String, Double)]]
+            if style == .cumulative {
+                let values = day.daily(.sum)
+                daily = Dictionary(uniqueKeysWithValues: [DailyAgg.sum, .avg, .min, .max, .last].map { ($0.rawValue, values) })
+            } else {
+                daily = Dictionary(uniqueKeysWithValues: [DailyAgg.sum, .avg, .min, .max, .last].map { ($0.rawValue, day.daily($0)) })
+            }
+            return RawHistorySummary(daily: daily, hourly: wantsHourly ? hour.hourly(avg: true, min: true, max: true) : [])
+        }
     }
 
     /// Turns the samples of one event type into `ev` chunks, one group per writing app.
