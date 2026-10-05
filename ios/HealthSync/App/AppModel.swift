@@ -553,6 +553,7 @@ final class AppModel: ObservableObject {
             telemetry.event("data_deleted")
             Keychain.removeAll()
             outbox.reset()
+            outbox.deleteSavedProgress()
             await engine.resetStats()
             estimator = SyncEstimator()
             estimate = SyncEstimate()
@@ -586,6 +587,8 @@ final class AppModel: ObservableObject {
         defer { busy = false }
         await stopSync(waitingAtMost: 20)
         telemetry.event("signed_out")
+        // Keep this account's sync progress: signing back in to it then only syncs what is new.
+        if let account = try? await backend.signIn() { outbox.saveProgress(account: account) }
         Keychain.removeAll()
         outbox.reset()
         await engine.resetStats()
@@ -637,8 +640,10 @@ final class AppModel: ObservableObject {
             appleAccountLinked = await backend.hasAppleAccount()
             if let freshUid, let current = try? await backend.signIn(), current != freshUid {
                 stopped = true
-                await stopSync(waitingAtMost: 20)
+                // The sync running on the replaced account is thrown away: don't make the person wait for it to wind down.
+                await stopSync(waitingAtMost: 3)
                 try await startOverOnRestoredAccount()
+                defaults.set(current, forKey: Self.syncedUidKey)
             }
             if onboarding {
                 defaults.set(false, forKey: Self.pendingAccountKey)
@@ -672,6 +677,12 @@ final class AppModel: ObservableObject {
     /// was just replaced, so the first sync starts again from scratch against the restored one.
     private func startOverOnRestoredAccount() async throws {
         outbox.reset()
+        // If this phone synced this account before (Log out keeps its progress) and the server still holds its data,
+        // carry on from there instead of reading and sending the whole history again.
+        if let account = try? await backend.signIn(), let held = try? await backend.status(), held.typesWithData > 0, !held.deleting,
+           outbox.restoreProgress(account: account) {
+            telemetry.event("progress_restored")
+        }
         await engine.resetStats()
         estimator = SyncEstimator()
         estimate = SyncEstimate()
