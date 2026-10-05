@@ -129,20 +129,22 @@ struct ConnectView: View {
         HeroMetrics.make(stats: model.progress.stats, workoutsUploaded: model.progress.detailsTotal, historyStart: model.status.historyStart)
     }
 
-    /// Sync state under the number: the step bar and estimate while syncing, otherwise how things stand.
+    /// Sync state under the number: the four lines, what is being read and the time left while syncing, otherwise how things stand.
     @ViewBuilder private var progress: some View {
         let p = model.progress
         VStack(alignment: .leading, spacing: 0) {
             if p.stepsTotal > 0 && !p.historyComplete {
-                StepBar(fraction: p.uploadFraction)
-                Text(model.estimate.text)
+                StepBar(lines: p.lines)
+                Text(p.headline)
                     .bodyText(.semibold)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 16)
-                    .accessibilityIdentifier("syncEstimate")
-                Text(Copy.Home.keepOpen)
+                Text("\(model.estimate.text) · \(Copy.Home.keepOpen)")
                     .smallText()
                     .foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 2)
+                    .accessibilityIdentifier("syncEstimate")
             } else if p.historyComplete && model.status.typesWithData == 0 && model.status.registered {
                 Text(Copy.Home.noData).bodyText(.semibold)
                 Text(Copy.Home.noDataDetail)
@@ -156,8 +158,8 @@ struct ConnectView: View {
                     .foregroundStyle(Theme.muted)
                     .padding(.top, 2)
             } else {
-                // Upload hasn't begun: the bar waits in its first segment.
-                StepBar(fraction: 0)
+                // Upload hasn't begun: the first line is already loading.
+                StepBar(lines: p.lines)
                 Text(Copy.Home.gettingReady).bodyText(.semibold)
                     .padding(.top, 16)
             }

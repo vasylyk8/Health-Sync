@@ -656,26 +656,135 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertTrue(p.historyComplete)
     }
 
-    func testUploadFractionStaysInTheFirstQuarterUntilTheWorkoutListIsKnown() {
-        var p = SyncProgress(detailsDone: 0, detailsTotal: 0, isSyncing: true)
-        p.stepsDone = 2
-        p.stepsTotal = 3
-        XCTAssertEqual(p.fraction, 2.0 / 3.0, accuracy: 0.0001)
-        XCTAssertEqual(p.uploadFraction, 0.24, accuracy: 0.0001, "no workout count yet: the share is not real")
-        p.historyDone = true
-        XCTAssertEqual(p.uploadFraction, 2.0 / 3.0, accuracy: 0.0001)
-        p.stepsDone = 3
-        XCTAssertEqual(p.uploadFraction, 1)
+    // MARK: Lines on Home
+
+    private var hourlyScope: SyncScope {
+        SyncScope(types: [workoutType], workoutQuantities: [], dailyMetrics: [DailyMetric(key: "rings", kind: .rings)],
+                  hourly: [HourlyMetric(name: "StepCount", type: HKQuantityType(.stepCount), unit: .count(), unitLabel: "count", cumulative: true, cols: ["sum"])])
     }
 
-    func testStepBarSegmentsFillAtEachQuarter() {
-        func filled(_ f: Double) -> [Bool] { (0..<StepBar.segments).map { StepBar.isFilled($0, fraction: f) } }
-        XCTAssertEqual(filled(0), [false, false, false, false])
-        XCTAssertEqual(filled(0.24), [false, false, false, false])
-        XCTAssertEqual(filled(0.25), [true, false, false, false])
-        XCTAssertEqual(filled(0.49), [true, false, false, false])
-        XCTAssertEqual(filled(0.5), [true, true, false, false])
-        XCTAssertEqual(filled(0.75), [true, true, true, false])
-        XCTAssertEqual(filled(1), [true, true, true, true])
+    func testProgressReachesTheEndWithDaysHoursAndWorkouts() async throws {
+        let source = ScriptedSource()
+        let from = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: -30, to: Date()))
+        source.earliestDaily = from
+        source.recent = [workout("W1")]
+        source.daily = [["k": "day", "day": "2024-06-20", "m": .object(["restingHr": 51])]]
+        source.pages = [AnchoredPage(records: [workout("W1")], newAnchor: Data("A1".utf8), objectCount: 1)]
+        source.index = [WorkoutRef(id: "W1", start: Date())]
+        source.details = ["W1": detail("W1")]
+        let box = Outbox(root: root)
+        let engine = SyncEngine(source: source, uploader: RecordingUploader(), outbox: box, scope: hourlyScope)
+        let log = ProgressLog()
+        await engine.onProgress { log.add($0) }
+        _ = try await engine.run()
+        let p = await engine.progress
+        XCTAssertTrue(p.historyComplete)
+        XCTAssertEqual(p.stepsTotal, 5, "recent workouts, workout list, daily history, hourly history and one workout")
+        XCTAssertTrue(p.indexingDone)
+        XCTAssertTrue(p.dailyDone)
+        XCTAssertTrue(p.hourlyDone)
+        XCTAssertEqual(p.daysTotal, 30)
+        XCTAssertEqual(p.daysRead, 30)
+        XCTAssertEqual(p.hoursRead, 30 * 24)
+        XCTAssertEqual(p.historySinceYear, Calendar.current.component(.year, from: from))
+        XCTAssertEqual(p.dailyFraction, 1)
+        XCTAssertEqual(p.hourlyFraction, 1)
+        XCTAssertEqual(box.state.historyFrom, Calendar.current.startOfDay(for: from))
+        let seen = log.items
+        XCTAssertEqual(seen.first?.indexingDone, false, "the first report is made before anything is read")
+        XCTAssertEqual(seen.last?.historyComplete, true)
     }
+
+    func testHistoryIsNotCompleteUntilTheHourlyHistoryIs() async throws {
+        let box = Outbox(root: root)
+        try box.update { s in
+            s.recentDone.insert(HealthTypes.workoutId)
+            s.caughtUp.insert(HealthTypes.workoutId)
+            s.dailyFullAt = Date()
+            s.workoutTotal = 1
+            s.detailsDone = ["W1"]
+        }
+        let engine = SyncEngine(source: ScriptedSource(), uploader: RecordingUploader(), outbox: box, scope: hourlyScope)
+        var p = await engine.progress
+        XCTAssertTrue(p.indexingDone)
+        XCTAssertTrue(p.dailyDone)
+        XCTAssertFalse(p.hourlyDone)
+        XCTAssertFalse(p.historyComplete)
+        XCTAssertEqual(p.stepsTotal, 5)
+        XCTAssertEqual(p.stepsDone, 4)
+        try box.update { $0.hourlyAt = Date() }
+        p = await engine.progress
+        XCTAssertTrue(p.hourlyDone)
+        XCTAssertTrue(p.historyComplete)
+    }
+
+    func testAScopeWithoutHourlyMetricsDoesNotWaitForThem() async throws {
+        let box = Outbox(root: root)
+        try box.update { s in
+            s.recentDone.insert(HealthTypes.workoutId)
+            s.caughtUp.insert(HealthTypes.workoutId)
+            s.dailyFullAt = Date()
+        }
+        let engine = SyncEngine(source: ScriptedSource(), uploader: RecordingUploader(), outbox: box, scope: scope)
+        let p = await engine.progress
+        XCTAssertTrue(p.hourlyDone)
+        XCTAssertTrue(p.historyComplete)
+    }
+
+    func testIndexingIsDoneOnlyOnceTheWorkoutListIsKnown() async throws {
+        let box = Outbox(root: root)
+        try box.update { s in
+            s.recentDone.insert(HealthTypes.workoutId)
+            s.caughtUp.insert(HealthTypes.workoutId)
+        }
+        let engine = SyncEngine(source: ScriptedSource(), uploader: RecordingUploader(), outbox: box, scope: scope)
+        var p = await engine.progress
+        XCTAssertFalse(p.indexingDone, "the number of workouts is not known yet")
+        try box.update { $0.workoutTotal = 12 }
+        p = await engine.progress
+        XCTAssertTrue(p.indexingDone)
+        XCTAssertEqual(p.detailsTotal, 12)
+    }
+
+    func testTheHourCounterFollowsTheSavedPosition() async throws {
+        let cal = Calendar.current
+        let box = Outbox(root: root)
+        try box.update { s in
+            s.historyFrom = cal.date(byAdding: .day, value: -10, to: Date())
+            s.hourlyThrough = cal.date(byAdding: .day, value: -4, to: Date())
+        }
+        let engine = SyncEngine(source: ScriptedSource(), uploader: RecordingUploader(), outbox: box, scope: hourlyScope)
+        let p = await engine.progress
+        XCTAssertEqual(p.daysTotal, 10)
+        XCTAssertEqual(p.hoursRead, 6 * 24, "the hourly pass is resumable, so its position comes from the saved state")
+        XCTAssertEqual(p.hourlyFraction, 0.6, accuracy: 0.0001)
+        XCTAssertEqual(p.daysRead, 0, "the daily pass has not read anything in this run")
+        XCTAssertEqual(p.dailyFraction, 0)
+    }
+
+    func testNoCountersUntilTheHistoryStartIsKnown() async throws {
+        let engine = SyncEngine(source: ScriptedSource(), uploader: RecordingUploader(), outbox: Outbox(root: root), scope: hourlyScope)
+        let p = await engine.progress
+        XCTAssertEqual(p.daysTotal, 0)
+        XCTAssertEqual(p.daysRead, 0)
+        XCTAssertEqual(p.hoursRead, 0)
+        XCTAssertNil(p.historySinceYear)
+    }
+
+    func testTheHistoryStartSurvivesARestartAndKeepsTheEarliestDate() throws {
+        let early = Date(timeIntervalSince1970: 1_500_000_000)
+        let later = Date(timeIntervalSince1970: 1_600_000_000)
+        try Outbox(root: root).update { $0.historyFrom = later }
+        XCTAssertEqual(Outbox(root: root).state.historyFrom, later)
+        try Outbox(root: root).update { $0.historyFrom = early }
+        XCTAssertEqual(Outbox(root: root).state.historyFrom, early)
+    }
+}
+
+/// Collects what the engine reports.
+final class ProgressLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var all: [SyncProgress] = []
+    func add(_ p: SyncProgress) { lock.lock(); all.append(p); lock.unlock() }
+    var items: [SyncProgress] { lock.lock(); defer { lock.unlock() }; return all }
 }

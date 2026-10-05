@@ -110,8 +110,7 @@ final class AppModel: ObservableObject {
     }
 
     private func updateEstimate() {
-        estimator.record(detailsDone: progress.detailsDone, detailsTotal: progress.detailsTotal,
-                         historyComplete: progress.historyComplete, now: ProcessInfo.processInfo.systemUptime)
+        estimator.record(progress, now: ProcessInfo.processInfo.systemUptime)
         if estimator.estimate != estimate { estimate = estimator.estimate }
     }
 

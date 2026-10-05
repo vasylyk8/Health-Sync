@@ -60,6 +60,8 @@ final class Outbox: @unchecked Sendable {
         /// Hourly series: uploaded through this time, and when the last complete pass ended.
         var hourlyThrough: Date?
         var hourlyAt: Date?
+        /// Where the history the daily and hourly passes read starts (the earliest date found), for the day and hour counters on Home.
+        var historyFrom: Date?
         var profileAt: Date?
         /// Version of the daily-rows logic that produced what was sent; a newer app re-reads the whole history once.
         var dailyVersion = 0
@@ -72,7 +74,7 @@ final class Outbox: @unchecked Sendable {
 
         private enum CodingKeys: String, CodingKey {
             case schemaVersion, anchors, seq, recentDone, caughtUp, reconcile, dailyFullAt, detailsDone, workoutTotal, lastSyncAt
-            case dailyHashes, hourlyThrough, hourlyAt, profileAt, dailyVersion, hourlyVersion, detailVersion
+            case dailyHashes, hourlyThrough, hourlyAt, historyFrom, profileAt, dailyVersion, hourlyVersion, detailVersion
         }
 
         /// Tolerant decoding: a state file written by an older app version (missing or extra keys)
@@ -92,6 +94,7 @@ final class Outbox: @unchecked Sendable {
             dailyHashes = try c.decodeIfPresent([String: String].self, forKey: .dailyHashes) ?? [:]
             hourlyThrough = try c.decodeIfPresent(Date.self, forKey: .hourlyThrough)
             hourlyAt = try c.decodeIfPresent(Date.self, forKey: .hourlyAt)
+            historyFrom = try c.decodeIfPresent(Date.self, forKey: .historyFrom)
             profileAt = try c.decodeIfPresent(Date.self, forKey: .profileAt)
             dailyVersion = try c.decodeIfPresent(Int.self, forKey: .dailyVersion) ?? 0
             hourlyVersion = try c.decodeIfPresent(Int.self, forKey: .hourlyVersion) ?? 0
