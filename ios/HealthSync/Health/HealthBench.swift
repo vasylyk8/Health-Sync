@@ -78,14 +78,15 @@ enum HealthBench {
             return
         }
         m.log("authorized")
-        let history = args.contains("-benchHistory")
+        let hourlyExperiment = args.contains("-benchHourly")
+        let history = args.contains("-benchHistory") || hourlyExperiment
         let heavy = args.firstIndex(of: "-benchHeavy").flatMap { Int(args[$0 + 1]) } ?? 60
         let light = max(0, count - heavy)
         await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: history || args.contains("-benchScheduling") ? 9 : 1.3, heavyStride: history ? 6 : 1, m)
         await seedBackground(store, count: 100_000, m)
         if history {
             await seedHistoryDetails(store, m)
-            await historyComparison(scope, m)
+            if hourlyExperiment { await hourlyComparison(scope, m) } else { await historyComparison(scope, m) }
             m.log("BENCH DONE")
             return
         }
@@ -224,6 +225,49 @@ enum HealthBench {
             }
         }
         m.log(passed ? "HIST CHECK OK" : "HIST CHECK FAILED")
+    }
+
+    /// Hourly reduction alone, without enabling any of the raw-reader optimizations.
+    private static func hourlyComparison(_ scope: SyncScope, _ m: BenchModel) async {
+        let at = Date()
+        let expected = (try? await HealthKitSource(scope: scope).workoutIndex().count) ?? 0
+        let args = ProcessInfo.processInfo.arguments
+        let requested = args.firstIndex(of: "-benchCount").flatMap { Int(args[$0 + 1]) } ?? 300
+        var passed = expected == requested && expected > 0
+        m.log("HOURLY configured " + scope.hourly.map(\.name).joined(separator: ","))
+        for forced in [true, false] {
+            var reference: BenchCapture?
+            // One excluded warm-up, then two opposite-order measurements of each option.
+            let order: [HourlyHistoryExperiment] = [.all, .all, .noHeartRate, .stepsOnly, .none, .none, .stepsOnly, .noHeartRate, .all]
+            for (run, variant) in order.enumerated() {
+                let candidateScope = variant.scope(from: scope)
+                let retained = Set(candidateScope.hourly.map(\.name))
+                let net = BenchCapture()
+                let root = FileManager.default.temporaryDirectory.appendingPathComponent("hourly-\(UUID().uuidString)")
+                let box = Outbox(root: root)
+                let source = HealthKitSource(scope: candidateScope)
+                source.debugFailingStatistics = forced
+                let engine = SyncEngine(source: source, uploader: net, outbox: box, scope: candidateScope, now: { at })
+                let before = SyncTiming.shared.phaseMilliseconds()
+                let started = Date()
+                do {
+                    let outcome = try await engine.run()
+                    let wall = Date().timeIntervalSince(started)
+                    if reference == nil { reference = net }
+                    let comparison = try net.comparison(to: reference!, retainingHourly: retained)
+                    let complete = outcome == .finished && box.state.detailsDone.count == expected && box.pending().isEmpty
+                    passed = passed && comparison.equivalent && complete
+                    let phases = SyncTiming.shared.phaseMilliseconds()
+                    let delta = phases.map { key, value in "\(key)=\(String(format: "%.2f", (value - (before[key] ?? 0)) / 1000))s" }.sorted().joined(separator: " ")
+                    m.log("HOURLY result \(variant.rawValue) forced=\(forced) warmup=\(run == 0): wall=\(String(format: "%.2f", wall))s details=\(box.state.detailsDone.count)/\(expected) equal=\(comparison.equivalent) exact=\(comparison.exact) maxDelta=\(String(format: "%.16g", comparison.maximumDelta)) complete=\(complete) retained=\(retained.sorted().joined(separator: ",")) \(await source.historyExperimentSummary()) \(net.hourlySummary) \(net.summary(wall: wall)) \(delta)")
+                } catch {
+                    passed = false
+                    m.log("HOURLY failed \(variant.rawValue): \(error)")
+                }
+                try? FileManager.default.removeItem(at: root)
+            }
+        }
+        m.log(passed ? "HOURLY CHECK OK" : "HOURLY CHECK FAILED")
     }
 
     /// Sparse recovery metrics through the workout history and long samples crossing a query boundary.
@@ -579,6 +623,7 @@ private final class BenchCapture: Uploader, @unchecked Sendable {
     private let net = SimNet(perUploadMBs: 0.6, capMBs: 0.6)
     private let lock = NSLock()
     private var records: [String] = []
+    private var hourlyBytes = 0, hourlyUploads = 0
     func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {
         guard let raw = Gzip.decompress(gz), let text = String(data: raw, encoding: .utf8) else { throw NSError(domain: "BenchCapture", code: 1) }
         let lines = try text.split(separator: "\n").dropFirst().map { line -> String in
@@ -587,7 +632,10 @@ private final class BenchCapture: Uploader, @unchecked Sendable {
             return typeId + ":" + String(decoding: data, as: UTF8.self)
         }
         try await net.upload(batchId: batchId, gz: gz, sha256: sha256, typeId: typeId)
-        lock.withLock { records.append(contentsOf: lines) }
+        lock.withLock {
+            records.append(contentsOf: lines)
+            if typeId == HealthTypes.hourlyId { hourlyBytes += gz.count; hourlyUploads += 1 }
+        }
     }
     var fingerprint: String {
         let data = lock.withLock { Data(records.sorted().joined(separator: "\n").utf8) }
@@ -597,6 +645,18 @@ private final class BenchCapture: Uploader, @unchecked Sendable {
     func comparison(to reference: BenchCapture) throws -> HistoryRecordComparison {
         try HistoryRecordComparison.compare(reference.snapshot, snapshot)
     }
+    /// Remove only deliberately disabled hourly series from the expected output; compare everything actually emitted.
+    func comparison(to reference: BenchCapture, retainingHourly names: Set<String>) throws -> HistoryRecordComparison {
+        let expected = try reference.snapshot.filter { line in
+            guard line.hasPrefix(HealthTypes.hourlyId + ":") else { return true }
+            let body = line.dropFirst(HealthTypes.hourlyId.count + 1)
+            guard let object = try JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any],
+                  let name = object["st"] as? String else { throw NSError(domain: "HourlyRecord", code: 1) }
+            return names.contains(name)
+        }
+        return try HistoryRecordComparison.compare(expected, snapshot)
+    }
+    var hourlySummary: String { lock.withLock { "hourlyBytes=\(hourlyBytes) hourlyUploads=\(hourlyUploads)" } }
     func differences(to reference: BenchCapture) -> [String] {
         let a = Set(reference.snapshot), b = Set(snapshot)
         return a.subtracting(b).sorted().prefix(1).map { "reference " + $0 } + b.subtracting(a).sorted().prefix(1).map { "candidate " + $0 }

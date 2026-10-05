@@ -143,8 +143,10 @@ enum DailyCheck {
         }
         guard await seedShapes(m, store: store, today: today, calendar: cal) else { return }
         let comparisonEnd = Date()
-        for experiment in RawHistoryExperiment.allCases {
-            let source = HealthKitSource(scope: scope)
+        let cases = RawHistoryExperiment.allCases.map { ($0.rawValue, $0, scope) }
+            + HourlyHistoryExperiment.allCases.filter { $0 != .all }.map { ("hourly-" + $0.rawValue, RawHistoryExperiment.baseline, $0.scope(from: scope)) }
+        for (name, experiment, candidateScope) in cases {
+            let source = HealthKitSource(scope: candidateScope)
             source.historyExperiment = experiment
             do {
                 var differences: [String] = []
@@ -158,9 +160,9 @@ enum DailyCheck {
                 }
                 m.log("DAILYSEM compared \(compared) days and hours, \(differences.count) differ")
                 for d in differences.prefix(40) { m.log("DAILYSEM DIFF \(d)") }
-                m.log(differences.isEmpty && compared > 0 ? "DAILYSEM OK \(experiment.rawValue)" : "DAILYSEM FAIL \(experiment.rawValue) raw aggregation differs from HealthKit's statistics")
+                m.log(differences.isEmpty && compared > 0 ? "DAILYSEM OK \(name)" : "DAILYSEM FAIL \(name) raw aggregation differs from HealthKit's statistics")
             } catch {
-                m.log("DAILYSEM FAIL \(experiment.rawValue) comparison threw: \(error)")
+                m.log("DAILYSEM FAIL \(name) comparison threw: \(error)")
             }
         }
     }

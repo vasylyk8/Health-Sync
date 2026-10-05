@@ -7,9 +7,11 @@ final class HealthBenchUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         let count = ProcessInfo.processInfo.environment["BENCH_COUNT"] ?? "300"
+        let hourly = ProcessInfo.processInfo.environment["BENCH_HOURLY"] == "1"
         let history = ProcessInfo.processInfo.environment["BENCH_HISTORY"] == "1"
         let scheduling = ProcessInfo.processInfo.environment["BENCH_SCHEDULING"] == "1"
         app.launchArguments = ["-healthBench", "-benchCount", count]
+        if hourly { app.launchArguments += ["-benchHourly", "-benchHeavy", "24"] }
         if history { app.launchArguments += ["-benchHistory", "-benchHeavy", "24"] }
         if history && ProcessInfo.processInfo.environment["BENCH_HISTORY_CHECK"] == "1" { app.launchArguments += ["-benchHistoryCheck"] }
         if scheduling && !history { app.launchArguments += ["-benchScheduling", "-benchHeavy", "24"] }
@@ -45,6 +47,12 @@ final class HealthBenchUITests: XCTestCase {
         shot.lifetime = .keepAlways
         add(shot)
         XCTAssertTrue(output.label.contains("BENCH DONE"), "benchmark did not finish")
+        if hourly {
+            XCTAssertTrue(output.label.contains("HOURLY CHECK OK"), "hourly reduction changed retained data or failed: " + output.label)
+            XCTAssertTrue(output.label.contains(", 0 failures,"))
+            XCTAssertFalse(output.label.contains("HIST seed failed"))
+            XCTAssertFalse(output.label.contains("background save error"))
+        }
         if history {
             XCTAssertTrue(output.label.contains("HIST CHECK OK"), "history experiment changed data or failed: " + output.label)
             XCTAssertTrue(output.label.contains(", 0 failures,"), "workout seed must complete without errors")

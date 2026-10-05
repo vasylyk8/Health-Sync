@@ -54,6 +54,11 @@ final class DailyCheckUITests: XCTestCase {
                 }
             }
         }
+        for option in ["noHeartRate", "stepsOnly", "none"] {
+            if !all.contains(where: { $0.hasPrefix("DAILYSEM OK hourly-\(option)") }) {
+                failures.append("hourly-\(option) Apple reference comparison missing or failed: " + lines("DAILYSEM"))
+            }
+        }
         if all.contains(where: { $0.hasPrefix("DAILYSEM FAIL") || $0.hasPrefix("DAILYRAW FAIL") || $0.hasPrefix("DAILYCOMPLETE FAIL") }) {
             failures.append("an accuracy check explicitly failed")
         }
