@@ -317,10 +317,10 @@ enum DailyCheck {
         do {
             try await store.save(sample(100, hour: 8))
             let before = try await SharedRawHistory.withFreshCache { try await source.dailyContext(from: day, to: to) }
-            guard steps(before) == 100 else { m.log("DAILYSHARED FAIL initial fixture"); return }
+            guard let initial = steps(before), abs(initial - 100) < 1e-6 else { m.log("DAILYSHARED FAIL initial fixture: \(String(describing: steps(before)))"); return }
             try await store.save(sample(300, hour: 12))
             let after = try await SharedRawHistory.withFreshCache { try await source.dailyContext(from: day, to: to) }
-            guard steps(after) == 400 else { m.log("DAILYSHARED FAIL stale reading after import"); return }
+            guard let updated = steps(after), abs(updated - 400) < 1e-6 else { m.log("DAILYSHARED FAIL stale reading after import: \(String(describing: steps(after)))"); return }
             source.debugEmptyStatistics = false
             let apple = try await SharedRawHistory.withFreshCache { try await source.statisticsVersusRaw(from: day, to: to) }
             guard apple.compared > 0 && apple.differences.isEmpty else { m.log("DAILYSHARED FAIL updated fixture differs from Apple"); return }
