@@ -75,6 +75,17 @@ final class InitialSyncExperimentsTests: XCTestCase {
         for (a, b) in zip(unified.hourly, hourly) { XCTAssertEqual(a.v!, b.v!, accuracy: 1e-9) }
         XCTAssertTrue(day.cumulativeDailyHourly(includeHourly: false).hourly.isEmpty)
     }
+    func testAggregateCachePrefersSharedTypesWithinItsRowBound() async throws {
+        let cache = RawHistoryCache(rowLimit: 2, entryLimit: 2)
+        func key(_ name: String) -> RawHistoryKey { RawHistoryKey(type: name, unit: "count", scale: 1, from: date("2020-01-01"), to: date("2021-01-01"), calendar: "gregorian", timeZone: "UTC") }
+        let value = RawHistorySummary(daily: ["sum": [("2020-01-01", 12)]], hourly: [])
+        _ = try await cache.value(key("shared"), retentionPriority: true) { value }
+        _ = try await cache.value(key("other")) { value }
+        _ = try await cache.value(key("new")) { value }
+        _ = try await cache.value(key("shared"), retentionPriority: true) { XCTFail("shared summary was evicted"); return value }
+        let builds = await cache.builds, peak = await cache.peakRows
+        XCTAssertEqual(builds, 3); XCTAssertEqual(peak, 2)
+    }
     /// Investigation evidence: these existing rules are order-sensitive. Do not claim a phone root cause from this fixture.
     func testExistingWorkoutCollisionRuleDependsOnInputOrder() {
         let a = SeriesPoint(t: 1000, v: 70), b = SeriesPoint(t: 1000, v: 80)

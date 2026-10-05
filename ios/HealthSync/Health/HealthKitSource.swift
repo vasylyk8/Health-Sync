@@ -1224,7 +1224,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
                                 calendar: String(describing: calendar.identifier), timeZone: calendar.timeZone.identifier)
         // Build hourly values only for quantities that actually have an hourly consumer with these units.
         let wantsHourly = scale == 1 && scope.hourly.contains { $0.type.identifier == type.identifier && $0.unit.unitString == unit.unitString }
-        return try await cache.value(key) { [self] in
+        return try await cache.value(key, retentionPriority: InitialSyncExperiments.strategy?.unified == true && wantsHourly) { [self] in
             let style = Self.aggregationStyle(type)
             let unified = style == .cumulative && InitialSyncExperiments.strategy?.unified == true
             var day = SampleAggregator(calendar: calendar, from: from, to: to, style: style, granularity: .day)
