@@ -124,13 +124,31 @@ struct OnboardingView: View {
                 connectedPill
                     .transition(.opacity)
             }
-            if slid {
+            // Apple's button is never altered: while the sign-in runs it is swapped for a plain pill (no Apple logo or wording).
+            if slid && !model.busy {
                 AppleSignInButton()
+                    .transition(.opacity)
+            }
+            if slid && model.busy {
+                signingInPill
                     .transition(.opacity)
             }
         }
         .animation(change, value: onAccount)
         .animation(change, value: slid)
+    }
+
+    private var signingInPill: some View {
+        HStack(spacing: 10) {
+            ProgressView().tint(Theme.buttonText)
+            Text(Copy.Account.signingIn)
+        }
+        .bodyText(.semibold)
+        .foregroundStyle(Theme.buttonText)
+        .frame(maxWidth: .infinity, minHeight: Theme.pillHeight)
+        .background(Theme.buttonFill, in: RoundedRectangle(cornerRadius: Theme.buttonRadius, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("signingIn")
     }
 
     private var connectedPill: some View {

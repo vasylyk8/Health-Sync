@@ -25,6 +25,7 @@ enum Copy {
         static let body = "An account is needed to connect with AI. You can delete it and your data anytime."
         static let signIn = "Sign in with Apple"
         static let connected = "Apple Health connected"
+        static let signingIn = "Signing in…"
     }
 
     enum Home {

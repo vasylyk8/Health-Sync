@@ -46,7 +46,9 @@ final class StubBackend: Backend, @unchecked Sendable {
     }
     var categoryCalls: [[String]] = []
     func setCategories(_ ids: [String]) async throws { categoryCalls.append(ids) }
-    func status() async throws -> ServerStatus { .empty }
+    /// What the server reports (a restored account that already holds data).
+    var serverStatus = ServerStatus.empty
+    func status() async throws -> ServerStatus { serverStatus }
     func batchExists(batchId: String) async throws -> Bool { true }
     func signOut() async {}
     func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {}
@@ -319,6 +321,65 @@ final class AppModelTests: XCTestCase {
         backend.appleLinkError = AppleSignInError.accountConflict
         await model.linkAppleAccount(AppleSignInResult(idToken: "t", nonce: "n", authorizationCode: "c"))
         XCTAssertFalse(model.errorMessage?.contains("(sign-in:") == true)
+    }
+
+    func testSigningBackInToTheSameAccountResumesItsSyncProgress() async throws {
+        let backend = StubBackend()
+        backend.uid = "owner"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let outbox = Outbox(root: root)
+        let defaults = UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!
+        let model = AppModel(backend: backend, source: ScriptedSource(), outbox: outbox, scope: .empty, telemetry: NoTelemetry(), defaults: defaults)
+        await model.connectHealth()
+        await model.linkAppleAccount(AppleSignInResult(idToken: "t", nonce: "n", authorizationCode: "c"))
+        XCTAssertEqual(model.phase, .home)
+        try outbox.update { $0.caughtUp.insert("kept-marker") }
+
+        await model.logOut()
+        XCTAssertEqual(model.phase, .welcome)
+        XCTAssertFalse(outbox.state.caughtUp.contains("kept-marker"), "logging out empties this phone's progress")
+
+        // Onboarding again on a new throwaway account, then signing in restores "owner", which holds data.
+        backend.uid = "throwaway"
+        backend.restoredUid = "owner"
+        backend.serverStatus = ServerStatus(registered: true, deleting: false, setUp: [:], lastVisibleAt: 1, historySyncedBackTo: 1, typesWithData: 3)
+        await model.connectHealth()
+        await model.linkAppleAccount(AppleSignInResult(idToken: "t", nonce: "n", authorizationCode: "c"))
+        XCTAssertEqual(model.phase, .home)
+        XCTAssertTrue(outbox.state.caughtUp.contains("kept-marker"), "the account's progress is back, so only new data syncs")
+    }
+
+    func testProgressIsNotResumedWhenTheServerHoldsNoData() async throws {
+        let backend = StubBackend()
+        backend.uid = "owner"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let outbox = Outbox(root: root)
+        let defaults = UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!
+        let model = AppModel(backend: backend, source: ScriptedSource(), outbox: outbox, scope: .empty, telemetry: NoTelemetry(), defaults: defaults)
+        await model.connectHealth()
+        await model.linkAppleAccount(AppleSignInResult(idToken: "t", nonce: "n", authorizationCode: "c"))
+        try outbox.update { $0.caughtUp.insert("kept-marker") }
+        await model.logOut()
+        backend.uid = "throwaway"
+        backend.restoredUid = "owner"
+        await model.connectHealth()
+        await model.linkAppleAccount(AppleSignInResult(idToken: "t", nonce: "n", authorizationCode: "c"))
+        XCTAssertFalse(outbox.state.caughtUp.contains("kept-marker"), "an account with no data on the server is synced from scratch")
+    }
+
+    func testSavedProgressIsKeptPerAccountAndOnlyWhenNothingIsWaiting() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let outbox = Outbox(root: root)
+        XCTAssertFalse(outbox.saveProgress(account: "a"), "nothing synced yet, nothing to keep")
+        try outbox.update { $0.caughtUp.insert("w") }
+        XCTAssertTrue(outbox.saveProgress(account: "a"))
+        outbox.reset()
+        XCTAssertFalse(outbox.restoreProgress(account: "b"), "another account has no saved progress")
+        XCTAssertTrue(outbox.restoreProgress(account: "a"))
+        XCTAssertEqual(outbox.state.caughtUp, ["w"])
+        outbox.deleteSavedProgress()
+        outbox.reset()
+        XCTAssertFalse(outbox.restoreProgress(account: "a"))
     }
 
     func testRestoringAnExistingAccountStartsTheSyncOverAndFinishesOnboarding() async {
