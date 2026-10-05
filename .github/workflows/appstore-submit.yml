@@ -1,0 +1,56 @@
+# Attaches an uploaded TestFlight build to the App Store version and optionally submits it for App Review.
+# Manual only. Default is a dry run (submit=false): it never submits and never releases.
+name: appstore-submit
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: TestFlight build number to attach (for example 68)
+        required: true
+      submit:
+        description: Submit for App Review (false = dry run)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: appstore-submit
+  cancel-in-progress: false
+jobs:
+  submit:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      HAS_SECRETS: ${{ secrets.ASC_KEY_P8 != '' }}
+      BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      SUBMIT: ${{ inputs.submit }}
+    steps:
+      - if: env.HAS_SECRETS != 'true'
+        run: echo "::notice::App Store Connect secrets not set (docs/SETUP.md). Skipping."
+      - if: env.HAS_SECRETS == 'true'
+        uses: actions/checkout@v4
+      - if: env.HAS_SECRETS == 'true'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      - if: env.HAS_SECRETS == 'true'
+        working-directory: ios
+        run: |
+          bundle config set --local path vendor/bundle
+          bundle install --quiet
+          python3 - <<'PY'
+          import json, os
+          json.dump({"key_id": os.environ["ASC_KEY_ID"], "issuer_id": os.environ["ASC_ISSUER_ID"],
+                     "key": os.environ["ASC_KEY_P8"], "in_house": False}, open("asc_key.json", "w"))
+          PY
+          if [ "$SUBMIT" = "true" ]; then echo "Submitting build $BUILD_NUMBER for App Review"; else echo "Dry run: attaching build $BUILD_NUMBER, NOT submitting"; fi
+          bundle exec fastlane run deliver \
+            api_key_path:asc_key.json app_identifier:"$BUNDLE_ID" build_number:"$BUILD_NUMBER" \
+            skip_binary_upload:true skip_metadata:true skip_screenshots:true force:true \
+            submit_for_review:"$SUBMIT" automatic_release:false precheck_include_in_app_purchases:false
+          rm -f asc_key.json
