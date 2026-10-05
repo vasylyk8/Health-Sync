@@ -7,6 +7,9 @@ on:
       build_number:
         description: TestFlight build number to attach (for example 68)
         required: true
+      copyright:
+        description: Copyright line, set only if the App Store version has none
+        default: 2026 2ndOp Inc
       submit:
         description: Submit for App Review (false = dry run)
         type: boolean
@@ -29,6 +32,7 @@ jobs:
       ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
       BUILD_NUMBER: ${{ inputs.build_number }}
       SUBMIT: ${{ inputs.submit }}
+      COPYRIGHT: ${{ inputs.copyright }}
     steps:
       - if: env.HAS_SECRETS != 'true'
         run: echo "::notice::App Store Connect secrets not set (docs/SETUP.md). Skipping."
@@ -48,6 +52,22 @@ jobs:
           json.dump({"key_id": os.environ["ASC_KEY_ID"], "issuer_id": os.environ["ASC_ISSUER_ID"],
                      "key": os.environ["ASC_KEY_P8"], "in_house": False}, open("asc_key.json", "w"))
           PY
+          cat > set_copyright.rb <<'RB'
+          require "spaceship"
+          Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+            key_id: ENV.fetch("ASC_KEY_ID"), issuer_id: ENV.fetch("ASC_ISSUER_ID"), key: ENV.fetch("ASC_KEY_P8"))
+          app = Spaceship::ConnectAPI::App.find(ENV.fetch("BUNDLE_ID"))
+          version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
+          abort("No editable App Store version found") if version.nil?
+          if version.copyright.to_s.strip.empty?
+            version.update(attributes: { copyright: ENV.fetch("COPYRIGHT") })
+            puts "Set copyright on version #{version.version_string}"
+          else
+            puts "Copyright already set on version #{version.version_string}"
+          end
+          RB
+          bundle exec ruby set_copyright.rb
+          rm -f set_copyright.rb
           if [ "$SUBMIT" = "true" ]; then echo "Submitting build $BUILD_NUMBER for App Review"; else echo "Dry run: attaching build $BUILD_NUMBER, NOT submitting"; fi
           bundle exec fastlane run deliver \
             api_key_path:asc_key.json app_identifier:"$BUNDLE_ID" build_number:"$BUILD_NUMBER" \
