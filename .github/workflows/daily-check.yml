@@ -4,7 +4,7 @@
 name: daily-check
 on:
   push:
-    branches: [main, 'ops/phone-to-server-check', 'fix/daily-release-build', 'fix/daily-result-retention', 'claude/relaxed-volta-g9ip9f', 'fix/health-completeness-regressions', 'perf/shared-reads-release']
+    branches: [main, 'ops/phone-to-server-check', 'fix/daily-release-build', 'fix/daily-result-retention', 'claude/relaxed-volta-g9ip9f', 'fix/health-completeness-regressions', 'perf/shared-reads-release', 'perf/daily-metric-concurrency', 'perf/phone-sync-comparison']
     paths: ['.github/workflows/daily-check.yml', 'ios/HealthSync/Health/**', 'ios/HealthSync/Sync/**', 'firebase/functions/src/ingest/**', 'ios/HealthSyncUITests/DailyCheckUITests.swift', 'firebase/functions/test/unit/phone-batches.test.ts', 'firebase/functions/test/helpers/synthetic.ts']
   workflow_dispatch:
 permissions:
@@ -16,6 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         config: [Debug, Release]
+        width: [1, 2, 4]
     runs-on: macos-latest
     timeout-minutes: 40
     defaults:
@@ -26,6 +27,7 @@ jobs:
       APPLE_TEAM_ID: ''
       PUBLIC_BASE_URL: https://krok-1d60a.web.app
       SIM_DEVICE: iPhone 17 Pro
+      TEST_RUNNER_DAILY_CONCURRENCY: ${{ matrix.width }}
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -58,7 +60,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: daily-check-log-${{ matrix.config }}
+          name: daily-check-log-${{ matrix.config }}-${{ matrix.width }}
           path: ios/daily.log
       - name: Collect the upload batches the app built
         run: |
@@ -77,7 +79,7 @@ jobs:
           ls -la batches
       - uses: actions/upload-artifact@v4
         with:
-          name: phone-batches-${{ matrix.config }}
+          name: phone-batches-${{ matrix.config }}-${{ matrix.width }}
           path: ios/batches
           if-no-files-found: error
   server:
@@ -86,13 +88,14 @@ jobs:
       fail-fast: false
       matrix:
         config: [Debug, Release]
+        width: [1, 2, 4]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: phone-batches-${{ matrix.config }}
+          name: phone-batches-${{ matrix.config }}-${{ matrix.width }}
           path: phone-batches
       - uses: actions/setup-node@v4
         with:

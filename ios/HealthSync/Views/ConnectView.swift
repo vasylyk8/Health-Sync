@@ -6,6 +6,7 @@ struct ConnectView: View {
     @State private var selected: AIProvider?
     @State private var confirmDelete = false
     @State private var confirmLogOut = false
+    @State private var confirmComparison = false
     /// The race medal's finish-time picker is open (the number and sync status step aside).
     @State private var editingGoal = false
 
@@ -37,6 +38,12 @@ struct ConnectView: View {
         } message: {
             Text(Copy.Delete.message)
         }
+        .alert("Compare initial sync?", isPresented: $confirmComparison) {
+            Button("Start comparison") { model.runSyncComparison() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Reads your history with 1, 2 and 4 daily reads, twice each. Allow 20–40 minutes, plus cooling. Keep KROK open and unlocked. Uploads are simulated locally; your synced data is retained.")
+        }
         .task { await model.refreshStatus() }
     }
 
@@ -54,6 +61,7 @@ struct ConnectView: View {
                 }
                 if Theme.isInternalBuild {
                     Button { model.runSpeedTest() } label: { Label(Copy.Menu.speedTest, systemImage: "speedometer") }
+                    Button { confirmComparison = true } label: { Label("Compare initial sync", systemImage: "arrow.left.arrow.right") }
                 }
                 if model.appleAccountLinked {
                     Button { confirmLogOut = true } label: { Label(Copy.Menu.logOut, systemImage: "rectangle.portrait.and.arrow.right") }
@@ -182,14 +190,15 @@ struct ConnectView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
             }
-            .navigationTitle("Speed test")
+            .navigationTitle(model.benchmarkTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if !model.benchmarkRunning { ShareLink("Share", item: model.benchmarkText) }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if model.benchmarkRunning { ProgressView() } else { Button("Done") { model.showBenchmark = false } }
+                    if model.comparisonRunning { Button("Stop") { model.stopSyncComparison() } }
+                    else if model.benchmarkRunning { ProgressView() } else { Button("Done") { model.showBenchmark = false } }
                 }
             }
         }

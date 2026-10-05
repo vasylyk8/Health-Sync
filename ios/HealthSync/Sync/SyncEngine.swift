@@ -70,6 +70,8 @@ actor SyncEngine {
     static let detailVersion = 1
 
     struct Config: Sendable {
+        /// Optional diagnostic callback; nil for normal syncs.
+        var phaseObserver: (@Sendable (String, Double, Double) -> Void)? = nil
         /// Workouts per anchored page. Pages are also split into ≤ 5 MB uploads.
         var workoutPageLimit = 200
         var recentDays = 30
@@ -115,6 +117,15 @@ actor SyncEngine {
     private var lastDailyAt: Date?
     private var lastEventsAt: Date?
     private var running = false
+    private var diagnosticPaused = false
+
+    /// Block new sync/observer runs, then let an existing observer finish before diagnostics read.
+    func pauseForDiagnostic() async throws {
+        diagnosticPaused = true
+        while running { try await Task.sleep(for: .milliseconds(100)) }
+        try Task.checkCancellation()
+    }
+    func resumeAfterDiagnostic() { diagnosticPaused = false }
     private var progressHandler: (@Sendable (SyncProgress) -> Void)?
     private var phase = 0
     private var lastReported: [Int]?
@@ -245,13 +256,14 @@ actor SyncEngine {
     private struct OutOfTime: Error {}
 
     private func checkTime() throws {
+        try Task.checkCancellation()
         if let deadline, now() >= deadline { throw OutOfTime() }
     }
 
     /// Full sync. `deadline` bounds background runs; everything is resumable.
     @discardableResult
     func run(deadline: Date? = nil) async throws -> Outcome {
-        guard !running else { return .alreadyRunning }
+        guard !running, !diagnosticPaused else { return .alreadyRunning }
         running = true
         self.deadline = deadline
         dailyThrough = nil
@@ -289,7 +301,7 @@ actor SyncEngine {
             // Years of daily history and the summaries of every workout take a minute or more on a large
             // history and do not depend on the raw data (or on each other), so they run alongside it: the raw
             // data starts as soon as the list of workouts is known.
-            background.append(Task { try await self.step { try await SyncTiming.shared.measure("phase.daily") { try await self.dailyContext() } } })
+            background.append(Task { try await self.step { try await self.timedPhase("daily") { try await self.dailyContext() } } })
             let history = Task {
                 try await self.step {
                     guard let wt = self.scope.workout else { return }
@@ -303,7 +315,7 @@ actor SyncEngine {
                 }
             }
             background.append(history)
-            background.append(Task { try await self.step { try await SyncTiming.shared.measure("phase.hourly") { try await self.hourlyHistory() } } })
+            background.append(Task { try await self.step { try await self.timedPhase("hourly") { try await self.hourlyHistory() } } })
             background.append(Task {
                 try await self.step {
                     try await SyncTiming.shared.measure("phase.events") {
@@ -318,7 +330,7 @@ actor SyncEngine {
                 try self.outbox.update { $0.workoutTotal = index.count }
                 self.indexRead = true
                 self.report(syncing: true)
-                try await self.uploadDetails(index)
+                try await self.timedPhase("details") { try await self.uploadDetails(index) }
             }
             phase = 3
             report(syncing: true)
@@ -342,6 +354,13 @@ actor SyncEngine {
         return .finished
     }
 
+    private func timedPhase<T>(_ name: String, _ body: () async throws -> T) async rethrows -> T {
+        let started = Date().timeIntervalSince1970
+        defer { config.phaseObserver?(name, started, Date().timeIntervalSince1970) }
+        let key: StaticString = name == "daily" ? "phase.daily" : name == "hourly" ? "phase.hourly" : "phase.details"
+        return try await SyncTiming.shared.measure(key, body)
+    }
+
     /// Runs one phase. A failure is recorded and the next phase still runs; running out of time,
     /// cancellation and upload failures (which would fail the same way everywhere) stop everything.
     private func step(_ body: () async throws -> Void) async throws {
@@ -360,7 +379,7 @@ actor SyncEngine {
     func runWorkoutChanges(deadline: Date) async throws {
         // Only once the full history is in: HealthKit calls every observer once at launch, and the
         // main run orders and reports that first sync. Taking the engine here would block it.
-        guard !running, let wt = scope.workout, outbox.state.caughtUp.contains(wt.id) else { return }
+        guard !running, !diagnosticPaused, let wt = scope.workout, outbox.state.caughtUp.contains(wt.id) else { return }
         running = true
         self.deadline = deadline
         defer {

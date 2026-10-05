@@ -99,7 +99,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     // MARK: Workout summaries
 
     func workouts(from: Date, to: Date) async throws -> [Record] {
-        let predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: .strictStartDate)
+        let window = HKQuery.predicateForSamples(withStart: from, end: to, options: .strictStartDate)
+        let predicate = PhoneSyncComparisonContext.samplePredicate.map { NSCompoundPredicate(andPredicateWithSubpredicates: [window, $0]) } ?? window
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
         let samples = try await fetch(HKObjectType.workoutType(), predicate: predicate, sort: sort)
         return await withPlans(samples.compactMap { $0 as? HKWorkout })
@@ -150,7 +151,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         guard let sampleType = type.sampleType else { return AnchoredPage(records: [], newAnchor: anchor, objectCount: 0) }
         let hkAnchor = anchor.flatMap { try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: $0) }
         let (samples, deleted, newAnchor): ([HKSample], [HKDeletedObject], HKQueryAnchor?) = try await withCheckedThrowingContinuation { cont in
-            let q = HKAnchoredObjectQuery(type: sampleType, predicate: nil, anchor: hkAnchor, limit: limit) { _, samples, deleted, newAnchor, error in
+            let q = HKAnchoredObjectQuery(type: sampleType, predicate: PhoneSyncComparisonContext.samplePredicate, anchor: hkAnchor, limit: limit) { _, samples, deleted, newAnchor, error in
                 if let error { cont.resume(throwing: error) } else { cont.resume(returning: (samples ?? [], deleted ?? [], newAnchor)) }
             }
             store.execute(q)
@@ -170,7 +171,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     func workoutIndex() async throws -> [WorkoutRef] {
         // Unsorted and sorted here: asking HealthKit to sort is much slower (speed test row B1).
-        let samples = try await fetch(HKObjectType.workoutType(), predicate: nil, sort: nil)
+        let samples = try await fetch(HKObjectType.workoutType(), predicate: PhoneSyncComparisonContext.samplePredicate, sort: nil)
             .sorted { $0.startDate != $1.startDate ? $0.startDate > $1.startDate : $0.uuid.uuidString < $1.uuid.uuidString }
         let workouts = samples.compactMap { $0 as? HKWorkout }
         cacheLock.withLock { workoutCache = Dictionary(workouts.map { ($0.uuid.uuidString, $0) }, uniquingKeysWith: { first, _ in first }) }
@@ -553,22 +554,23 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             dailyCalibration = [:]
             dailyStatisticsErrors = [:]
         }
-        // Real-device build 52 reported 65 completions but 64 missing result slots. The first slot (restingHr)
-        // was never retried, leaving that metric missing even when a subsequent probe could read it.
-        // Keep each read and its destination together, without the task-group scheduling closure. Daily queries
-        // are small; correctness is more important than parallelizing this part of the historical sync.
+        // Build 52 lost task-group result slots. Each child now captures its own immutable
+        // input/index; one parent validates every destination before merging in metric order.
+        // Limit the phone to two reads. Existing raw recovery and sequential retries stay below.
         var perMetric = [[DailyCell]?](repeating: nil, count: metrics.count)
         var errors: [Int: Error] = [:]
-        for (i, metric) in metrics.enumerated() {
-            do {
-                perMetric[i] = try await SyncTiming.shared.measure("hk.daily") {
-                    try await self.dailyCells(metric, start: start, to: to, calendar: cal)
-                }
-            } catch {
-                errors[i] = error
+        let outcomes = try await DailyMetricReads.collect(metrics, width: DailyMetricConcurrency.width) { [self] metric in
+            try await SyncTiming.shared.measure("hk.daily") {
+                try await self.dailyCells(metric, start: start, to: to, calendar: cal)
             }
         }
-        let received = metrics.count
+        for (index, outcome) in outcomes.enumerated() {
+            switch outcome {
+            case .success(let cells): perMetric[index] = cells
+            case .failure(let error): errors[index] = error
+            }
+        }
+        let received = perMetric.filter { $0 != nil }.count + errors.count
         let lost = metrics.indices.filter { perMetric[$0] == nil && errors[$0] == nil }
         // A query that failed for a passing reason (Apple Health busy or briefly locked) works a moment later: try those
         // again one at a time. If one still fails, the whole chunk fails, so it is retried on the next run instead of
@@ -1212,7 +1214,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         if let wheelchair = try? store.wheelchairUse().wheelchairUse, wheelchair != .notSet { meta["wheelchair"] = .bool(wheelchair == .yes) }
         if let mode = try? store.activityMoveMode().activityMoveMode { meta["moveMode"] = mode == .appleMoveTime ? "appleMoveTime" : "activeEnergy" }
         guard !meta.isEmpty else { return [] }
-        return [["k": "ev", "ty": "Profile", "s": .array([Date().ms]), "ids": .array(["profile"]), "meta": .array([.object(meta)])]]
+        return [["k": "ev", "ty": "Profile", "s": .array([(PhoneSyncComparisonContext.cutoff ?? Date()).ms]), "ids": .array(["profile"]), "meta": .array([.object(meta)])]]
     }
 
     // MARK: Background delivery

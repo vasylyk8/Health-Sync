@@ -58,7 +58,8 @@ enum HealthBench {
         startMainThreadWatchdog()
         let args = ProcessInfo.processInfo.arguments
         if args.contains("-dailyCheck") {
-            await DailyCheck.run(m)
+            let width = args.firstIndex(of: "-dailyConcurrency").flatMap { Int(args[$0 + 1]) } ?? DailyMetricConcurrency.productionWidth
+            await DailyMetricExperiment.$width.withValue(width) { await DailyCheck.run(m) }
             return
         }
         let count = args.firstIndex(of: "-benchCount").flatMap { Int(args[$0 + 1]) } ?? 300
@@ -78,10 +79,38 @@ enum HealthBench {
         }
         m.log("authorized")
         let shared = args.contains("-benchShared")
+        let daily = args.contains("-benchDailyConcurrency")
+        let phone = args.contains("-benchPhoneComparison")
         let heavy = args.firstIndex(of: "-benchHeavy").flatMap { Int(args[$0 + 1]) } ?? 60
         let light = max(0, count - heavy)
-        await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: shared ? 9 : 1.3, heavyStride: shared ? 6 : 1, m)
+        await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: (daily || phone) ? 16 : (shared ? 9 : 1.3), heavyStride: (daily || phone) ? 12 : (shared ? 6 : 1), m)
         await seedBackground(store, count: 100_000, m)
+        if phone {
+            await SharedReadBenchmark.seedHistoryDetails(store, m, scope: scope)
+            for forced in [false, true] {
+                var options = PhoneSyncComparison.Options()
+                options.order = [1, 2, 4, 4, 2, 1]
+                options.uploadDelay = 0.3
+                options.coolingTimeout = 0
+                do {
+                    let result = try await PhoneSyncComparison.run(scope: scope, categories: ["core"], options: options,
+                        sourceFactory: {
+                            let source = HealthKitSource(scope: scope)
+                            source.debugFailingStatistics = forced
+                            return source
+                        }, onUpdate: { _ in })
+                    m.log("PHONEPATH forced=\(forced): \(result.report)")
+                    m.log(result.passed ? "PHONEPATH CHECK OK forced=\(forced)" : "PHONEPATH CHECK FAILED forced=\(forced)")
+                } catch { m.log("PHONEPATH CHECK FAILED forced=\(forced): \(error)") }
+            }
+            m.log("BENCH DONE")
+            return
+        }
+        if daily {
+            await DailyConcurrencyBenchmark.run(scope, store: store, model: m, expected: count)
+            m.log("BENCH DONE")
+            return
+        }
         if shared {
             await SharedReadBenchmark.run(scope, store: store, model: m, expected: count)
             m.log("BENCH DONE")
