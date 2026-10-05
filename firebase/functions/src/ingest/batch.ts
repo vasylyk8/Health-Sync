@@ -1,6 +1,6 @@
 import { gunzipSync } from 'node:zlib';
 import { z } from 'zod';
-import { COVERAGE, EVENT_TYPES, HOURLY_METRICS, LIMITS, TYPES_BY_ID, categoryOfType } from '../config.js';
+import { COVERAGE, EVENT_TYPES, HOURLY_METRICS, LIMITS, RETIRED_TYPES, TYPES_BY_ID, categoryOfType } from '../config.js';
 import { CompactColumn, CompactError, MAX_COMPACT_POINTS, decodeColumn, decodeTimes } from './compact.js';
 
 /** See docs/DATA_CONTRACT.md §1. Schema 2 adds workout raw data (`ws`, `wd`) and daily context (`day`). */
@@ -194,6 +194,9 @@ export interface StreamChunk {
   cols: Partial<Record<(typeof STREAM_COLS)[number], (number | null)[]>>;
 }
 
+/** A batch of a type that was removed from the product (sent by an old app build). Not an error: it is dropped. */
+export class RetiredTypeError extends Error {}
+
 export class BatchError extends Error {
   constructor(message: string, readonly permanent = true) {
     super(message);
@@ -230,6 +233,7 @@ export function parseBatch(gz: Buffer): ParsedBatch {
   const isStream = header.mode === 'workoutdata';
   if (isStatus !== (header.type === STATUS_TYPE)) throw new BatchError('status batches must use type _status');
   if (isStream !== (header.type === WSTREAM_TYPE)) throw new BatchError('workoutdata batches must use type _wstream');
+  if (RETIRED_TYPES.has(header.type)) throw new RetiredTypeError(`retired type ${header.type}`);
   if (!isStatus && !TYPES_BY_ID.has(header.type)) throw new BatchError(`unknown type ${header.type}`);
   if ((isStream || header.type !== WORKOUT_TYPE && header.type !== STATUS_TYPE) && header.schema < 2) throw new BatchError('this batch type needs schema 2');
   const statuses: ParsedBatch['statuses'] = [];

@@ -9,14 +9,14 @@ import { HttpsError, onCall, onRequest, type CallableRequest } from 'firebase-fu
 import { onObjectFinalized } from 'firebase-functions/v2/storage';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onTaskDispatched } from 'firebase-functions/v2/tasks';
-import { REGION, LIMITS } from './config.js';
+import { REGION, LIMITS, RETIRED_TYPES } from './config.js';
 import { FirestoreMeta, GcsBlobs } from './store/firestore.js';
 import { FirestoreTokens } from './auth/tokens.js';
 import { ingestObject } from './ingest/ingest.js';
 import { compactType, finishReconcile } from './jobs/maintenance.js';
 import { handleMcp } from './mcp/server.js';
 import * as account from './account.js';
-import { AccountError, beginDeletion, parseProvider, purgeUserData, sweepDeletions } from './account.js';
+import { AccountError, beginDeletion, parseProvider, purgeRetiredType, purgeUserData, stripRetiredCategories, sweepDeletions } from './account.js';
 import { log } from './log.js';
 import { KrokOAuth } from './auth/oauth.js';
 import { FirestoreOAuthStore } from './auth/oauth-store.js';
@@ -202,6 +202,21 @@ export const purgeInactive = onSchedule({ schedule: 'every day 02:17', timeZone:
     await queue.enqueue({ uid: doc.id });
   }
   log.info('inactive purge scheduled', { job: 'purgeInactive', count: stale.size + never.size });
+});
+
+/** Deletes data of batch types that were removed from the product (glucose, medications, heart alerts, symptoms, mood). Drains itself; a no-op once nothing is left. */
+export const purgeRetiredTypes = onSchedule({ schedule: 'every 60 minutes', timeZone: 'UTC', memory: '512MiB', timeoutSeconds: 540 }, async () => {
+  const d = deps();
+  const snap = await d.db.collectionGroup('types').where('type', 'in', [...RETIRED_TYPES]).limit(200).get();
+  let n = 0;
+  for (const doc of snap.docs) {
+    const uid = doc.ref.parent.parent?.id;
+    if (!uid) continue;
+    await purgeRetiredType(d, uid, doc.get('type') as string);
+    await stripRetiredCategories(d.db, uid);
+    n++;
+  }
+  if (n) log.info('retired types purged', { job: 'purgeRetiredTypes', count: n });
 });
 
 export const compactFragmented = onSchedule({ schedule: 'every 6 hours', timeZone: 'UTC', memory: '2GiB', timeoutSeconds: 540 }, async () => {

@@ -30,7 +30,7 @@ await user.update({ 'links.claude': { tokenHash: hash, createdAt: Date.now() } }
 const types = await user.collection('types').get();
 // Data of the previous app version (other types) is replaced too.
 const have = new Set(types.docs.map((d) => d.id));
-const missing = !(have.has('HKWorkoutTypeIdentifier') && have.has('_daily') && have.has('_hourly') && have.has('_events_devices') && have.has('_events_mind'));
+const missing = !(have.has('HKWorkoutTypeIdentifier') && have.has('_daily') && have.has('_hourly') && have.has('_events_nutrition') && have.has('_events_profile'));
 if (missing) console.log('workouts or daily context missing: seeding');
 if (missing || stale || process.env.FORCE_RESEED === '1') {
   const bucket = getStorage().bucket(`${project}-incoming`);

@@ -52,7 +52,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var enabledCategories: Set<String> = ["core"]
     private var started = false
     private var observing = false
-    private var medicationTask: Task<Void, Never>?
     static let healthConnectedKey = "healthConnected"
     /// Set once Health is connected until Sign in with Apple is done (the app reopens on the account page).
     static let pendingAccountKey = "pendingAccount"
@@ -86,6 +85,9 @@ final class AppModel: ObservableObject {
         uploadFinished = defaults.bool(forKey: Self.uploadFinishedKey)
         let defaultCategories = Set(scope.categories.filter { $0.default == true }.map(\.id))
         let consent = ConsentStore(defaults: defaults, fallback: defaultCategories)
+        // A choice saved by an older version may name groups that no longer exist (glucose, medications, symptoms...).
+        let validCategories = Set(scope.categories.map(\.id))
+        if consent.hasChoice { consent.set(consent.enabled.intersection(validCategories)) }
         self.consent = consent
         enabledCategories = consent.enabled
         var config = SyncEngine.Config()
@@ -150,7 +152,6 @@ final class AppModel: ObservableObject {
             stage = "health-permission"
             // Only a stall is shown (progress is silent): if Apple Health neither shows its permission screen nor
             // answers, say what to do instead of spinning silently (seen on a real iPhone after many reinstalls).
-            // This covers the main permission sheet only; the separate medications sheet comes later.
             let hint = Task { @MainActor [weak self, delay = permissionHintDelay] in
                 try await Task.sleep(for: delay)
                 self?.connectStage = Self.permissionStallHint
@@ -179,7 +180,6 @@ final class AppModel: ObservableObject {
             withAnimation { phase = .account }
             // The upload starts now, while the person is on the account page.
             start()
-            requestMedicationsInBackground()
         } catch {
             let ns = error as NSError
             telemetry.nonFatal("connect.\(stage)", code: ns.code)
@@ -187,19 +187,6 @@ final class AppModel: ObservableObject {
             // HealthKit's own text names the problem (for example which data type it refused); it contains no health data.
             let detail = ns.domain == "com.apple.healthkit" ? " \(ns.localizedDescription)" : ""
             errorMessage = friendly(error) + "\n\n(\(stage): \(ns.domain) \(ns.code))\(detail)"
-        }
-    }
-
-    /// Apple's per-medication sheet comes after the main permission sheet and never blocks or fails onboarding:
-    /// it runs on its own with a timeout, and the medication list is uploaded by the next sync pass.
-    func requestMedicationsInBackground() {
-        guard consent.isOn("medications"), medicationTask == nil else { return }
-        let source = self.source
-        medicationTask = Task { [weak self] in
-            await Self.finishWithin(seconds: 90) { await source.requestMedicationAuthorization() }
-            guard let self else { return }
-            self.medicationTask = nil
-            if self.phase != .welcome, !self.progress.isSyncing { self.syncTask = Task { await self.syncNow() } }
         }
     }
 
@@ -346,7 +333,6 @@ final class AppModel: ObservableObject {
         let chosen = consent.enabled
         do {
             try await source.requestAuthorization(scope: scope, categories: chosen)
-            requestMedicationsInBackground()
             try await backend.setCategories(chosen.sorted())
             for id in chosen where id != "core" { try await engine.categoryEnabled(id) }
             observeOtherData()
@@ -452,7 +438,7 @@ final class AppModel: ObservableObject {
         status = s
         // After a reinstall the phone has no choice yet: adopt what the server already holds.
         if !consent.hasChoice, let remote = s.categories {
-            consent.set(Set(remote))
+            consent.set(Set(remote).intersection(Set(scope.categories.map(\.id))))
             enabledCategories = consent.enabled
         }
     }
@@ -474,7 +460,6 @@ final class AppModel: ObservableObject {
             if on {
                 next.insert(id)
                 try await source.requestAuthorization(scope: scope, categories: next)
-                if id == "medications" { requestMedicationsInBackground() }
             } else {
                 next.remove(id)
             }

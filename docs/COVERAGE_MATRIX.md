@@ -21,22 +21,18 @@ Data is grouped in **categories**. `core` is always on; the other categories are
 |---|---|
 | Hourly heart rate (average, min, max), steps (sum), HRV SDNN and RMSSD (average) for the whole history | `HKStatisticsCollectionQuery`, hourly buckets, a year per batch |
 
-### Daily context (66 metrics, one row per local day)
-`restingHr`, `hrv`, `respiratoryRate`, `sleepingWristTempC`, `spo2Avg`, `spo2Min`, `walkingHrAvg`, `sleepBreathingDisturbances`, `sleep`, `steps`, `walkRunDistanceM`, `cyclingDistanceM`, `swimDistanceM`, `flightsClimbed`, `activeKcal`, `basalKcal`, `exerciseMin`, `standMin`, `daylightMin`, `physicalEffortAvg`, `rings`, `vo2max`, `walkingSpeedMps`, `walkingStepLengthM`, `walkingAsymmetryPct`, `walkingDoubleSupportPct`, `walkingSteadinessPct`, `stairAscentSpeedMps`, `stairDescentSpeedMps`, `sixMinuteWalkM`, `bodyMassKg`, `bodyFatPct`, `leanMassKg`, `bmi`, `heightM`, `waistM`, `hrAvg`, `hrMin`, `hrMax`, `hrvMin`, `hrvMax`, `hrvRmssd`, `respiratoryMin`, `respiratoryMax`, `spo2Max`, `uvExposure`, `moveMin`, `nikeFuel`, `wheelchairDistanceM`, `snowDistanceM`, `xcSkiDistanceM`, `paddleDistanceM`, `rowingDistanceM`, `skatingDistanceM`, `swimStrokes`, `pushCount`, `timesFallen`, `perfusionIndexPct`, `envAudioAvg`, `envAudioMax`, `headphoneAudioAvg`, `headphoneAudioMax`, `soundReductionAvg`, `bodyTempC`, `envAudioEvents`, `headphoneAudioEvents`.
+### Daily context (67 metrics, one row per local day)
+`restingHr`, `hrv`, `respiratoryRate`, `sleepingWristTempC`, `spo2Avg`, `spo2Min`, `walkingHrAvg`, `sleepBreathingDisturbances`, `sleep`, `steps`, `walkRunDistanceM`, `cyclingDistanceM`, `swimDistanceM`, `flightsClimbed`, `activeKcal`, `basalKcal`, `exerciseMin`, `standMin`, `daylightMin`, `physicalEffortAvg`, `rings`, `vo2max`, `walkingSpeedMps`, `walkingStepLengthM`, `walkingAsymmetryPct`, `walkingDoubleSupportPct`, `walkingSteadinessPct`, `stairAscentSpeedMps`, `stairDescentSpeedMps`, `sixMinuteWalkM`, `bodyMassKg`, `bodyFatPct`, `leanMassKg`, `bmi`, `heightM`, `waistM`, `hrAvg`, `hrMin`, `hrMax`, `hrvMin`, `hrvMax`, `hrvRmssd`, `respiratoryMin`, `respiratoryMax`, `spo2Max`, `uvExposure`, `mindfulMin`, `moveMin`, `nikeFuel`, `wheelchairDistanceM`, `snowDistanceM`, `xcSkiDistanceM`, `paddleDistanceM`, `rowingDistanceM`, `skatingDistanceM`, `swimStrokes`, `pushCount`, `timesFallen`, `perfusionIndexPct`, `envAudioAvg`, `envAudioMax`, `headphoneAudioAvg`, `headphoneAudioMax`, `soundReductionAvg`, `bodyTempC`, `envAudioEvents`, `headphoneAudioEvents`.
 Quantities use `HKStatisticsCollectionQuery` with day buckets (sum, average, min, max or latest); sleep, rings and categories use their own queries. All sources the user authorized in Apple Health are accepted. For sparse discrete quantities, authorized raw samples fill only buckets that HealthKit's statistics collection omitted.
 
 ## Optional categories
 | Category | Daily rows | Event / sample log |
 |---|---|---|
 | **nutrition**: Nutrition and alcohol | `dietaryKcal`, `proteinG`, `carbsG`, `fatG`, `sugarG`, `fiberG`, `sodiumG`, `waterL`, `caffeineG`, `alcoholBeverages` | 41 types: `DietaryEnergyConsumed`, `DietaryCarbohydrates`, `DietaryFiber`, `DietarySugar`, `DietaryFatTotal`, `DietaryFatMonounsaturated`, `DietaryFatPolyunsaturated`, `DietaryFatSaturated`, `DietaryCholesterol`, `DietaryProtein`, `DietarySodium`, `DietaryCaffeine`, `DietaryWater`, `DietaryVitaminA`, `DietaryVitaminB6`, `DietaryVitaminB12`, `DietaryVitaminC`, `DietaryVitaminD`, `DietaryVitaminE`, `DietaryVitaminK`, `DietaryBiotin`, `DietaryFolate`, `DietaryNiacin`, `DietaryPantothenicAcid`, `DietaryRiboflavin`, `DietaryThiamin`, `DietaryCalcium`, `DietaryChloride`, `DietaryChromium`, `DietaryCopper`, `DietaryIodine`, `DietaryIron`, `DietaryMagnesium`, `DietaryManganese`, `DietaryMolybdenum`, `DietaryPhosphorus`, `DietaryPotassium`, `DietarySelenium`, `DietaryZinc`, `NumberOfAlcoholicBeverages`, `BloodAlcoholContent` |
-| **heart**: Heart alerts and lung function | – | 10 types: `AtrialFibrillationBurden`, `HighHeartRateEvent`, `LowHeartRateEvent`, `IrregularHeartRhythmEvent`, `LowCardioFitnessEvent`, `HypertensionEvent`, `ForcedExpiratoryVolume1`, `ForcedVitalCapacity`, `PeakExpiratoryFlowRate`, `InhalerUsage` |
-| **devices**: Glucose, insulin and blood pressure | – | 4 types: `BloodGlucose`, `InsulinDelivery`, `BloodPressureSystolic`, `BloodPressureDiastolic` |
-| **mind**: Mood and symptoms | `mindfulMin`, `stateOfMind` | 34 types: `AbdominalCramps`, `Acne`, `AppetiteChanges`, `Bloating`, `ChestTightnessOrPain`, `Chills`, `Constipation`, `Coughing`, `Diarrhea`, `Dizziness`, `DrySkin`, `Fainting`, `Fatigue`, `Fever`, `GeneralizedBodyAche`, `HairLoss`, `Headache`, `Heartburn`, `LossOfSmell`, `LossOfTaste`, `LowerBackPain`, `MemoryLapse`, `MoodChanges`, `Nausea`, `NightSweats`, `RapidPoundingOrFlutteringHeartbeat`, `RunnyNose`, `ShortnessOfBreath`, `SinusCongestion`, `SkippedHeartbeat`, `SleepChanges`, `SoreThroat`, `Vomiting`, `Wheezing` |
 | **cycle**: Menstrual cycle | `basalBodyTempC`, `cycleMenstrualFlow`, `cycleIntermenstrualBleeding`, `cycleOvulationTestResult`, `cycleCervicalMucusQuality`, `cycleInfrequentMenstrualCycles`, `cycleIrregularMenstrualCycles`, `cyclePersistentIntermenstrualBleeding`, `cycleProlongedMenstrualPeriods` | – |
-| **medications**: Medications | – | 1 types: `Medication` |
 | **profile**: Profile (date of birth, sex, wheelchair use) | – | 1 types: `Profile` |
 
-Notes: nutrition logs are per sample (with time and writing app) for all dietary types; the daily totals come from statistics queries so several apps are not double counted. Glucose readings are sent without per-reading ids (about 0.1 MB per year for a CGM). Medications are the list the user chooses to share (iOS 26 per-object authorization), not dose history. Symptoms exclude reproductive and urogenital ones.
+Notes: nutrition logs are per sample (with time and writing app) for all dietary types; the daily totals come from statistics queries so several apps are not double counted.
 
 ## Not read (by decision)
 - **clinical records and documents**: deferred to a later release (needs the health-records entitlement).
@@ -45,6 +41,7 @@ Notes: nutrition logs are per sample (with time and writing app) for all dietary
 - **reproductive and urogenital symptoms (pelvic pain, breast pain, vaginal dryness, hot flashes, bladder incontinence)**: removed.
 - **audiograms, vision prescriptions, handwashing, toothbrushing, skin conductance, blood type, skin type**: removed: no feature uses them.
 - **ECG waveforms, heartbeat series, all-day raw background HR/energy/audio**: not small.
+- **glucose, insulin, blood pressure, medications, heart alerts (AFib, irregular rhythm, high/low heart rate, hypertension, low cardio fitness), lung function, State of Mind and symptoms**: removed in October 2026: sensitive, and no workout or fitness calculation uses them. Data stored earlier is deleted by a scheduled job.
 - Not readable by apps at all: Sleep Score, Training Load, sleep apnea notifications.
 
 ## Rules
@@ -52,4 +49,4 @@ Notes: nutrition logs are per sample (with time and writing app) for all dietary
 - **Read denials** are invisible to apps. If the user denies a type, it reads as empty.
 - **Types missing on the running iOS version** are skipped, so newer types (for example HRV RMSSD) start syncing on newer phones without code changes.
 - **Units** are set in `shared/coverage.json` and verified with `isCompatible` at runtime.
-- **Selection rule:** a type is read only when a tool or feature uses it, and sensitive categories stay off until the user enables them.
+- **Selection rule:** a type is read only when a tool or feature uses it, and sensitive categories are optional and can be denied in Apple Health.

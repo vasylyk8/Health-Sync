@@ -134,7 +134,7 @@ const TOOLS: { name: string; title: string; description: string; input: z.ZodRaw
   {
     name: 'get_daily_context',
     title: 'Daily context metrics',
-    description: 'One row per local day with metrics such as sleep, resting heart rate, HRV, VO2 max, steps, activity rings, body measurements, nutrition, mindfulness and cycle data (whatever the user records and switched on). Max 400 days per call. Missing metrics were not recorded. To keep results small pass groups (sleep, heart, activity, mobility, body, nutrition, cycle, mind, audio) or exact metrics; pass rollup "week" or "month" for averages over up to 10 years.',
+    description: 'One row per local day with metrics such as sleep, resting heart rate, HRV, VO2 max, steps, activity rings, body measurements, nutrition, mindfulness and cycle data (whatever the user records and switched on). Max 400 days per call. Missing metrics were not recorded. To keep results small pass groups (sleep, heart, activity, mobility, body, nutrition, cycle, audio) or exact metrics; pass rollup "week" or "month" for averages over up to 10 years.',
     input: {
       start_date: dateField, end_date: dateField,
       groups: z.array(z.enum(DAILY_GROUPS as [string, ...string[]])).max(9).optional().describe('Metric groups to include'),

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
-import { BatchError, WORKOUT_TYPE, parseBatch, type ParsedBatch, type StreamChunk } from './batch.js';
+import { BatchError, RetiredTypeError, WORKOUT_TYPE, parseBatch, type ParsedBatch, type StreamChunk } from './batch.js';
 import { idsToParquet, rowsToParquet, streamToParquet, withDuck } from '../query/duck.js';
 import { addInterval, type BlobStore, type FileRef, type MetaStore, type StreamInfo, type TypeManifest, type WorkoutDataDoc } from '../store/types.js';
 import { log } from '../log.js';
@@ -69,6 +69,12 @@ export async function ingestObject(objectPath: string, deps: IngestDeps, opts: {
     if (parsed.header.batchId !== batchId) throw new BatchError('batchId does not match file name');
     if (parsed.skipped > 0) log.warn('invalid records skipped', { uid, batchId, skipped: parsed.skipped, first: parsed.firstSkip });
   } catch (err) {
+    if (err instanceof RetiredTypeError) {
+      log.info('batch of a retired type dropped', { uid, batchId });
+      await meta.markBatch(uid, batchId, 'discarded', 'type retired');
+      await incoming.delete(objectPath).catch(() => undefined);
+      return 'discarded';
+    }
     if (err instanceof BatchError) {
       log.warn('batch rejected', { uid, batchId, reason: err.message });
       await meta.markBatch(uid, batchId, 'rejected', err.message);

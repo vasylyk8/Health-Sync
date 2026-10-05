@@ -52,12 +52,11 @@ const fmtLocal = (c: string) => `strftime(${c}, '%Y-%m-%d %H:%M')`;
 const GROUPS: Record<string, (k: string) => boolean> = {
   sleep: (k) => k.startsWith('sleep'),
   heart: (k) => /^(restingHr|hr[A-Z]|hrv|walkingHrAvg|vo2max|spo2|respiratory|perfusion)/.test(k),
-  activity: (k) => /^(steps|flights|activeKcal|basalKcal|exerciseMin|standMin|moveMin|daylightMin|physicalEffort|ring|nikeFuel|swimStrokes|pushCount|uvExposure)/.test(k) || /DistanceM$/.test(k),
+  activity: (k) => /^(steps|flights|activeKcal|basalKcal|exerciseMin|standMin|moveMin|daylightMin|physicalEffort|ring|nikeFuel|swimStrokes|pushCount|uvExposure|mindful)/.test(k) || /DistanceM$/.test(k),
   mobility: (k) => /^(walking|stair|sixMinute|timesFallen)/.test(k) && k !== 'walkingHrAvg',
   body: (k) => /^(bodyMass|bodyFat|leanMass|bmi|height|waist|bodyTemp)/.test(k),
   nutrition: (k) => DAILY_KEY_CATEGORY.get(k) === 'nutrition',
   cycle: (k) => DAILY_KEY_CATEGORY.get(k) === 'cycle',
-  mind: (k) => DAILY_KEY_CATEGORY.get(k) === 'mind',
   audio: (k) => /^(envAudio|headphoneAudio|soundReduction)/.test(k),
 };
 export const DAILY_GROUPS = Object.keys(GROUPS);
@@ -183,172 +182,6 @@ export async function getHourlySeries(deps: QueryDeps, args: HourlyArgs): Promis
     return {
       ...base, columns: hasRange ? ['date', 'avg_of_hourly_avgs', 'min', 'max', 'hours_with_data'] : ['date', sum ? 'total' : 'avg', 'hours_with_data'], count: out.length,
       days: out.map((x) => (hasRange ? [x.d, tidyMetric(x.v), tidyMetric(x.lo), tidyMetric(x.hi), x.n] : [x.d, tidyMetric(x.v), x.n])),
-    };
-  });
-}
-
-// ---------------------------------------------------------------------------------------------
-// Event logs (cardiac alerts, symptoms, nutrition, blood pressure, insulin, medications...)
-
-/** HKCategoryValueSeverity. */
-const SEVERITY: Record<number, string> = { 0: 'unspecified', 1: 'not present', 2: 'mild', 3: 'moderate', 4: 'severe' };
-
-export interface EventsArgs { types?: string[]; category?: string; start_date: string; end_date: string; timezone?: string; limit?: number }
-
-/** Loads rows of event types from their category tables into `ev_<category>` and returns the union as table `ev`. */
-async function loadEvents(c: DuckDBConnection, dir: string, deps: QueryDeps, cats: Set<string>, categories: string[], range: [number, number] | 'all') {
-  const mans: [string, TypeManifest | null][] = [];
-  const parts: string[] = [];
-  for (const category of categories) {
-    requireCategory(cats, category, 'This kind of data');
-    const type = `_events_${category}`;
-    const man = await loadType(c, dir, deps, type, range, `ev_${category}`, { what: 'raw', budget: { bytes: 0 } });
-    mans.push([type, man]);
-    parts.push(`SELECT * FROM ev_${category}`);
-  }
-  if (!parts.length) throw new ToolError('bad_request', 'No event type selected.');
-  await c.run(`CREATE OR REPLACE TEMP TABLE ev AS ${parts.join(' UNION ALL BY NAME ')}`);
-  return mans;
-}
-
-export async function getHealthEvents(deps: QueryDeps, args: EventsArgs): Promise<ToolResult> {
-  const r = range(deps, args);
-  const limit = Math.min(args.limit ?? 200, 500);
-  let names: string[];
-  if (args.types?.length) {
-    names = args.types.map((t) => {
-      const hit = [...EVENT_TYPES.keys()].find((n) => n.toLowerCase() === t.toLowerCase().replace(/[\s_-]+/g, ''));
-      if (!hit) throw new ToolError('bad_request', `Unknown event type "${t}". Use list in the tool description.`);
-      return hit;
-    });
-  } else if (args.category) {
-    names = [...EVENT_TYPES.values()].filter((e) => e.category === args.category).map((e) => e.name);
-    if (!names.length) throw new ToolError('bad_request', `Unknown category "${args.category}".`);
-  } else throw new ToolError('bad_request', 'Pass types or category.');
-  const categories = [...new Set(names.map((n) => EVENT_TYPES.get(n)!.category))];
-  const cats = await enabledCategories(deps);
-  return withDuck(async (c, dir) => {
-    const [a, b] = await localRangeToUtc(c, r.tz, r.start, r.end);
-    // The medication list is a current snapshot, not something that happened on a date: it ignores the range.
-    const snapshot = names.every((n) => n === 'Medication');
-    const mans = await loadEvents(c, dir, deps, cats, categories, snapshot ? 'all' : [a, b]);
-    const list = names.map(lit).join(',');
-    const when = snapshot ? 'TRUE' : `s >= ${a} AND s < ${b}`;
-    const out = await rows(c, `SELECT ${fmtLocal(localTs('s', r.tz))} AS t, agg AS type, v, v2, c, u, src, extra, s FROM ev WHERE agg IN (${list}) AND ${when} ORDER BY s DESC, agg ASC LIMIT ${limit + 1}`);
-    const truncated = out.length > limit;
-    if (truncated) out.length = limit;
-    // The newest `limit` events win when there are more (what a person asks about is usually recent), shown oldest first.
-    out.reverse();
-    const notes = [
-      'Events are readings or entries the user (or a connected device/app) recorded; times are local. Describe them, do not diagnose, and never advise on medication or insulin doses.',
-      'Blood pressure comes as two events at the same time (BloodPressureSystolic and BloodPressureDiastolic).',
-    ];
-    if (truncated) notes.push(`More events match than the ${limit} shown: these are the most recent ${limit} in the range, oldest first. Narrow the range or types to see earlier ones.`);
-    return {
-      ...envelope(deps, mans, mans.every(([, m]) => !!m?.coverage.checkedAt), notes),
-      timezone: r.tz, count: out.length, truncated,
-      events: out.map((x) => {
-        const meta = parseExtra(x.extra);
-        const type = String(x.type);
-        const def = EVENT_TYPES.get(type)!;
-        return {
-          time: x.t, type,
-          ...(x.v !== null ? { value: tidyMetric(x.v) } : {}),
-          ...(x.v2 !== null ? { value2: tidyMetric(x.v2) } : {}),
-          ...(x.u ? { unit: x.u } : {}),
-          ...(x.c !== null ? { [def.category === 'mind' ? 'severity' : 'code']: def.category === 'mind' ? SEVERITY[Number(x.c)] ?? Number(x.c) : Number(x.c) } : {}),
-          ...(x.src ? { source: x.src } : {}),
-          ...(Object.keys(meta).length ? { details: meta } : {}),
-        };
-      }),
-    };
-  });
-}
-
-// ---------------------------------------------------------------------------------------------
-// Glucose
-
-const MMOL = 18.0182;
-
-export interface GlucoseArgs {
-  start_date?: string;
-  end_date?: string;
-  workout_id?: string;
-  before_minutes?: number;
-  after_minutes?: number;
-  low_mg_dl?: number;
-  high_mg_dl?: number;
-  timezone?: string;
-}
-
-interface Reading { s: number; v: number }
-
-function glucoseStats(rs: Reading[], low: number, high: number) {
-  const vals = rs.map((x) => x.v);
-  if (!vals.length) return null;
-  const m = mean(vals)!;
-  const s = sd(vals);
-  const pct = (f: (v: number) => boolean) => round((vals.filter(f).length / vals.length) * 100, 1);
-  return {
-    readings: vals.length,
-    mean_mg_dl: round(m, 0), mean_mmol_l: round(m / MMOL, 1),
-    min_mg_dl: Math.min(...vals), max_mg_dl: Math.max(...vals),
-    cv_percent: s !== null ? round((s / m) * 100, 1) : null,
-    gmi_percent: round(3.31 + 0.02392 * m, 1),
-    time_below_54_pct: pct((v) => v < 54), time_below_low_pct: pct((v) => v < low),
-    time_in_range_pct: pct((v) => v >= low && v <= high), time_above_high_pct: pct((v) => v > high), time_above_250_pct: pct((v) => v > 250),
-  };
-}
-
-export async function getGlucose(deps: QueryDeps, args: GlucoseArgs): Promise<ToolResult> {
-  const low = args.low_mg_dl ?? 70;
-  const high = args.high_mg_dl ?? 180;
-  const cats = await enabledCategories(deps);
-  requireCategory(cats, 'devices', 'Glucose data');
-  return withDuck(async (c, dir) => {
-    const notes = [
-      'Readings come from a continuous glucose monitor or manual entries saved to Apple Health. Dexcom saves to Apple Health about 3 hours late, so the most recent hours may be missing. Describe patterns only: no diagnosis, never advise on insulin or medication doses.',
-    ];
-    if (args.workout_id) {
-      const tz = validTz(args.timezone ?? deps.tz);
-      const { row } = await findWorkout(c, dir, deps, args.workout_id, tz);
-      const before = Math.min(Math.max(args.before_minutes ?? 120, 0), 720);
-      const after = Math.min(Math.max(args.after_minutes ?? 360, 0), 1440);
-      const a = row.s - before * 60_000;
-      const b = row.e + after * 60_000;
-      const man = await loadType(c, dir, deps, '_events_devices', [a, b], 'ev', { what: 'raw', budget: { bytes: 0 } });
-      const g: Reading[] = (await rows(c, `SELECT s, v FROM ev WHERE agg = 'BloodGlucose' AND v IS NOT NULL AND s >= ${a} AND s < ${b} ORDER BY s`)).map((x) => ({ s: Number(x.s), v: Number(x.v) }));
-      const ins = await rows(c, `SELECT s, v, extra FROM ev WHERE agg = 'InsulinDelivery' AND s >= ${a} AND s < ${b} ORDER BY s LIMIT 100`);
-      const off = (t: number) => round((t - row.s) / 60_000, 0);
-      const phase = (lo: number, hi: number) => glucoseStats(g.filter((x) => x.s >= lo && x.s < hi), low, high);
-      const lastBefore = [...g].reverse().find((x) => x.s <= row.s);
-      const step = Math.max(1, Math.ceil(g.length / 120));
-      return {
-        ...envelope(deps, [['_events_devices', man]], !!man, notes),
-        workout_id: row.id, workout_start: row.startLocal, workout_end: row.endLocal, window: { minutes_before: before, minutes_after: after },
-        before_workout: phase(a, row.s), during_workout: phase(row.s, row.e), after_workout: phase(row.e, b),
-        at_start_mg_dl: lastBefore ? { value: lastBefore.v, minutes_before_start: round((row.s - lastBefore.s) / 60_000, 0) } : null,
-        series_columns: ['minutes_from_workout_start', 'mg_dl'],
-        series: g.filter((_, i) => i % step === 0).map((x) => [off(x.s), x.v]),
-        insulin: ins.map((x) => ({ minutes_from_workout_start: off(Number(x.s)), units: tidyMetric(x.v), ...parseExtra(x.extra) })),
-      };
-    }
-    if (!args.start_date || !args.end_date) throw new ToolError('bad_request', 'Pass workout_id, or start_date and end_date.');
-    const r = range(deps, { start_date: args.start_date, end_date: args.end_date, timezone: args.timezone });
-    const days = (Date.parse(r.end + 'T00:00:00Z') - Date.parse(r.start + 'T00:00:00Z')) / DAY_MS + 1;
-    if (days > 120) throw new ToolError('too_large', 'At most 120 days per call.');
-    const [a, b] = await localRangeToUtc(c, r.tz, r.start, r.end);
-    const man = await loadType(c, dir, deps, '_events_devices', [a, b], 'ev', { what: 'raw', budget: { bytes: 0 } });
-    const all = (await rows(c, `SELECT s, v, strftime(${localTs('s', r.tz)}, '%Y-%m-%d') AS d FROM ev WHERE agg = 'BloodGlucose' AND v IS NOT NULL AND s >= ${a} AND s < ${b} ORDER BY s`));
-    const readings: Reading[] = all.map((x) => ({ s: Number(x.s), v: Number(x.v) }));
-    const perDay = new Map<string, Reading[]>();
-    for (const x of all) perDay.set(String(x.d), [...(perDay.get(String(x.d)) ?? []), { s: Number(x.s), v: Number(x.v) }]);
-    return {
-      ...envelope(deps, [['_events_devices', man]], !!man, notes),
-      timezone: r.tz, targets_mg_dl: { low, high },
-      overall: glucoseStats(readings, low, high),
-      days: [...perDay.entries()].map(([d, rs]) => ({ date: d, ...glucoseStats(rs, low, high) })),
-      ...(days <= 2 ? { series_columns: ['local_time', 'mg_dl'], series: readings.filter((_, i) => i % Math.max(1, Math.ceil(readings.length / 288)) === 0).map((x) => [x.s, x.v]) } : {}),
     };
   });
 }

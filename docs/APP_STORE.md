@@ -19,7 +19,7 @@ KROK connects your Apple Health workouts to the AI assistant you already use, so
 You get Apple's own workout summary, plus the full detail on request: every heart rate reading, speed, power and cadence, and your GPS route (start and end are hidden by default). The assistant can do exact calculations on it.
 
 How it works
-1. Allow KROK to read your workouts (and daily and hourly summaries of sleep, heart rate and recovery) in Apple Health. Choose which extra types (nutrition, glucose, symptoms and more) to allow on Apple's sheet.
+1. Allow KROK to read your workouts (and daily and hourly summaries of sleep, heart rate and recovery) in Apple Health. Choose which extra types (nutrition, cycle and profile) to allow on Apple's sheet.
 2. Choose Claude or ChatGPT and follow three short steps to connect.
 3. Ask away. The assistant reads your data only when you ask.
 
@@ -27,7 +27,7 @@ Private by design
 • Read-only: KROK never changes your Apple Health data.
 • Your data is stored encrypted in the EU and used only to answer your own questions.
 • Nothing is shared until you connect an assistant, and you can disconnect at any time.
-• You choose which Apple Health data to share (nutrition, glucose, symptoms, cycle, medications…) in Apple Health’s permission settings.
+• You choose which Apple Health data to share (nutrition, cycle, profile) in Apple Health’s permission settings.
 • Delete all your data from our servers with one tap.
 • No ads, and your health data is never sold or used for advertising.
 
@@ -48,7 +48,7 @@ KROK lets users analyze their own Apple Health data with the AI assistant of the
 
 - Data is read-only and used only to provide this service to the user. It is not used for advertising, sold, or used for data mining. No data is shared until the user connects an assistant and consents to the named recipient. Apple-linked accounts use public OAuth with explicit read-only permissions; existing anonymous accounts can use a revocable private link.
 - The user can disconnect an assistant (access stops immediately) or delete all data (••• menu → Delete All My Data).
-- Workouts (including their GPS routes), daily/hourly summaries of fitness and recovery metrics, and the enabled additional types are requested from Apple Health. Further groups of Apple Health data (nutrition and alcohol, heart alerts, glucose/insulin/blood pressure, mood and symptoms, menstrual cycle, medications, profile) are requested on Apple Health's permission sheet, which lists each type; the user can deny any in Apple Health (there is no separate in-app switch), and each is used by specific features (for example glucose around a workout, nutrition and recovery). The AI is instructed to describe data and trends only, with no diagnosis or medical advice. Clinical records, reproductive and sexual-health data and questionnaires are not read. Data is stored encrypted in the EU (Google Cloud, Belgium) and deleted automatically after a year of inactivity.
+- Workouts (including their GPS routes), daily/hourly summaries of fitness and recovery metrics, and the enabled additional types are requested from Apple Health. Further groups of Apple Health data (nutrition and alcohol, menstrual cycle, profile) are requested on Apple Health's permission sheet, which lists each type; the user can deny any in Apple Health (there is no separate in-app switch), and each is used by specific features (for example nutrition before a workout, and recovery). The AI is instructed to describe data and trends only, with no diagnosis or medical advice. Clinical records, glucose, insulin, blood pressure, heart alerts, lung function, symptoms, mood, medications, sexual-health data and questionnaires are not read. Data is stored encrypted in the EU (Google Cloud, Belgium) and deleted automatically after a year of inactivity.
 - Onboarding is three screens: Welcome (Connect to Apple Health), an account page (Sign in with Apple, required) and the upload screen. Syncing begins as soon as Health access is granted, while the account page is shown.
 - To test without an AI account, the app works fully up to the connection step. Adding the connector on claude.ai (free account) takes about a minute: Settings → Connectors → Add custom connector → paste the link.
 - HealthKit data is not stored in iCloud.
@@ -58,7 +58,7 @@ KROK lets users analyze their own Apple Health data with the AI assistant of the
 |---|---|---|---|---|
 | Health & Fitness → Health | Yes | Yes (anonymous account ID) | No | App Functionality |
 | Health & Fitness → Fitness | Yes | Yes | No | App Functionality |
-| Sensitive Info (health conditions, symptoms, medications, glucose, cycle data) | Yes, only if the user enables the group | Yes | No | App Functionality |
+| Sensitive Info (cycle data) | Yes, only if the user enables the group | Yes | No | App Functionality |
 | Location → Precise Location (GPS routes of workouts) | Yes | Yes | No | App Functionality |
 | Identifiers → User ID | Yes (Firebase ID and linked Apple account identifier) | Yes | No | App Functionality |
 | Usage Data → Product Interaction | Yes (onboarding, sync and assistant/tool usage; no Health values or arguments) | Yes (pseudonymous KROK account) | No | Analytics |
@@ -69,6 +69,6 @@ KROK lets users analyze their own Apple Health data with the AI assistant of the
 The app uses only standard HTTPS encryption (exempt). `ITSAppUsesNonExemptEncryption` = NO is already set.
 
 ## Notes on sensitive groups (review before submission)
-- Each optional group can be hidden from the app for the first submission without removing code (hide it in `coverage.json` `categories`). Consider launching with `nutrition`, `heart`, `devices` and `profile` visible and adding `mind`, `cycle` and `medications` later if App Review pushes back.
+- Each optional group can be hidden from the app for the first submission without removing code (hide it in `coverage.json` `categories`). Consider launching with `nutrition` and `profile` visible and adding `cycle` later if App Review pushes back.
 - Permission strings: `NSHealthShareUsageDescription` lists the groups and says each is off until switched on (see `ios/project.yml`).
 - Screenshots and the description must not promise diagnosis or medical advice.

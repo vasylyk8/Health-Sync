@@ -1,6 +1,6 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
-import { CATEGORY_IDS, COVERAGE, DEFAULT_CATEGORIES, PROVIDERS, type Provider } from './config.js';
+import { CATEGORY_IDS, COVERAGE, DEFAULT_CATEGORIES, PROVIDERS, RETIRED_CATEGORIES, type Provider } from './config.js';
 import { generateToken, hashToken } from './auth/tokens.js';
 import { MAX_RACE_GOALS, type BlobStore, type MetaStore, type RaceGoal, type UserDoc } from './store/types.js';
 import { log } from './log.js';
@@ -167,7 +167,7 @@ export async function getStatus(db: Firestore, uid: string): Promise<Status> {
     lastVisibleAt: user.lastVisibleAt ?? null,
     historySyncedBackTo: earliest,
     typesWithData: withData,
-    categories: user.categories ?? DEFAULT_CATEGORIES,
+    categories: (user.categories ?? DEFAULT_CATEGORIES).filter((c) => !RETIRED_CATEGORIES.has(c)),
   };
 }
 
@@ -205,6 +205,8 @@ export async function sweepDeletions(deps: PurgeDeps, limit = 20): Promise<{ pur
 
 /** Validates a list of consent category ids; "core" is always on. */
 export function parseCategories(value: unknown): string[] {
+  // Ids of removed categories (sent by an old app build or kept in its saved choice) are ignored, not an error.
+  if (Array.isArray(value)) value = value.filter((c) => !RETIRED_CATEGORIES.has(c as string));
   if (!Array.isArray(value) || value.some((c) => typeof c !== 'string' || !CATEGORY_IDS.has(c))) {
     throw new AccountError('invalid-argument', `categories must be a list of: ${[...CATEGORY_IDS].join(', ')}`);
   }
@@ -218,6 +220,19 @@ export async function purgeCategoryData(deps: { meta: MetaStore; data: BlobStore
     await deps.data.deletePrefix(`data/${uid}/${t.id}/`);
     await deps.meta.deleteManifest(uid, t.id);
   }
+}
+
+/** Deletes the stored bytes and the manifest of one retired batch type of one user. Idempotent. */
+export async function purgeRetiredType(deps: { meta: MetaStore; data: BlobStore }, uid: string, type: string): Promise<void> {
+  await deps.data.deletePrefix(`data/${uid}/${type}/`);
+  await deps.meta.deleteManifest(uid, type);
+}
+
+/** Drops ids of removed categories from the user's saved choice. */
+export async function stripRetiredCategories(db: Firestore, uid: string): Promise<void> {
+  const ref = db.collection('users').doc(uid);
+  const cats = (await ref.get()).get('categories') as string[] | undefined;
+  if (cats?.some((c) => RETIRED_CATEGORIES.has(c))) await ref.update({ categories: cats.filter((c) => !RETIRED_CATEGORIES.has(c)) });
 }
 
 /**

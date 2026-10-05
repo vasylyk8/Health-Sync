@@ -28,7 +28,7 @@ enum DailyCheck {
     private static func dumpBatches(_ m: BenchModel, source: HealthKitSource, from start: Date) async {
         let end = Date()
         do {
-            let batches = try await source.dailyContextBatches(from: start, to: end, categories: ["nutrition", "mind", "cycle"])
+            let batches = try await source.dailyContextBatches(from: start, to: end, categories: ["nutrition", "cycle"])
             for batch in batches where !batch.records.isEmpty {
                 let header = BatchHeader(type: batch.typeId, mode: .stats, seq: Outbox.seqFloor(), window: (start, end), checkedAt: end)
                 let made = try BatchWriter.make(header: header, records: batch.records, nextSeq: { Outbox.seqFloor() + 1 }, tz: TimeZone.current.identifier, device: "daily-check", appVersion: "ci")

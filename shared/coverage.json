@@ -7,7 +7,11 @@
   "GAD-7 / PHQ-9 questionnaires": "removed: clinical mental-health screening",
   "reproductive and urogenital symptoms (pelvic pain, breast pain, vaginal dryness, hot flashes, bladder incontinence)": "removed",
   "audiograms, vision prescriptions, handwashing, toothbrushing, skin conductance, blood type, skin type": "removed: no feature uses them",
-  "ECG waveforms, heartbeat series, all-day raw background HR/energy/audio": "not small"
+  "ECG waveforms, heartbeat series, all-day raw background HR/energy/audio": "not small",
+  "blood glucose, insulin, blood pressure": "removed: sensitive, no workout or fitness calculation uses them",
+  "medications": "removed: sensitive, no feature uses them",
+  "heart alerts (AFib, irregular rhythm, high/low heart rate, hypertension, low cardio fitness) and lung function (FEV1, FVC, peak flow, inhaler)": "removed: sensitive, no feature uses them",
+  "State of Mind and symptoms": "removed: sensitive, no feature uses them"
  },
  "types": [
   {
@@ -53,46 +57,11 @@
    "category": "cycle"
   },
   {
-   "id": "_daily_mind",
-   "kind": "daily",
-   "group": "daily",
-   "record": "day",
-   "category": "mind"
-  },
-  {
-   "id": "_events_heart",
-   "kind": "events",
-   "group": "events",
-   "record": "ev",
-   "category": "heart"
-  },
-  {
    "id": "_events_nutrition",
    "kind": "events",
    "group": "events",
    "record": "ev",
    "category": "nutrition"
-  },
-  {
-   "id": "_events_devices",
-   "kind": "events",
-   "group": "events",
-   "record": "ev",
-   "category": "devices"
-  },
-  {
-   "id": "_events_mind",
-   "kind": "events",
-   "group": "events",
-   "record": "ev",
-   "category": "mind"
-  },
-  {
-   "id": "_events_medications",
-   "kind": "events",
-   "group": "events",
-   "record": "ev",
-   "category": "medications"
   },
   {
    "id": "_events_profile",
@@ -648,18 +617,7 @@
    "key": "mindfulMin",
    "kind": "category",
    "id": "HKCategoryTypeIdentifierMindfulSession",
-   "mode": "minutes",
-   "category": "mind"
-  },
-  {
-   "key": "stateOfMind",
-   "kind": "stateOfMind",
-   "id": "HKDataTypeIdentifierStateOfMind",
-   "outputs": [
-    "moodValenceAvg",
-    "moodEntries"
-   ],
-   "category": "mind"
+   "mode": "minutes"
   },
   {
    "key": "basalBodyTempC",
@@ -954,29 +912,9 @@
    "default": true
   },
   {
-   "id": "heart",
-   "label": "Heart alerts and lung function",
-   "default": true
-  },
-  {
-   "id": "devices",
-   "label": "Glucose, insulin and blood pressure",
-   "default": true
-  },
-  {
-   "id": "mind",
-   "label": "Mood and symptoms",
-   "default": true
-  },
-  {
    "id": "cycle",
    "label": "Menstrual cycle",
    "default": true
-  },
-  {
-   "id": "medications",
-   "label": "Medications",
-   "default": false
   },
   {
    "id": "profile",
@@ -1021,71 +959,6 @@
   }
  ],
  "eventTypes": [
-  {
-   "name": "AtrialFibrillationBurden",
-   "id": "HKQuantityTypeIdentifierAtrialFibrillationBurden",
-   "kind": "quantity",
-   "category": "heart",
-   "unit": "%"
-  },
-  {
-   "name": "HighHeartRateEvent",
-   "id": "HKCategoryTypeIdentifierHighHeartRateEvent",
-   "kind": "category",
-   "category": "heart"
-  },
-  {
-   "name": "LowHeartRateEvent",
-   "id": "HKCategoryTypeIdentifierLowHeartRateEvent",
-   "kind": "category",
-   "category": "heart"
-  },
-  {
-   "name": "IrregularHeartRhythmEvent",
-   "id": "HKCategoryTypeIdentifierIrregularHeartRhythmEvent",
-   "kind": "category",
-   "category": "heart"
-  },
-  {
-   "name": "LowCardioFitnessEvent",
-   "id": "HKCategoryTypeIdentifierLowCardioFitnessEvent",
-   "kind": "category",
-   "category": "heart"
-  },
-  {
-   "name": "HypertensionEvent",
-   "id": "HKCategoryTypeIdentifierHypertensionEvent",
-   "kind": "category",
-   "category": "heart"
-  },
-  {
-   "name": "ForcedExpiratoryVolume1",
-   "id": "HKQuantityTypeIdentifierForcedExpiratoryVolume1",
-   "kind": "quantity",
-   "category": "heart",
-   "unit": "L"
-  },
-  {
-   "name": "ForcedVitalCapacity",
-   "id": "HKQuantityTypeIdentifierForcedVitalCapacity",
-   "kind": "quantity",
-   "category": "heart",
-   "unit": "L"
-  },
-  {
-   "name": "PeakExpiratoryFlowRate",
-   "id": "HKQuantityTypeIdentifierPeakExpiratoryFlowRate",
-   "kind": "quantity",
-   "category": "heart",
-   "unit": "L/min"
-  },
-  {
-   "name": "InhalerUsage",
-   "id": "HKQuantityTypeIdentifierInhalerUsage",
-   "kind": "quantity",
-   "category": "heart",
-   "unit": "count"
-  },
   {
    "name": "DietaryEnergyConsumed",
    "id": "HKQuantityTypeIdentifierDietaryEnergyConsumed",
@@ -1372,246 +1245,6 @@
    "kind": "quantity",
    "category": "nutrition",
    "unit": "%"
-  },
-  {
-   "name": "BloodGlucose",
-   "id": "HKQuantityTypeIdentifierBloodGlucose",
-   "kind": "quantity",
-   "category": "devices",
-   "unit": "mg/dL",
-   "dense": true
-  },
-  {
-   "name": "InsulinDelivery",
-   "id": "HKQuantityTypeIdentifierInsulinDelivery",
-   "kind": "quantity",
-   "category": "devices",
-   "unit": "IU",
-   "dense": true
-  },
-  {
-   "name": "BloodPressureSystolic",
-   "id": "HKQuantityTypeIdentifierBloodPressureSystolic",
-   "kind": "quantity",
-   "category": "devices",
-   "unit": "mmHg"
-  },
-  {
-   "name": "BloodPressureDiastolic",
-   "id": "HKQuantityTypeIdentifierBloodPressureDiastolic",
-   "kind": "quantity",
-   "category": "devices",
-   "unit": "mmHg"
-  },
-  {
-   "name": "AbdominalCramps",
-   "id": "HKCategoryTypeIdentifierAbdominalCramps",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Acne",
-   "id": "HKCategoryTypeIdentifierAcne",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "AppetiteChanges",
-   "id": "HKCategoryTypeIdentifierAppetiteChanges",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Bloating",
-   "id": "HKCategoryTypeIdentifierBloating",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "ChestTightnessOrPain",
-   "id": "HKCategoryTypeIdentifierChestTightnessOrPain",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Chills",
-   "id": "HKCategoryTypeIdentifierChills",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Constipation",
-   "id": "HKCategoryTypeIdentifierConstipation",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Coughing",
-   "id": "HKCategoryTypeIdentifierCoughing",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Diarrhea",
-   "id": "HKCategoryTypeIdentifierDiarrhea",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Dizziness",
-   "id": "HKCategoryTypeIdentifierDizziness",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "DrySkin",
-   "id": "HKCategoryTypeIdentifierDrySkin",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Fainting",
-   "id": "HKCategoryTypeIdentifierFainting",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Fatigue",
-   "id": "HKCategoryTypeIdentifierFatigue",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Fever",
-   "id": "HKCategoryTypeIdentifierFever",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "GeneralizedBodyAche",
-   "id": "HKCategoryTypeIdentifierGeneralizedBodyAche",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "HairLoss",
-   "id": "HKCategoryTypeIdentifierHairLoss",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Headache",
-   "id": "HKCategoryTypeIdentifierHeadache",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Heartburn",
-   "id": "HKCategoryTypeIdentifierHeartburn",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "LossOfSmell",
-   "id": "HKCategoryTypeIdentifierLossOfSmell",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "LossOfTaste",
-   "id": "HKCategoryTypeIdentifierLossOfTaste",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "LowerBackPain",
-   "id": "HKCategoryTypeIdentifierLowerBackPain",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "MemoryLapse",
-   "id": "HKCategoryTypeIdentifierMemoryLapse",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "MoodChanges",
-   "id": "HKCategoryTypeIdentifierMoodChanges",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Nausea",
-   "id": "HKCategoryTypeIdentifierNausea",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "NightSweats",
-   "id": "HKCategoryTypeIdentifierNightSweats",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "RapidPoundingOrFlutteringHeartbeat",
-   "id": "HKCategoryTypeIdentifierRapidPoundingOrFlutteringHeartbeat",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "RunnyNose",
-   "id": "HKCategoryTypeIdentifierRunnyNose",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "ShortnessOfBreath",
-   "id": "HKCategoryTypeIdentifierShortnessOfBreath",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "SinusCongestion",
-   "id": "HKCategoryTypeIdentifierSinusCongestion",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "SkippedHeartbeat",
-   "id": "HKCategoryTypeIdentifierSkippedHeartbeat",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "SleepChanges",
-   "id": "HKCategoryTypeIdentifierSleepChanges",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "SoreThroat",
-   "id": "HKCategoryTypeIdentifierSoreThroat",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Vomiting",
-   "id": "HKCategoryTypeIdentifierVomiting",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Wheezing",
-   "id": "HKCategoryTypeIdentifierWheezing",
-   "kind": "category",
-   "category": "mind"
-  },
-  {
-   "name": "Medication",
-   "id": "HKUserAnnotatedMedication",
-   "kind": "medication",
-   "category": "medications"
   },
   {
    "name": "Profile",

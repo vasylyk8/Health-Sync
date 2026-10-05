@@ -18,7 +18,7 @@ let published = 0;
 describe.skipIf(!dir)('what the phone sends is what an AI gets back', () => {
   beforeAll(async () => {
     const env = makeEnv(Date.now());
-    env.meta.users.get(env.uid)!.categories = ['core', 'nutrition', 'mind', 'cycle'];
+    env.meta.users.get(env.uid)!.categories = ['core', 'nutrition', 'cycle'];
     const files = readdirSync(dir!).filter((f) => f.endsWith('.ndjson.gz'));
     expect(files.length, 'the app dumped no batches').toBeGreaterThan(0);
     for (const f of files) {
