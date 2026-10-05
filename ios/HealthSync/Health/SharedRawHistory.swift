@@ -4,21 +4,24 @@ import Foundation
 /// Separate syncs/accounts cannot see one another's cached summaries, even when cancellation overlaps.
 enum SharedRawHistory {
     @TaskLocal static var cache: RawHistoryCache?
+    @TaskLocal static var statistics: DailyStatisticsCache?
     @TaskLocal static var endingAt: Date?
 
     static func withFreshCache<T>(endingAt cutoff: Date? = nil, _ body: () async throws -> T) async rethrows -> T {
         let session = RawHistoryCache()
+        let stats = InitialSyncExperiments.statistics ?? DailyStatisticsCache()
         return try await withTaskCancellationHandler {
             do {
                 return try await $endingAt.withValue(cutoff) {
-                    try await $cache.withValue(session) { try await body() }
+                    try await $cache.withValue(session) { try await $statistics.withValue(stats) { try await body() } }
                 }
             } catch {
                 await session.cancelAll()
+                await stats.cancelAll()
                 throw error
             }
         } onCancel: {
-            Task { await session.cancelAll() }
+            Task { await session.cancelAll(); await stats.cancelAll() }
         }
     }
 }

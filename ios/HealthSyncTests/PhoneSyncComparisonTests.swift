@@ -35,6 +35,8 @@ final class PhoneSyncComparisonTests: XCTestCase {
         let changed = try await index("value", rows: [day("2020-01-01", 73)])
         XCTAssertFalse(try changed.compare(to: reference).equivalent)
         XCTAssertEqual(try changed.compare(to: reference).maximumDelta, 1)
+        XCTAssertEqual(try changed.compare(to: reference).changedFields["day.m.hrAvg"], 1)
+        XCTAssertTrue(try changed.compare(to: reference).detailSummary.contains("day=2020-01-01"))
         let date = try await index("date", rows: [day("2020-01-02")])
         XCTAssertFalse(try date.compare(to: reference).equivalent)
         let type = try await index("type", rows: [day()], type: "hourly")

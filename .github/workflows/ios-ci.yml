@@ -86,6 +86,6 @@ jobs:
           xcodebuild test -project HealthSync.xcodeproj -scheme HealthSync \
             -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
             -configuration Release ENABLE_TESTABILITY=YES \
-            -only-testing:HealthSyncTests/DailyMetricReadsTests -only-testing:HealthSyncTests/PhoneSyncComparisonTests \
+            -only-testing:HealthSyncTests/DailyMetricReadsTests -only-testing:HealthSyncTests/PhoneSyncComparisonTests -only-testing:HealthSyncTests/InitialSyncExperimentsTests \
             CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= \
             2>&1 | tee release-collector.log | grep -E 'error:|Test Case|Executed|TEST'

@@ -6,6 +6,29 @@ struct HistoryRecordComparison: Sendable {
     var equivalent: Bool
     var maximumDelta: Double
     var changedRecords: Int
+    var changedFields: [String: Int] = [:]
+    var examples: [String] = []
+    var detailSummary: String {
+        let fields = changedFields.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+            .prefix(12).map { "\($0.key)=\($0.value)" }.joined(separator: ", ")
+        return "Changed fields: \(fields.isEmpty ? "none" : fields)" + (examples.isEmpty ? "" : "\n" + examples.joined(separator: "\n"))
+    }
+    /// Field paths/counts and a bounded set of values. No account/workout/source identifiers.
+    static func differingFields(_ a: Any, _ b: Any, path: String = "", tolerance: Double = 1e-9) -> [(String, Double?, Double?)] {
+        if let a = a as? [String: Any], let b = b as? [String: Any] {
+            return Set(a.keys).union(b.keys).sorted().flatMap { key in
+                let next = path.isEmpty ? key : path + "." + key
+                guard let av = a[key], let bv = b[key] else { return [(next, nil, nil)] }
+                return differingFields(av, bv, path: next, tolerance: tolerance)
+            }
+        }
+        if let a = a as? [Any], let b = b as? [Any] {
+            guard a.count == b.count else { return [(path + ".count", Double(a.count), Double(b.count))] }
+            return zip(a, b).flatMap { differingFields($0, $1, path: path + "[]", tolerance: tolerance) }
+        }
+        if let delta = distance(a, b), delta <= tolerance { return [] }
+        return [(path, (a as? NSNumber)?.doubleValue, (b as? NSNumber)?.doubleValue)]
+    }
 
     static func compare(_ reference: [String], _ candidate: [String], tolerance: Double = 1e-9) throws -> Self {
         func groups(_ records: [String]) throws -> [String: [(String, Any)]] {

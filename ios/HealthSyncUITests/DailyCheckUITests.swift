@@ -7,6 +7,7 @@ final class DailyCheckUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["-healthBench", "-dailyCheck", "-dailyConcurrency", ProcessInfo.processInfo.environment["DAILY_CONCURRENCY"] ?? "2"]
+        if let strategy = ProcessInfo.processInfo.environment["INITIAL_STRATEGY"] { app.launchArguments += ["-initialStrategy", strategy] }
         app.launch()
 
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")

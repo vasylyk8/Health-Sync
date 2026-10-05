@@ -73,12 +73,13 @@ struct DiagnosticRecordIndex: Sendable {
         let a = try FileHandle(forReadingFrom: reference.file), b = try FileHandle(forReadingFrom: file)
         defer { try? a.close(); try? b.close() }
         var result = HistoryRecordComparison(exact: count == reference.count && Set(groups.keys) == Set(reference.groups.keys), equivalent: count == reference.count && Set(groups.keys) == Set(reference.groups.keys), maximumDelta: 0, changedRecords: 0)
-        for key in Set(groups.keys).union(reference.groups.keys) {
+        for key in Set(groups.keys).union(reference.groups.keys).sorted() {
             try Task.checkCancellation()
             let originals = reference.groups[key] ?? [], candidates = groups[key] ?? []
             guard originals.count == candidates.count else {
                 result.exact = false; result.equivalent = false
                 result.changedRecords += max(originals.count, candidates.count)
+                result.changedFields["record shape/count", default: 0] += max(originals.count, candidates.count)
                 continue
             }
             func frequencies(_ locations: [Location]) -> [String: Int] {
@@ -102,6 +103,16 @@ struct DiagnosticRecordIndex: Sendable {
                 }
                 result.changedRecords += 1
                 guard let best else { result.equivalent = false; continue }
+                let candidate = try Self.read(b, remaining[best.0])
+                let differences = HistoryRecordComparison.differingFields(original, candidate, tolerance: tolerance)
+                let label = (original as? [String: Any])?["k"] as? String ?? "record"
+                for field in Set(differences.map { label + "." + $0.0 }) { result.changedFields[field, default: 0] += 1 }
+                if result.examples.count < 8, let first = differences.first {
+                    let day = (original as? [String: Any])?["day"] as? String
+                    let date = day.map { " day=" + $0 } ?? ""
+                    let values = first.1.flatMap { a in first.2.map { b in " reference=\(a) candidate=\(b)" } } ?? " shape/value changed"
+                    result.examples.append("Difference \(label)\(date) field=\(first.0)\(values)")
+                }
                 remaining.remove(at: best.0)
                 result.maximumDelta = max(result.maximumDelta, best.1)
                 if !best.1.isFinite || best.1 > tolerance { result.equivalent = false }

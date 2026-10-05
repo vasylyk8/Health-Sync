@@ -59,7 +59,16 @@ enum HealthBench {
         let args = ProcessInfo.processInfo.arguments
         if args.contains("-dailyCheck") {
             let width = args.firstIndex(of: "-dailyConcurrency").flatMap { Int(args[$0 + 1]) } ?? DailyMetricConcurrency.productionWidth
-            await DailyMetricExperiment.$width.withValue(width) { await DailyCheck.run(m) }
+            let strategy = args.firstIndex(of: "-initialStrategy").flatMap { InitialSyncExperiments.Strategy(rawValue: args[$0 + 1]) }
+            let cal = Calendar.current
+            let today = cal.startOfDay(for: Date())
+            await InitialSyncExperiments.$strategy.withValue(strategy) {
+                await InitialSyncExperiments.$historyStart.withValue(cal.date(byAdding: .year, value: -4, to: today)) {
+                    await InitialSyncExperiments.$historyEnd.withValue(Date().addingTimeInterval(3600)) {
+                        await DailyMetricExperiment.$width.withValue(width) { await DailyCheck.run(m) }
+                    }
+                }
+            }
             return
         }
         let count = args.firstIndex(of: "-benchCount").flatMap { Int(args[$0 + 1]) } ?? 300
@@ -81,10 +90,36 @@ enum HealthBench {
         let shared = args.contains("-benchShared")
         let daily = args.contains("-benchDailyConcurrency")
         let phone = args.contains("-benchPhoneComparison")
+        let initial = args.contains("-benchInitialOptions")
         let heavy = args.firstIndex(of: "-benchHeavy").flatMap { Int(args[$0 + 1]) } ?? 60
         let light = max(0, count - heavy)
-        await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: (daily || phone) ? 16 : (shared ? 9 : 1.3), heavyStride: (daily || phone) ? 12 : (shared ? 6 : 1), m)
+        await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: (daily || phone || initial) ? 16 : (shared ? 9 : 1.3), heavyStride: (daily || phone || initial) ? 12 : (shared ? 6 : 1), m)
         await seedBackground(store, count: 100_000, m)
+        if initial {
+            await SharedReadBenchmark.seedHistoryDetails(store, m, scope: scope)
+            let mode = args.firstIndex(of: "-benchInitialMode").map { args[$0 + 1] } ?? "normal"
+            var options = PhoneSyncComparison.Options()
+            options.order = [1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1]
+            options.strategies = [.baseline, .baseline, .selectiveFallback, .sharedStatistics, .widerStatistics, .combined,
+                                  .combined, .widerStatistics, .sharedStatistics, .selectiveFallback, .baseline, .baseline]
+            options.uploadDelay = 0.3
+            options.coolingTimeout = 0
+            do {
+                let result = try await PhoneSyncComparison.run(scope: scope, categories: ["core"], options: options,
+                    sourceFactory: {
+                        let source = HealthKitSource(scope: scope)
+                        source.debugFailingStatistics = mode == "error"
+                        source.debugEmptyStatistics = mode == "empty"
+                        source.debugPartialDailyStatistics = mode == "partial"
+                        source.debugPartialHourlyStatistics = mode == "partial"
+                        return source
+                    }, onUpdate: { _ in })
+                m.log("INITIALOPTIONS mode=\(mode): \(result.report)")
+                m.log(result.passed ? "INITIALOPTIONS CHECK OK" : "INITIALOPTIONS CHECK FAILED")
+            } catch { m.log("INITIALOPTIONS CHECK FAILED: \(error)") }
+            m.log("BENCH DONE")
+            return
+        }
         if phone {
             await SharedReadBenchmark.seedHistoryDetails(store, m, scope: scope)
             for forced in [false, true] {

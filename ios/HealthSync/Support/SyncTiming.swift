@@ -160,6 +160,10 @@ final class SyncTiming: @unchecked Sendable {
         }
     }
 
+    var experimentSummary: String {
+        lock.withLock { counters.keys.filter { $0.hasPrefix("experiment.") }.sorted().map { "\($0)=\(counters[$0]!)" }.joined(separator: " ") }
+    }
+
     /// Upload numbers of this app session's sync, for the speed test (nil before the first upload).
     func uploadSummary() -> String? {
         lock.withLock {

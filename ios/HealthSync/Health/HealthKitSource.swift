@@ -713,7 +713,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         // Watches/iPhones. Naming every source makes HealthKit apply its own source-priority/de-duplication rules again.
         if out.isEmpty, try await hasQuantitySamples(type, predicate: range), let sources = await allSourcesPredicate(type) {
             out = (try? await dailyStatisticsOnce(type, unit: unit, agg: agg, scale: scale, from: from, to: to, calendar: calendar,
-                                                  predicate: Self.and(range, sources), options: options)) ?? []
+                                                  predicate: Self.and(range, sources), options: options, explicitSources: true)) ?? []
             if !out.isEmpty { recordFallback(type, mode: "sources", hourly: false) }
         }
 
@@ -725,7 +725,15 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let days = SampleAggregator.localDays(from: from, to: min(to, now), calendar: calendar)
         let calibrate = Self.calibrationTypes.contains(type.identifier) && to > now.addingTimeInterval(-3600) && !out.isEmpty
         guard out.count < days || calibrate, try await hasQuantitySamples(type, predicate: range) else { return out }
-        let raw = try await rawDailyStatistics(type, unit: unit, agg: agg, scale: scale, from: from, to: to, calendar: calendar)
+        let raw: [(String, Double)]
+        // Sharing a full raw scan with an hourly consumer is cheaper than starting an extra selective scan.
+        let hourlyConsumer = scope.hourly.contains { $0.type.identifier == type.identifier && $0.unit.unitString == unit.unitString }
+        if InitialSyncExperiments.strategy?.selective == true, !calibrate, !hourlyConsumer,
+           let windows = InitialSyncExperiments.missingWindows(present: Set(out.map(\.0)), from: from, to: to, calendar: calendar) {
+            raw = try await selectiveRawDaily(type, unit: unit, agg: agg, scale: scale, from: from, to: to, calendar: calendar, windows: windows)
+        } else {
+            raw = try await rawDailyStatistics(type, unit: unit, agg: agg, scale: scale, from: from, to: to, calendar: calendar)
+        }
         // Median/largest percent difference from HealthKit's own daily values, and days compared.
         if calibrate, let d = SampleAggregator.difference(reference: out, other: raw) {
             let text = String(format: "%.1f/%.1f/%dd", d.median, d.max, d.days)
@@ -752,13 +760,30 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     }
 
     private func dailyStatisticsOnce(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date,
-                                     calendar: Calendar, predicate: NSPredicate, options: HKStatisticsOptions) async throws -> [(String, Double)] {
+                                     calendar: Calendar, predicate: NSPredicate, options: HKStatisticsOptions,
+                                     explicitSources: Bool = false) async throws -> [(String, Double)] {
+        if InitialSyncExperiments.strategy?.shared == true, [.avg, .min, .max].contains(agg),
+           let cache = SharedRawHistory.statistics ?? InitialSyncExperiments.statistics {
+            let (a, b) = InitialSyncExperiments.statisticsWindow(from: from, to: to, calendar: calendar)
+            // Source recovery uses the exact existing annual predicate; broadening that predicate could change de-duplication.
+            let wide = !explicitSources && (a != from || b != to)
+            let lo = wide ? a : from, hi = wide ? b : to
+            let selection = wide ? HKQuery.predicateForSamples(withStart: lo, end: hi, options: []) : predicate
+            let key = DailyStatisticsKey(type: type.identifier, unit: unit.unitString, from: lo, to: hi,
+                                         zone: calendar.timeZone.identifier, explicitSources: explicitSources)
+            let snapshot = try await cache.value(key) { [self] in
+                try await self.dailyStatisticsSnapshot(type, unit: unit, from: lo, to: hi, calendar: calendar, predicate: selection)
+            }
+            let first = SleepNights.dayKey(from, calendar: calendar), last = SleepNights.dayKey(to, calendar: calendar)
+            return (snapshot.values[agg.rawValue] ?? []).filter { $0.0 >= first && $0.0 <= last }.map { ($0.0, $0.1 * scale) }
+        }
         #if DEBUG
         if debugFailingStatistics { throw HKError(.errorInvalidArgument) }
         if debugEmptyStatistics { return [] }
         #endif
         await queryGate.acquire()
         defer { queryGate.release() }
+        if InitialSyncExperiments.strategy != nil { SyncTiming.shared.count("experiment.statisticsQueries") }
         let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
             let q = HKStatisticsCollectionQuery(quantityType: type, quantitySamplePredicate: predicate, options: options, anchorDate: from, intervalComponents: DateComponents(day: 1))
             q.initialResultsHandler = { _, collection, error in
@@ -780,7 +805,60 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             let v = quantity.doubleValue(for: unit) * scale
             if v.isFinite { out.append((SleepNights.dayKey(stats.startDate, calendar: calendar), v)) }
         }
+        #if DEBUG
+        if debugPartialDailyStatistics { return out.filter { Int($0.0.suffix(2)) != 8 } }
+        #endif
         return out
+    }
+
+    private func dailyStatisticsSnapshot(_ type: HKQuantityType, unit: HKUnit, from: Date, to: Date,
+                                         calendar: Calendar, predicate: NSPredicate) async throws -> DailyStatisticsSnapshot {
+        #if DEBUG
+        if debugFailingStatistics { throw HKError(.errorInvalidArgument) }
+        if debugEmptyStatistics { return DailyStatisticsSnapshot(values: [:]) }
+        #endif
+        await queryGate.acquire()
+        defer { queryGate.release() }
+        SyncTiming.shared.count("experiment.statisticsQueries")
+        let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
+            let q = HKStatisticsCollectionQuery(quantityType: type, quantitySamplePredicate: predicate,
+                options: [.discreteAverage, .discreteMin, .discreteMax], anchorDate: from, intervalComponents: DateComponents(day: 1))
+            q.initialResultsHandler = { _, collection, error in
+                if let collection { cont.resume(returning: collection) } else { cont.resume(throwing: error ?? HealthSourceError.noResults) }
+            }
+            store.execute(q)
+        }
+        var result: [String: [(String, Double)]] = [:]
+        collection.enumerateStatistics(from: from, to: to) { stats, _ in
+            for (key, quantity) in [(DailyAgg.avg.rawValue, stats.averageQuantity()), (DailyAgg.min.rawValue, stats.minimumQuantity()), (DailyAgg.max.rawValue, stats.maximumQuantity())] {
+                if let value = quantity?.doubleValue(for: unit), value.isFinite {
+                    result[key, default: []].append((SleepNights.dayKey(stats.startDate, calendar: calendar), value))
+                }
+            }
+        }
+        #if DEBUG
+        if debugPartialDailyStatistics { result = result.mapValues { $0.filter { Int($0.0.suffix(2)) != 8 } } }
+        #endif
+        return DailyStatisticsSnapshot(values: result)
+    }
+
+    private func selectiveRawDaily(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double,
+                                   from: Date, to: Date, calendar: Calendar, windows: [DateInterval]) async throws -> [(String, Double)] {
+        var aggregator = SampleAggregator(calendar: calendar, from: from, to: to, style: Self.aggregationStyle(type), granularity: .day)
+        var seen = Set<UUID>()
+        for window in windows {
+            try Task.checkCancellation()
+            let predicate = HKQuery.predicateForSamples(withStart: window.start.addingTimeInterval(-SampleAggregator.nearWatch),
+                                                       end: window.end.addingTimeInterval(SampleAggregator.nearWatch), options: [])
+            SyncTiming.shared.count("experiment.selectiveQueries")
+            let samples = try await fetch(type, predicate: predicate, sort: nil)
+            SyncTiming.shared.count("experiment.selectiveSamples", samples.count)
+            for case let sample as HKQuantitySample in samples where seen.insert(sample.uuid).inserted {
+                if let reading = Self.reading(sample, unit: unit, scale: scale) { aggregator.add(reading) }
+            }
+        }
+        // Only missing buckets are consumed by the caller. Existing Apple statistics are never replaced.
+        return aggregator.daily(agg)
     }
 
     private func rawDailyStatistics(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date,
@@ -805,9 +883,12 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         var first = true
         while cursor < end {
             try Task.checkCancellation()
-            let next = min(cal.date(byAdding: .month, value: 1, to: cursor) ?? end, end)
+            let months = InitialSyncExperiments.strategy?.wider == true ? 3 : 1
+            let next = min(cal.date(byAdding: .month, value: months, to: cursor) ?? end, end)
             let window = HKQuery.predicateForSamples(withStart: cursor, end: next, options: [])
+            if InitialSyncExperiments.strategy != nil { SyncTiming.shared.count("experiment.rawQueries") }
             let samples = try await fetch(type, predicate: window, sort: nil)
+            if InitialSyncExperiments.strategy != nil { SyncTiming.shared.count("experiment.rawSamples", samples.count) }
             for case let sample as HKQuantitySample in samples where sample.startDate < next && (first || sample.startDate >= cursor) {
                 if let reading = Self.reading(sample, unit: unit, scale: scale) { body(reading) }
             }
@@ -1067,6 +1148,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     /// Daily check only: every statistics query comes back empty, as on the restored iPhone, so the raw fill is tested end to end.
     var debugEmptyStatistics = false
     var debugPartialHourlyStatistics = false
+    var debugPartialDailyStatistics = false
     /// Daily check only: every statistics query fails as the restored iPhone's hourly heart rate did ("invalid argument"),
     /// so the raw fill is tested as the path taken when HealthKit's statistics error.
     var debugFailingStatistics = false

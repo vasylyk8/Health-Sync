@@ -9,11 +9,13 @@ final class HealthBenchUITests: XCTestCase {
         let count = ProcessInfo.processInfo.environment["BENCH_COUNT"] ?? "300"
         let shared = ProcessInfo.processInfo.environment["BENCH_SHARED"] == "1"
         let daily = ProcessInfo.processInfo.environment["BENCH_DAILY_CONCURRENCY"] == "1"
+        let initial = ProcessInfo.processInfo.environment["BENCH_INITIAL_OPTIONS"] == "1"
         let phone = ProcessInfo.processInfo.environment["BENCH_PHONE_COMPARISON"] == "1"
         app.launchArguments = ["-healthBench", "-benchCount", count]
         if shared { app.launchArguments += ["-benchShared", "-benchHeavy", "24"] }
         if phone { app.launchArguments += ["-benchPhoneComparison", "-benchHeavy", "24"] }
         if daily { app.launchArguments += ["-benchDailyConcurrency", "-benchHeavy", "24"] }
+        if initial { app.launchArguments += ["-benchInitialOptions", "-benchHeavy", "24", "-benchInitialMode", ProcessInfo.processInfo.environment["BENCH_INITIAL_MODE"] ?? "normal"] }
         app.launch()
 
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -46,6 +48,12 @@ final class HealthBenchUITests: XCTestCase {
         shot.lifetime = .keepAlways
         add(shot)
         XCTAssertTrue(output.label.contains("BENCH DONE"), "benchmark did not finish")
+        if initial {
+            XCTAssertTrue(output.label.contains("INITIALOPTIONS CHECK OK"), output.label)
+            XCTAssertFalse(output.label.contains("INITIALOPTIONS CHECK FAILED"), output.label)
+            XCTAssertFalse(output.label.contains("SHARED seed failed"))
+            XCTAssertFalse(output.label.contains("background save error"))
+        }
         if phone {
             XCTAssertTrue(output.label.contains("PHONEPATH CHECK OK forced=false"), output.label)
             XCTAssertTrue(output.label.contains("PHONEPATH CHECK OK forced=true"), output.label)
