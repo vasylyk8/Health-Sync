@@ -6,7 +6,7 @@ import UIKit
 /// Drawn in a 240 x 290 box and scaled to whatever frame it is given.
 struct MedalView: View {
     let edition: SpecialEdition
-    /// "4:30:00", shown large on the back.
+    /// "4:30", shown large on the back.
     let timeText: String
     let showingBack: Bool
 
@@ -24,10 +24,12 @@ struct MedalView: View {
     /// Counts turns, so a late "finished" from an earlier turn is ignored.
     @State private var turnCount = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// UI tests (and Apple's accessibility audit, which waits for the screen to settle) get a still medal.
+    private let animates = !ProcessInfo.processInfo.arguments.contains("-uiTesting")
 
     var body: some View {
         Group {
-            if reduceMotion || (showingBack && settled) {
+            if reduceMotion || !animates || (showingBack && settled) {
                 medal(angle: showingBack ? (turn?.to ?? 180) : 0)
             } else {
                 TimelineView(.animation) { context in
@@ -97,7 +99,11 @@ private struct MedalSide: View {
             Canvas { context, _ in
                 let ink = GraphicsContext.Shading.color(Theme.ink)
                 // Ribbon: a dark band with two light stripes, ending in a small ring.
-                context.fill(Path(CGRect(x: 98, y: 0, width: 44, height: 64)), with: ink)
+                // The top of the band fades out, so it blends into the screen instead of ending in a hard line.
+                let band = GraphicsContext.Shading.linearGradient(
+                    Gradient(stops: [.init(color: Theme.ink.opacity(0), location: 0), .init(color: Theme.ink, location: 0.5)]),
+                    startPoint: CGPoint(x: 120, y: 0), endPoint: CGPoint(x: 120, y: 64))
+                context.fill(Path(CGRect(x: 98, y: 0, width: 44, height: 64)), with: band)
                 if !back {
                     for x in [108.0, 126.0] {
                         context.fill(Path(CGRect(x: x, y: 0, width: 6, height: 64)), with: .color(Theme.background.opacity(0.35)))
@@ -112,19 +118,20 @@ private struct MedalSide: View {
                 context.stroke(outer, with: ink, lineWidth: 4)
                 let inner = Path(ellipseIn: CGRect(x: center.x - 98, y: center.y - 98, width: 196, height: 196))
                 context.stroke(inner, with: ink, lineWidth: 1.5)
+                // The words round the rim.
+                let top = back ? "YOUR GOAL TIME" : edition.medalTop
+                let bottom = back ? "GOOD LUCK" : edition.medalBottom
+                ArcText.draw(top, radius: 83.5, top: true, color: Theme.ink, center: center, in: context)
+                ArcText.draw(bottom, radius: 83.5, top: false, color: back ? Theme.muted : Theme.ink, center: center, in: context)
             }
             if back {
-                ArcText(text: "YOUR GOAL TIME", radius: 83.5, top: true, color: Theme.ink).position(center)
-                ArcText(text: "GOOD LUCK", radius: 83.5, top: false, color: Theme.muted).position(center)
                 Text(timeText)
-                    .font(.system(size: 40, weight: .semibold))
+                    .font(.system(size: 52, weight: .semibold))
                     .monospacedDigit()
                     .tracking(-1)
                     .foregroundStyle(Theme.ink)
-                    .position(x: center.x, y: center.y + 2)
+                    .position(x: center.x, y: center.y + 4)
             } else {
-                ArcText(text: edition.medalTop, radius: 83.5, top: true, color: Theme.ink).position(center)
-                ArcText(text: edition.medalBottom, radius: 83.5, top: false, color: Theme.ink).position(center)
                 // The art fills 157 x 110, centred on the coin.
                 edition.art()
                     .frame(width: 157.3, height: 110.4)
@@ -135,38 +142,23 @@ private struct MedalSide: View {
     }
 }
 
-/// Text along a circle (SwiftUI has no text-on-a-path): each letter is placed and turned on its own. `top` text
-/// reads clockwise over the top of the coin, the other reads left to right along the bottom.
-private struct ArcText: View {
-    let text: String
-    let radius: CGFloat
-    let top: Bool
-    let color: Color
-
+/// Text along a circle, drawn letter by letter in a Canvas (SwiftUI has no text-on-a-path). `top` text reads clockwise
+/// over the top of the coin, the other reads left to right along the bottom.
+private enum ArcText {
     private static let tracking: CGFloat = 4
     private static let font = UIFont.systemFont(ofSize: 12, weight: .semibold)
 
-    private var letters: [(char: String, offset: CGFloat)] {
-        let widths = text.map { ("\($0)" as NSString).size(withAttributes: [.font: Self.font]).width + Self.tracking }
-        let total = widths.reduce(0, +) - Self.tracking
+    static func draw(_ text: String, radius: CGFloat, top: Bool, color: Color, center: CGPoint, in context: GraphicsContext) {
+        let widths = text.map { ("\($0)" as NSString).size(withAttributes: [.font: font]).width + tracking }
+        let total = widths.reduce(0, +) - tracking
         var run: CGFloat = 0
-        return zip(text, widths).map { ch, w in
+        for (ch, w) in zip(text, widths) {
             defer { run += w }
-            return ("\(ch)", run + (w - Self.tracking) / 2 - total / 2)
+            let s = (run + (w - tracking) / 2 - total / 2) / radius
+            var letter = context
+            letter.translateBy(x: center.x + radius * sin(s), y: center.y + (top ? -1 : 1) * radius * cos(s))
+            letter.rotate(by: .radians(top ? s : -s))
+            letter.draw(Text(String(ch)).font(.system(size: 12, weight: .semibold)).foregroundStyle(color), at: .zero, anchor: .center)
         }
-    }
-
-    var body: some View {
-        ZStack {
-            ForEach(Array(letters.enumerated()), id: \.offset) { _, letter in
-                let s = letter.offset / radius
-                Text(letter.char)
-                    .font(Font(Self.font))
-                    .foregroundStyle(color)
-                    .rotationEffect(.radians(top ? s : -s))
-                    .offset(x: radius * sin(s), y: top ? -radius * cos(s) : radius * cos(s))
-            }
-        }
-        .frame(width: 0, height: 0)
     }
 }

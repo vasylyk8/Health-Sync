@@ -137,7 +137,7 @@ struct RootView: View {
             if model.phase == .home {
                 ConnectView()
             } else {
-                OnboardingView()
+                OnboardingView(startOnAccount: model.phase == .account)
             }
         }
         .background(Theme.background.ignoresSafeArea())

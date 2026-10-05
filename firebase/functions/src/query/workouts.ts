@@ -12,6 +12,7 @@ import { isComplete, loadType, localRangeToUtc, roughUtcRange, ToolError, validT
 import { lit, withDuck } from './duck.js';
 import { dailyMaps, enabledCategories } from './health.js';
 import { findWorkout, SELECT_W, toWorkoutRow, type WorkoutRow } from './lookup.js';
+import { readinessHint } from './race.js';
 
 const MAX_LIST = 300;
 const DAY_MS = 86_400_000;
@@ -50,7 +51,7 @@ function resolveStreamName(doc: WorkoutDataDoc, name: string): string {
   return hit;
 }
 
-async function loadStream(c: DuckDBConnection, dir: string, deps: QueryDeps, doc: WorkoutDataDoc, name: string, budget: { bytes: number }): Promise<LoadedStream> {
+export async function loadStream(c: DuckDBConnection, dir: string, deps: QueryDeps, doc: WorkoutDataDoc, name: string, budget: { bytes: number }): Promise<LoadedStream> {
   const info = doc.streams[name]!;
   budget.bytes += info.files.reduce((n, f) => n + f.bytes, 0);
   if (budget.bytes > LIMITS.maxScanBytes) throw new ToolError('too_large', 'That workout stream is too large to read at once.');
@@ -75,14 +76,14 @@ async function loadStream(c: DuckDBConnection, dir: string, deps: QueryDeps, doc
   return { name, unit: info.unit, t, cols, info };
 }
 
-function rawDoc(doc: WorkoutDataDoc | null): WorkoutDataDoc {
+export function rawDoc(doc: WorkoutDataDoc | null): WorkoutDataDoc {
   if (!doc || Object.keys(doc.streams).length === 0) {
     throw new ToolError('no_data', 'No raw data has been synced for this workout yet. It may still be uploading (the summary arrives first). Ask the user to open KROK and pull down to sync, then try again.');
   }
   return doc;
 }
 
-function rawStatus(doc: WorkoutDataDoc | null): 'complete' | 'partial' | 'none' {
+export function rawStatus(doc: WorkoutDataDoc | null): 'complete' | 'partial' | 'none' {
   if (!doc || Object.keys(doc.streams).length === 0) return 'none';
   return doc.rawComplete ? 'complete' : 'partial';
 }
@@ -132,14 +133,14 @@ export function derivedWeather(md: Record<string, unknown>): Record<string, numb
 
 const num = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 
-function eventsOf(extra: Record<string, unknown>): WorkoutEvent[] {
+export function eventsOf(extra: Record<string, unknown>): WorkoutEvent[] {
   const ev = extra.ev;
   if (!Array.isArray(ev)) return [];
   return ev.filter((e): e is WorkoutEvent => !!e && typeof e === 'object' && typeof (e as WorkoutEvent).t === 'number' && typeof (e as WorkoutEvent).type === 'number');
 }
 
 /** Compact Apple-computed summary shared by list and detail views. */
-function summaryOf(w: WorkoutRow) {
+export function summaryOf(w: WorkoutRow) {
   const x = w.extra;
   const dur = num(x.dur);
   const dist = num(x.dist);
@@ -181,6 +182,8 @@ export async function getWorkouts(deps: QueryDeps, args: { start_date: string; e
     if (truncated) {
       notes.push(`More workouts match than the ${cap} shown (oldest first). To see the rest, call again starting after ${list[list.length - 1]!.start.slice(0, 10)}, or narrow the range or activity filter.`);
     }
+    const hint = await readinessHint(deps);
+    if (hint) notes.push(hint);
     return {
       ...envelope(deps, [[WORKOUT_TYPE, man]], isComplete(man, startUtc, endUtc, deps.now()), notes),
       timezone: r.tz, count: list.length, truncated, workouts: list,
@@ -335,7 +338,7 @@ export interface RouteArgs {
   timezone?: string;
 }
 
-async function loadRoute(c: DuckDBConnection, dir: string, deps: QueryDeps, doc: WorkoutDataDoc): Promise<RoutePoints> {
+export async function loadRoute(c: DuckDBConnection, dir: string, deps: QueryDeps, doc: WorkoutDataDoc): Promise<RoutePoints> {
   if (!doc.streams.route) throw new ToolError('not_found', `This workout has no GPS route. Available streams: ${Object.keys(doc.streams).join(', ')}.`);
   const s = await loadStream(c, dir, deps, doc, 'route', { bytes: 0 });
   return { t: s.t, lat: s.cols.lat ?? [], lon: s.cols.lon ?? [], alt: s.cols.alt, spd: s.cols.spd };
@@ -389,7 +392,7 @@ export async function getWorkoutRoute(deps: QueryDeps, args: RouteArgs): Promise
 // ---------------------------------------------------------------------------------------------
 // Calculation tools
 
-interface CalcContext {
+export interface CalcContext {
   c: DuckDBConnection;
   dir: string;
   row: WorkoutRow;
@@ -406,17 +409,36 @@ async function calcContext(c: DuckDBConnection, dir: string, deps: QueryDeps, wo
   return { c, dir, row, doc, man, pauses: pausesFromEvents(eventsOf(row.extra), row.e), budget: { bytes: 0 } };
 }
 
+/** A calculation context for a workout whose summary row is already loaded (no per-workout partition scan). */
+export function calcContextFromRow(c: DuckDBConnection, dir: string, row: WorkoutRow, doc: WorkoutDataDoc, man: CalcContext['man'], budget: { bytes: number }): CalcContext {
+  return { c, dir, row, doc, man, pauses: pausesFromEvents(eventsOf(row.extra), row.e), budget };
+}
+
+/**
+ * Summary rows of every workout starting in a local date range (inclusive), oldest first, without the
+ * get_workouts row cap. Reads only the monthly partitions that overlap the range. `activity` is a
+ * case-insensitive substring of Apple's activity name (e.g. "running").
+ */
+export async function loadWorkoutSummaries(c: DuckDBConnection, dir: string, deps: QueryDeps, tz: string, startDate: string, endDate: string, opts: { activity?: string; budget?: { bytes: number } } = {}) {
+  const [startUtc, endUtc] = await localRangeToUtc(c, tz, startDate, endDate);
+  const man = await loadType(c, dir, deps, WORKOUT_TYPE, roughUtcRange(startDate, endDate), 'w', { what: 'raw', budget: opts.budget ?? { bytes: 0 } });
+  const filters = [`s >= ${startUtc} AND s < ${endUtc}`, `k = 'w'`];
+  if (opts.activity) filters.push(`json_extract_string(extra, '$.actName') ILIKE ${lit('%' + opts.activity.replace(/[\\%_]/g, '\\$&') + '%')} ESCAPE '\\'`);
+  const out = await rows(c, `${SELECT_W(tz)} WHERE ${filters.join(' AND ')} ORDER BY s`);
+  return { man, startUtc, endUtc, workouts: out.map(toWorkoutRow) };
+}
+
 const calcEnvelope = (deps: QueryDeps, ctx: CalcContext, notes: string[] = []) =>
   envelope(deps, [[WORKOUT_TYPE, ctx.man]], ctx.doc.rawComplete, ctx.doc.rawComplete ? notes : [...notes, 'Raw data for this workout is still uploading; results may change.']);
 
-async function hrOf(deps: QueryDeps, ctx: CalcContext): Promise<LoadedStream> {
+export async function hrOf(deps: QueryDeps, ctx: CalcContext): Promise<LoadedStream> {
   if (!ctx.doc.streams.HeartRate) throw new ToolError('no_data', `This workout has no heart rate data. Available streams: ${Object.keys(ctx.doc.streams).join(', ')}.`);
   return loadStream(ctx.c, ctx.dir, deps, ctx.doc, 'HeartRate', ctx.budget);
 }
 
-type DistanceSource = 'auto' | 'route' | 'distance';
+export type DistanceSource = 'auto' | 'route' | 'distance';
 
-async function distanceOf(deps: QueryDeps, ctx: CalcContext, source: DistanceSource = 'auto'): Promise<{ dist: DistSeries; used: string }> {
+export async function distanceOf(deps: QueryDeps, ctx: CalcContext, source: DistanceSource = 'auto'): Promise<{ dist: DistSeries; used: string }> {
   const stream = DISTANCE_STREAMS.find((n) => ctx.doc.streams[n]);
   if (source !== 'route' && stream) {
     const s = await loadStream(ctx.c, ctx.dir, deps, ctx.doc, stream, ctx.budget);

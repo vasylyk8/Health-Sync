@@ -1,11 +1,22 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KROK connection instructions</title><link rel="stylesheet" href="/style.css"></head>
-<body><header class="top"><a class="brand" href="/"><img src="/icon.png" alt="" width="32" height="32">KROK</a></header><main><h1>Connect KROK to your assistant</h1>
-<p>KROK requires its iPhone app to sync your chosen Apple Health data before an assistant can read it.</p>
-<p><button class="action" type="button" disabled data-krok-download="pending">App Store link coming soon</button></p>
-<ol><li>Install KROK on your iPhone, connect Apple Health, and let your workouts sync.</li><li>In KROK, sign in with Apple to link your synced data to your account.</li><li>Add KROK in your assistant and authorize it using the same Apple Account.</li></ol>
-<p>Until KROK is listed in the directories, add a custom connector using <code>https://krok-1d60a.firebaseapp.com/mcp</code> and OAuth authentication. ChatGPT custom connections require developer mode on an eligible plan.</p>
-<h2>Try these questions</h2><ul><li>List my workouts this week.</li><li>What were the kilometre splits in my latest run?</li><li>How did I sleep this week?</li></ul>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Connect KROK</title>
+<meta name="description" content="Connect KROK to Claude or ChatGPT in three steps.">
+<meta name="theme-color" content="#3a3a3c"><link rel="icon" type="image/png" href="/icon.png"><link rel="stylesheet" href="/style.css"></head>
+<body><a class="skip" href="#main">Skip to content</a><header class="top"><a class="brand" href="/"><img src="/icon.png" alt="" width="32" height="32">KROK</a><nav aria-label="Main"><a href="/mcp-docs">Connect</a><a href="/support">Support</a><a href="/privacy">Privacy</a></nav></header><main id="main">
+<h1>Connect KROK to your assistant</h1>
+<p class="lead">KROK requires its iPhone app to sync your chosen Apple Health data before an assistant can read it.</p>
+<ol class="steps big">
+<li><strong>Install KROK on your iPhone.</strong> Connect Apple Health and let your workouts sync.<p><button class="action" type="button" disabled data-krok-download="pending">App Store link coming soon</button></p></li>
+<li><strong>Sign in with Apple in the app.</strong> This links your synced data to your account.</li>
+<li><strong>Add KROK in your assistant.</strong> Start the connection in Claude or ChatGPT and authorize it using the same Apple Account.</li>
+</ol>
+<div class="card"><h2>Add a custom connector</h2><p>Until KROK is listed in the directories, add a custom connector in your assistant with OAuth authentication and this server URL:</p>
+<p><code class="url">https://krok-1d60a.firebaseapp.com/mcp</code></p>
+<p class="small">ChatGPT custom connections require developer mode on an eligible plan.</p></div>
+<h2>Try these questions</h2>
+<ul class="chips"><li>List my workouts this week.</li><li>What were the kilometre splits in my latest run?</li><li>How did I sleep this week?</li></ul>
 <h2>Permissions and privacy</h2><p>KROK provides read-only workout measurements and daily summaries. GPS routes hide the first and last 300 metres unless you grant full-route access and explicitly request the exact locations.</p>
-<h2>Troubleshooting</h2><p>If your data is missing, sign in with Apple inside KROK first, using the same account as browser login. Open the app and pull down to sync. Incomplete data is labelled in tool results.</p>
-<p>Authorization lasts up to 30 days. If your assistant asks you to reconnect, repeat authorization. Disconnect an assistant in KROK to revoke all of its current grants. Delete All My Data stops access immediately and removes the server copy; Apple Health is unchanged.</p>
-<p><a href="/support">Support</a> · <a href="/privacy">Privacy policy</a></p></main></body></html>
+<h2>Troubleshooting</h2>
+<details><summary>My data is missing</summary><p>Sign in with Apple inside KROK first, using the same account as browser login. Open the app and pull down to sync. Incomplete data is labelled in tool results.</p></details>
+<details><summary>My assistant asks me to reconnect</summary><p>Authorization lasts up to 30 days. Repeat authorization when asked.</p></details>
+<details><summary>Disconnecting or deleting data</summary><p>Disconnect an assistant in KROK to revoke all of its current grants. Delete All My Data stops access immediately and removes the server copy; Apple Health is unchanged.</p></details>
+</main><footer class="foot">© 2ndOp Inc · <a href="/support">Support</a> · <a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms</a></footer></body></html>

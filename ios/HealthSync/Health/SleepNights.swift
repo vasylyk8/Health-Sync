@@ -49,6 +49,34 @@ enum SleepNights {
 
     private static func round1(_ x: Double) -> Double { (x * 10).rounded() / 10 }
 
+    /// The main overnight episode, rather than the outer span of an evening nap, overnight sleep and afternoon nap.
+    /// Keep interruptions shorter than three hours in the same episode (including the observed 2.5-hour awakening).
+    /// Explicit awake segments bridge even longer interruptions. Prefer episodes beginning before 06:00 of this night;
+    /// if there is only daytime sleep, use its longest episode. Duration totals continue to include every episode.
+    private static func mainSleep(_ segments: [SleepSegment], calendar: Calendar) -> [SleepSegment] {
+        let ordered = segments.sorted { $0.start < $1.start }
+        var episodes: [[SleepSegment]] = []
+        var end = Date.distantPast
+        for segment in ordered {
+            if segment.start.timeIntervalSince(end) >= 3 * 3600 {
+                episodes.append([segment])
+                end = segment.end
+            } else {
+                episodes[episodes.count - 1].append(segment)
+                end = max(end, segment.end)
+            }
+        }
+        let sleeps = episodes.filter { minutes($0, asleepValues) > 0 }
+        guard let first = sleeps.first?.first else { return [] }
+        let night = first.end.addingTimeInterval(6 * 3600)
+        let morning = calendar.date(bySettingHour: 6, minute: 0, second: 0, of: night)!
+        let overnight = sleeps.filter { $0.first!.start < morning }
+        return (overnight.isEmpty ? sleeps : overnight).max {
+            let a = minutes($0, asleepValues), b = minutes($1, asleepValues)
+            return a == b ? $0.first!.start > $1.first!.start : a < b
+        } ?? []
+    }
+
     /// night date -> metrics (sleepAsleepMin, sleepInBedMin, sleepCoreMin, sleepDeepMin, sleepRemMin,
     /// sleepAwakeMin, sleepBedtime, sleepWakeTime).
     static func nights(_ segments: [SleepSegment], calendar: Calendar) -> [String: [String: RecordValue]] {
@@ -82,19 +110,24 @@ enum SleepNights {
             let awakeMin = minutes(chosen, [awake])
             if awakeMin > 0 { m["sleepAwakeMin"] = .double(round1(awakeMin)) }
 
-            // In-bed time may come from another source (the phone); fall back to the span of the night.
+            // In-bed time may come from another source (the phone or a sleep app). Without one, the time asleep or awake:
+            // first to last segment would count the day between an evening nap and an afternoon nap (24 h on a real night).
             let inBedMin = minutes(segs, [inBed])
             let asleepOrAwake = chosen.filter { asleepValues.contains($0.value) || $0.value == awake }
-            var inBedTotal = inBedMin
-            if inBedTotal == 0, let first = asleepOrAwake.map(\.start).min(), let last = asleepOrAwake.map(\.end).max() {
-                inBedTotal = last.timeIntervalSince(first) / 60
-            }
+            let inBedTotal = inBedMin > 0 ? inBedMin : minutes(asleepOrAwake, asleepValues.union([awake]))
             if inBedTotal > 0 { m["sleepInBedMin"] = .double(round1(inBedTotal)) }
 
-            let starts = segs.filter { $0.value == inBed || asleepOrAwake.contains($0) }.map(\.start)
-            if let bed = starts.min() { m["sleepBedtime"] = .string(clock.string(from: bed)) }
-            let wakes = chosen.filter { asleepValues.contains($0.value) }.map(\.end)
-            if let wake = wakes.max() { m["sleepWakeTime"] = .string(clock.string(from: wake)) }
+            let main = mainSleep(asleepOrAwake, calendar: calendar)
+            if let firstSleep = main.filter({ asleepValues.contains($0.value) }).map(\.start).min(), let start = main.map(\.start).min() {
+                // An in-bed interval containing the beginning of the main sleep can supply bedtime; unrelated naps and
+                // the old phone's near-instant in-bed records hours before sleep cannot move it.
+                let beds = segs.filter { $0.value == inBed && $0.start <= firstSleep && $0.end > firstSleep }.map(\.start)
+                let bed = min(start, beds.min() ?? start)
+                m["sleepBedtime"] = .string(clock.string(from: bed))
+            }
+            if let wake = main.filter({ asleepValues.contains($0.value) }).map(\.end).max() {
+                m["sleepWakeTime"] = .string(clock.string(from: wake))
+            }
             if !m.isEmpty { out[night] = m }
         }
         return out

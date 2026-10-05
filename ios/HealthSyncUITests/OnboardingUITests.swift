@@ -38,13 +38,16 @@ final class OnboardingUITests: XCTestCase {
         app.buttons["connectHealth"].tap()
         app.signInThroughAccountPage()
         XCTAssertTrue(app.buttons["editionMedal"].waitForExistence(timeout: 20))
-        XCTAssertTrue(app.staticTexts["GOOD LUCK, CHICAGO"].exists)
+        XCTAssertTrue(app.staticTexts["READY FOR CHICAGO?"].exists)
         snapshot("03a-Home-Medal")
         app.buttons["editionMedal"].tap()
         XCTAssertTrue(app.buttons["editionDone"].waitForExistence(timeout: 5))
         snapshot("03b-Home-Medal-Picker")
         app.buttons["editionDone"].tap()
-        XCTAssertTrue(app.staticTexts["GOAL 4:30:00"].waitForExistence(timeout: 5))
+        let ask = app.buttons["askPrompt"]
+        XCTAssertTrue(ask.waitForExistence(timeout: 5))
+        XCTAssertTrue(ask.label.contains("4:30"), "the question names the goal")
+        snapshot("03c-Home-Medal-Ask")
     }
 
     func testAppleAccountCanUsePublicOAuthWithoutCreatingAPrivateLink() {
@@ -80,6 +83,28 @@ final class OnboardingUITests: XCTestCase {
         app.signInThroughAccountPage()
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["appleSignIn"].exists, "Home no longer offers Sign in with Apple")
+    }
+
+    func testLogOutReturnsToWelcomeAndCanSignInAgain() {
+        let app = launch(["-onboarded", "-appleLinked"])
+        XCTAssertTrue(app.buttons["moreMenu"].waitForExistence(timeout: 10))
+        // The account state loads a moment after launch; Log out shows once it says the Apple Account is linked.
+        var logOut = false
+        for _ in 0..<10 where !logOut {
+            app.buttons["moreMenu"].tap()
+            logOut = app.buttons["Log out"].firstMatch.waitForExistence(timeout: 2)
+            if !logOut { app.tap() }
+        }
+        XCTAssertTrue(logOut, "a linked account can log out")
+        app.buttons["Log out"].firstMatch.tap()
+        let confirm = app.sheets.buttons["Log out"].exists ? app.sheets.buttons["Log out"] : app.buttons["Log out"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        XCTAssertTrue(app.buttons["connectHealth"].waitForExistence(timeout: 10), "back on page 1")
+        XCTAssertFalse(app.buttons["provider.claude"].exists)
+        app.buttons["connectHealth"].tap()
+        app.signInThroughAccountPage()
+        XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 10), "signing in again gets back to Home")
     }
 
     func testReopeningBeforeSigningInReturnsToTheAccountPage() {

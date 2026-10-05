@@ -73,8 +73,6 @@ final class BatchTests: XCTestCase {
         XCTAssertFalse(perms.contains { $0 is HKCorrelationType })
         // Metric keys are unique: two metrics writing the same key would overwrite each other.
         XCTAssertEqual(Set(file.dailyMetrics.map(\.key)).count, file.dailyMetrics.count)
-        let rawRecovery = Set(file.dailyMetrics.filter { $0.recoverMissingFromRaw == true }.map(\.key))
-        XCTAssertTrue(rawRecovery.isSuperset(of: ["restingHr", "hrv", "respiratoryRate", "spo2Avg", "vo2max"]))
     }
 
     func testCoverageDoesNotAskForUnrelatedHealthData() throws {
@@ -129,8 +127,17 @@ final class BatchTests: XCTestCase {
         let box = Outbox(root: root)
         try box.update { $0.dailyFullAt = Date(); $0.dailyVersion = 0 }
         XCTAssertEqual(Outbox(root: root).state.dailyVersion, 0)
-        XCTAssertEqual(SyncEngine.dailyVersion, 12)
-        XCTAssertEqual(SyncEngine.hourlyVersion, 8)
+        XCTAssertEqual(SyncEngine.dailyVersion, 17)
+        XCTAssertEqual(SyncEngine.hourlyVersion, 13)
         XCTAssertEqual(SyncEngine.detailVersion, 1)
     }
+    func testRawReadingUsesWatchDeviceWhenSourceRevisionDoesNotIdentifyIt() throws {
+        let device = HKDevice(name: "test watch", manufacturer: "Apple Inc.", model: "Watch", hardwareVersion: "Watch6,1", firmwareVersion: nil, softwareVersion: nil, localIdentifier: nil, udiDeviceIdentifier: nil)
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let sample = HKQuantitySample(type: HKQuantityType(.stepCount), quantity: HKQuantity(unit: .count(), doubleValue: 900), start: start, end: start.addingTimeInterval(300), device: device, metadata: nil)
+        let raw = try XCTUnwrap(HealthKitSource.reading(sample, unit: .count(), scale: 1))
+        XCTAssertTrue(raw.watch)
+        XCTAssertEqual(raw.value, 900)
+    }
+
 }

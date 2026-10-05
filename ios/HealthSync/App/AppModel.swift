@@ -143,7 +143,7 @@ final class AppModel: ObservableObject {
             }
             // HealthKit never reveals which read permissions were granted; we proceed either way
             // and show "No readable Health data found" later if nothing arrives.
-            // First connection: the default data groups are on (changeable in ••• → Your data).
+            // First connection: the default data groups are on (change them in Apple Health).
             let firstChoice = !consent.hasChoice
             consent.persist()
             enabledCategories = consent.enabled
@@ -255,8 +255,17 @@ final class AppModel: ObservableObject {
         guard phase != .welcome, !benchmarkRunning else { return }
         Task { await engine.onProgress { p in Task { @MainActor in self.progress = p } } }
         startObservers()
-        syncTask = Task { await syncNow() }
+        syncTask = Task {
+            await requestNewTypes()
+            await syncNow()
+        }
         Task { await sendGoalIfPending() }
+    }
+
+    /// In the foreground only (iOS shows the sheet then): types an update added are asked for once, before the sync reads them.
+    private func requestNewTypes() async {
+        let (source, scope, categories) = (self.source, self.scope, consent.enabled)
+        await Self.finishWithin(seconds: 60) { await source.requestNewTypes(scope: scope, categories: categories) }
     }
 
     /// Saves the expected finish time (kept on the phone, and sent to the server so the person's AI can use it).
@@ -544,6 +553,7 @@ final class AppModel: ObservableObject {
             telemetry.event("data_deleted")
             Keychain.removeAll()
             outbox.reset()
+            outbox.deleteSavedProgress()
             await engine.resetStats()
             estimator = SyncEstimator()
             estimate = SyncEstimate()
@@ -567,6 +577,38 @@ final class AppModel: ObservableObject {
         } catch {
             errorMessage = friendly(error)
         }
+    }
+
+    /// Signs out of this phone and returns to the welcome page. Nothing is deleted on the server: the account, its data
+    /// and the assistants' connections stay, and signing in with the same Apple Account during onboarding restores them.
+    func logOut() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        await stopSync(waitingAtMost: 20)
+        telemetry.event("signed_out")
+        // Keep this account's sync progress: signing back in to it then only syncs what is new.
+        if let account = try? await backend.signIn() { outbox.saveProgress(account: account) }
+        Keychain.removeAll()
+        outbox.reset()
+        await engine.resetStats()
+        estimator = SyncEstimator()
+        estimate = SyncEstimate()
+        progress = SyncProgress(detailsDone: 0, detailsTotal: 0, isSyncing: false)
+        await backend.signOut()
+        defaults.removeObject(forKey: Self.healthConnectedKey)
+        defaults.removeObject(forKey: Self.pendingAccountKey)
+        defaults.removeObject(forKey: Self.onboardingUidKey)
+        defaults.removeObject(forKey: Self.syncedUidKey)
+        defaults.removeObject(forKey: Self.uploadFinishedKey)
+        goals.clear(editions: SpecialEdition.all)
+        goalSeconds = nil
+        uploadFinished = false
+        status = .empty
+        appleAccountLinked = false
+        started = false
+        busy = false
+        withAnimation { phase = .welcome }
     }
 
     /// Sign in with Apple from the ••• menu (for accounts that were created before the account page existed).
@@ -598,8 +640,10 @@ final class AppModel: ObservableObject {
             appleAccountLinked = await backend.hasAppleAccount()
             if let freshUid, let current = try? await backend.signIn(), current != freshUid {
                 stopped = true
-                await stopSync(waitingAtMost: 20)
+                // The sync running on the replaced account is thrown away: don't make the person wait for it to wind down.
+                await stopSync(waitingAtMost: 3)
                 try await startOverOnRestoredAccount()
+                defaults.set(current, forKey: Self.syncedUidKey)
             }
             if onboarding {
                 defaults.set(false, forKey: Self.pendingAccountKey)
@@ -609,9 +653,16 @@ final class AppModel: ObservableObject {
             Task { await refreshStatus() }
             if stopped { start() }
         } catch {
-            errorMessage = friendly(error)
+            errorMessage = friendly(error) + Self.signInDetail(error)
             if stopped, phase != .welcome { start() }
         }
+    }
+
+    /// The error code of a failed sign-in (it carries no health data), so a failure can be told apart from a screenshot.
+    private static func signInDetail(_ error: Error) -> String {
+        if error is AppleSignInError { return "" }
+        let ns = error as NSError
+        return "\n\n(sign-in: \(ns.domain) \(ns.code))"
     }
 
     /// Cancels the running sync and waits for it to stop, but never longer than `seconds`.
@@ -626,6 +677,12 @@ final class AppModel: ObservableObject {
     /// was just replaced, so the first sync starts again from scratch against the restored one.
     private func startOverOnRestoredAccount() async throws {
         outbox.reset()
+        // If this phone synced this account before (Log out keeps its progress) and the server still holds its data,
+        // carry on from there instead of reading and sending the whole history again.
+        if let account = try? await backend.signIn(), let held = try? await backend.status(), held.typesWithData > 0, !held.deleting,
+           outbox.restoreProgress(account: account) {
+            telemetry.event("progress_restored")
+        }
         await engine.resetStats()
         estimator = SyncEstimator()
         estimate = SyncEstimate()

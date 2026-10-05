@@ -37,8 +37,16 @@ final class DailyCheckUITests: XCTestCase {
         shot.lifetime = .keepAlways
         add(shot)
         XCTAssertTrue(output.label.contains("BENCH DONE"), "the check did not finish")
-        XCTAssertTrue(output.label.contains("DAILYCHECK history done"), "the multi-year sync did not finish: " + output.label.components(separatedBy: "\n").filter { $0.contains("history") }.joined(separator: " | "))
-        XCTAssertFalse(output.label.contains("DAILYCHECK FAIL history"), "multi-year sync: " + output.label.components(separatedBy: "\n").filter { $0.contains("FAIL history") }.joined(separator: " | "))
-        XCTAssertTrue(output.label.contains("DAILYCHECK OK"), "daily metrics missing: " + output.label.components(separatedBy: "\n").filter { $0.contains("DAILYCHECK") }.joined(separator: " | "))
+        // Every check is reported at once, so one failing run shows all of them.
+        let all = output.label.components(separatedBy: "\n")
+        func lines(_ tag: String) -> String { all.filter { $0.contains(tag) && !$0.contains("DAILYBATCH") }.joined(separator: " | ") }
+        var failures: [String] = []
+        if !output.label.contains("DAILYCHECK history done") { failures.append("the multi-year sync did not finish: " + lines("history")) }
+        if output.label.contains("DAILYCHECK FAIL history") { failures.append("multi-year sync: " + lines("FAIL history")) }
+        if !output.label.contains("DAILYCHECK OK") { failures.append("daily metrics missing: " + lines("DAILYCHECK")) }
+        if !output.label.contains("DAILYSEM OK") { failures.append("raw aggregation vs HealthKit statistics: " + lines("DAILYSEM")) }
+        if !output.label.contains("DAILYRAW OK") { failures.append("daily pass without statistics: " + lines("DAILYRAW")) }
+        if !output.label.contains("DAILYCOMPLETE OK") { failures.append("partial hours and long samples: " + lines("DAILYCOMPLETE")) }
+        XCTAssertTrue(failures.isEmpty, failures.joined(separator: " || "))
     }
 }

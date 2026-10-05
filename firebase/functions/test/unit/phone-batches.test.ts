@@ -96,6 +96,24 @@ describe.skipIf(!dir)('what the phone sends is what an AI gets back', () => {
     expect(missing.slice(0, 10), `${missing.length} wrong or missing values`).toEqual([]);
   });
 
+  it('the two-year sync ran with statistics switched off: hourly steps come from the raw readings with the written values', async () => {
+    const day = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+    const r = await s.call('get_hourly_series', { series: 'StepCount', resolution: 'day', start_date: day(404), end_date: day(11) });
+    expect(r.isError, r.text.slice(0, 300)).toBe(false);
+    const days = r.json.days as [string, number, number][];
+    // Day d (11 to 404 days ago) was seeded with 5000 + d steps in one reading.
+    const wrong = days.filter(([, total]) => total - 5000 < 11 || total - 5000 > 404 || !Number.isInteger(total));
+    expect(days.length).toBeGreaterThanOrEqual(390);
+    expect(wrong.slice(0, 10)).toEqual([]);
+  });
+
+  it('a long resting-HR reading crossing the phone query boundary survives upload, storage and retrieval', async () => {
+    const date = new Date(Date.now() - 960 * 86_400_000).toISOString().slice(0, 10);
+    const r = await s.call('get_daily_context', { start_date: date, end_date: date, metrics: ['restingHr'] });
+    expect(r.isError, r.text.slice(0, 300)).toBe(false);
+    expect(r.json.days).toEqual([{ date, restingHr: 51 }]);
+  });
+
   it('the diagnostic note travels with the daily batches and the server accepted it', () => {
     const notes: string[] = [];
     for (const f of readdirSync(dir!).filter((x) => x.endsWith('.ndjson.gz'))) {
@@ -110,5 +128,7 @@ describe.skipIf(!dir)('what the phone sends is what an AI gets back', () => {
     const lost = dailyNotes.filter((n) => !/ lost=0\(/.test(n));
     expect(lost, 'chunks where metric results never reached the collector').toEqual([]);
     expect(dailyNotes.every((n) => /data=\d+\/\d+ got=\d+ lost=\d+/.test(n))).toBe(true);
+    // The two-year sync ran with statistics switched off: its days came from the raw-reading fill, and the note says so.
+    expect(dailyNotes.some((n) => / fill=[^ ]*steps:\d+/.test(n)), 'no chunk reports steps filled from raw readings').toBe(true);
   });
 });

@@ -6,6 +6,7 @@ enum Copy {
         static let tagline = "Your Apple Health, meet your AI."
         static let subtitle = "Every workout, heartbeat and night of sleep from all your sources, ready for your AI."
         static let connectButton = "Connect to Apple Health"
+        static let connectedButton = "Connected"
         /// Examples of what KROK can answer, scrolling slowly behind the tagline.
         static let questions = [
             "What are my fastest 5K and 10K efforts?",
@@ -23,12 +24,8 @@ enum Copy {
         static let headline = "Keep your data yours."
         static let body = "An account is needed to connect with AI. You can delete it and your data anytime."
         static let signIn = "Sign in with Apple"
-    }
-
-    enum Choices {
-        static let title = "Your data"
-        static let header = "Data your assistant can see"
-        static let footer = "Apple Health asks for each group separately, and you can also change it in Apple Health. Switching a group off here deletes its data from KROK’s servers. Assistants describe your data and trends; they don’t give medical advice."
+        static let connected = "Apple Health connected"
+        static let signingIn = "Signing in…"
     }
 
     enum Home {
@@ -39,6 +36,8 @@ enum Copy {
         static let overAnHour = "More than an hour left"
         static let keepOpen = "Keep the app open."
         static let upToDate = "Up to date"
+        static let askYourAI = "ASK YOUR AI"
+        static let copied = "COPIED"
         static let gettingReady = "Getting ready…"
         static let recentReady = "Your recent workouts are ready. You can already ask Claude or ChatGPT about them."
         static let noData = "No readable Health data found"
@@ -48,12 +47,18 @@ enum Copy {
     }
 
     enum Menu {
-        static let yourData = "Your data"
         static let help = "Help & Support"
         static let privacy = "Privacy Policy"
+        static let logOut = "Log out"
         static let deleteAll = "Delete All My Data"
         static let speedTest = "Run speed test (pauses sync)"
         static let signIn = "Sign in with Apple"
+    }
+
+    enum LogOut {
+        static let title = "Log out of KROK?"
+        static let message = "Your data and your Claude and ChatGPT connections stay as they are. Sign in with the same Apple Account to come back."
+        static let confirm = "Log out"
     }
 
     enum Delete {
@@ -88,15 +93,33 @@ enum Copy {
             "\(name) will immediately lose access. You can also remove the KROK connector in \(name)’s settings."
         }
         static func authorizeTitle(_ name: String) -> String { "Authorize KROK in \(name)" }
-        static let oauthIntro = "Add KROK in your assistant, then sign in with the Apple Account you linked here. You’ll choose what data it can read on the authorization page."
-        static let oauthPending = "While directory approval is pending, use a custom connector with OAuth authentication."
-        static let copyServerURL = "Copy KROK server URL"
-        static func oauthHowTo(chatGPT: Bool) -> String {
-            chatGPT
-                ? "In ChatGPT, enable Developer mode, create KROK with this URL, and choose OAuth."
-                : "In Claude, open Customize → Connectors → Add custom connector and paste this URL."
+        static let oauthCopyTitle = "Copy your KROK link"
+        static func oauthOpenTitle(chatGPT: Bool) -> String { chatGPT ? "Open ChatGPT’s plugins" : "Open Claude’s connectors" }
+        static func oauthOpenDetail(chatGPT: Bool) -> String {
+            chatGPT ? "At the top right, tap “+”, then choose:" : "At the top right, tap “+ Add”, then choose:"
         }
-        static let oauthWarning = "Don’t choose No authentication. KROK will open a sign-in and consent page."
+        static func oauthChoice(chatGPT: Bool) -> String { chatGPT ? "Create custom MCP server" : "Add custom connector" }
+        static let oauthFormTitle = "Fill in the form"
+        static func oauthFormDetail(chatGPT: Bool) -> String {
+            chatGPT ? "Keep “Server URL” selected under Connection. Then tap Create." : "Then tap Add."
+        }
+        static let oauthName = "Name"
+        static let oauthAppName = "KROK"
+        static func oauthLinkField(chatGPT: Bool) -> String { chatGPT ? "Server URL" : "Connection" }
+        static let oauthYourLink = "Your KROK link"
+        static let oauthAuthField = "Authentication"
+        static let oauthAuthValue = "OAuth"
+        static let oauthSignInTitle = "Sign in with Apple"
+        static let oauthSignInDetail = "Use the same Apple Account, then tap Allow access."
+        static let copy = "Copy"
+        static func connectedTitle(_ name: String) -> String { "\(name) is connected" }
+        static func connectedLead(_ name: String) -> String { "\(name) can read the Apple Health data you chose to share." }
+        static let askYourAI = "ASK YOUR AI"
+        static let exampleQuestions = [
+            "How did my last long run go?",
+            "Is my sleep better or worse than usual?",
+            "What were my km splits on Sunday’s run?",
+        ]
         static let genericError = "Something went wrong. Please try again."
     }
 

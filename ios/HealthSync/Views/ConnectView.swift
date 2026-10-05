@@ -5,7 +5,7 @@ struct ConnectView: View {
     @EnvironmentObject var model: AppModel
     @State private var selected: AIProvider?
     @State private var confirmDelete = false
-    @State private var showChoices = false
+    @State private var confirmLogOut = false
     /// The race medal's finish-time picker is open (the number and sync status step aside).
     @State private var editingGoal = false
 
@@ -24,11 +24,13 @@ struct ConnectView: View {
         .sheet(item: $selected) { provider in
             SetupSheet(provider: provider)
         }
-        .sheet(isPresented: $showChoices) {
-            DataChoicesView().environmentObject(model)
-        }
         .sheet(isPresented: $model.showBenchmark, onDismiss: { model.finishSpeedTest() }) {
             speedTest
+        }
+        .confirmationDialog(Copy.LogOut.title, isPresented: $confirmLogOut, titleVisibility: .visible) {
+            Button(Copy.LogOut.confirm) { Task { await model.logOut() } }
+        } message: {
+            Text(Copy.LogOut.message)
         }
         .confirmationDialog(Copy.Delete.title, isPresented: $confirmDelete, titleVisibility: .visible) {
             Button(Copy.Delete.confirm, role: .destructive) { Task { await model.deleteAllData() } }
@@ -47,12 +49,14 @@ struct ConnectView: View {
             Menu {
                 Link(destination: Theme.supportURL) { Label(Copy.Menu.help, systemImage: "questionmark.circle") }
                 Link(destination: Theme.privacyURL) { Label(Copy.Menu.privacy, systemImage: "hand.raised") }
-                Button { showChoices = true } label: { Label(Copy.Menu.yourData, systemImage: "slider.horizontal.3") }
                 if !model.appleAccountLinked {
                     Button { Task { await model.signInWithAppleFromMenu() } } label: { Label(Copy.Menu.signIn, systemImage: "person.crop.circle") }
                 }
                 if Theme.isInternalBuild {
                     Button { model.runSpeedTest() } label: { Label(Copy.Menu.speedTest, systemImage: "speedometer") }
+                }
+                if model.appleAccountLinked {
+                    Button { confirmLogOut = true } label: { Label(Copy.Menu.logOut, systemImage: "rectangle.portrait.and.arrow.right") }
                 }
                 Button { confirmDelete = true } label: { Label(Copy.Menu.deleteAll, systemImage: "trash") }
             } label: {
@@ -82,14 +86,14 @@ struct ConnectView: View {
                 Spacer(minLength: 8)
                 EditionMedalView(edition: edition, editing: $editingGoal)
                     .transition(.opacity)
-                Spacer(minLength: editingGoal ? 0 : 24)
+                Spacer(minLength: editingGoal ? 0 : 40)
             } else {
                 Spacer(minLength: 24)
             }
             // Kept in place (just hidden) while the picker is open, so it does not count up from 0 again afterwards.
             Group {
                 HeroMetricView(metrics: heroMetrics, compact: activeEdition != nil)
-                Spacer(minLength: activeEdition == nil ? 40 : 24)
+                Spacer(minLength: activeEdition == nil ? 40 : 32)
                 progress
             }
             .opacity(editingGoal ? 0 : 1)

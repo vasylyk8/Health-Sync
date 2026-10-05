@@ -44,7 +44,7 @@ HOW IT WORKS
 4. Ask questions in Claude or ChatGPT.
 
 YOUR DATA, YOUR CHOICES
-KROK never changes your Apple Health records. Apple Health lets you allow or deny individual types. KROK's Your data settings let you turn additional groups off, which removes that group's server data. Medications are off by default and require a separate choice.
+KROK never changes your Apple Health records. Apple Health lets you allow or deny individual types. You can change those choices any time in Settings › Health › Data Access & Devices › KROK. KROK has no separate in-app switch per group; Delete All My Data removes everything already on KROK's servers.
 
 KROK stores the data you allow on its servers before you connect an assistant. Public OAuth routes hide their first and last 300 metres by default; exact endpoints require separate permission and an explicit request. Existing private-link connections use a different authorization model.
 
@@ -66,7 +66,7 @@ Use PR30 branding and the existing 1024-pixel app icon. Capture the final releas
 1. Welcome: “Your Apple Health, meet your AI.”
 2. Synced home: workouts and recovery ready for your assistant.
 3. Apple-linked assistant setup: approve read-only access.
-4. Your data: choose additional groups.
+4. Connect Claude or ChatGPT: the four-step setup.
 5. Account/privacy controls: disconnect or delete.
 
 UI tests already capture Welcome, Account, Home, medal screens and Apple OAuth setup. They also capture legacy private-link screens: do not use these to represent new-user OAuth onboarding. Simulator selection is dynamic; inspect actual image sizes against Apple's current requirements. The old fixed 6.9-inch claim was not verified. No real health records, private links or unsupported medical claims.
@@ -77,7 +77,7 @@ KROK is an iPhone health and fitness data app. It reads the Apple Health types a
 
 New-user flow: Connect to Apple Health → Sign in with Apple → upload/home → select Claude or ChatGPT → add the public MCP endpoint using OAuth → approve read-only permissions. Sync starts after Health permission is granted, while the Apple account page is shown. The assistant must authorize the same Apple-linked KROK account.
 
-Core data includes workouts, recorded measurements, routes and daily/hourly activity and recovery summaries. Additional groups are nutrition/alcohol, heart alerts/lung function, glucose/insulin/blood pressure, mood/symptoms, menstrual cycle and profile. These start enabled but Apple Health controls permission per type. Medications start disabled and require the user to enable sharing. Clinical records, pregnancy/contraception data, clinical questionnaires and ECG waveforms are not requested.
+Core data includes workouts, recorded measurements, routes and daily/hourly activity and recovery summaries. Additional groups are nutrition/alcohol, heart alerts/lung function, glucose/insulin/blood pressure, mood/symptoms, menstrual cycle and profile. Apple Health controls permission per type, and KROK has no separate in-app group switch. [VERIFY before pasting: whether medications are requested at all in the final build; shared/coverage.json defaults them to off, but the in-app switch that enabled them was removed.] Clinical records, pregnancy/contraception data, clinical questionnaires and ECG waveforms are not requested.
 
 The authorization page identifies the assistant and its requested permissions. Allow access is explicit. Public OAuth exact route endpoints require a separate unchecked consent option and an explicit tool request. Disconnect revokes assistant access. More → Delete All My Data initiates account deletion, revokes Apple authorization for linked accounts, cuts connector access and queues server erasure. Apple Health records are unchanged. Legacy private links remain available to existing accounts and have different scope restrictions.
 

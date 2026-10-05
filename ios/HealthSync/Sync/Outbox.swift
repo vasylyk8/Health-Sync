@@ -242,6 +242,33 @@ final class Outbox: @unchecked Sendable {
         try? fm.removeItem(at: pendingURL(entry.id))
     }
 
+    // MARK: Progress kept across Log out
+
+    /// A copy of an account's sync progress, kept outside `root` (which `reset()` empties) while that account is logged out.
+    private var savedDir: URL { root.deletingLastPathComponent().appendingPathComponent("saved-\(root.lastPathComponent)", isDirectory: true) }
+    private func savedURL(_ account: String) -> URL { savedDir.appendingPathComponent(account.filter { $0.isLetter || $0.isNumber } + ".json") }
+
+    /// Keeps this account's progress (what was already sent, and where each type stopped) so that signing back in to the
+    /// same account only syncs what is new. Not kept while anything is still waiting to upload: the anchors could be
+    /// ahead of data the server has not received.
+    @discardableResult
+    func saveProgress(account: String) -> Bool {
+        guard pending().isEmpty, !state.anchors.isEmpty || !state.caughtUp.isEmpty, let data = try? JSONEncoder().encode(state) else { return false }
+        try? fm.createDirectory(at: savedDir, withIntermediateDirectories: true)
+        do { try write(data, to: savedURL(account)); return true } catch { return false }
+    }
+
+    /// Puts back the progress kept for `account`, if any.
+    @discardableResult
+    func restoreProgress(account: String) -> Bool {
+        guard let data = try? Data(contentsOf: savedURL(account)),
+              let saved = try? JSONDecoder().decode(State.self, from: data),
+              saved.schemaVersion == State.currentSchema else { return false }
+        do { try update { $0 = saved }; return true } catch { return false }
+    }
+
+    func deleteSavedProgress() { try? fm.removeItem(at: savedDir) }
+
     /// Deletes everything (used by "Delete all my data").
     func reset() {
         generation += 1

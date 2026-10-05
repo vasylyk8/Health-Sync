@@ -141,6 +141,11 @@ Apple reads your privacy policy at the URL above and compares it with the label 
 - Age 16+ in terms and "not for children under 16" in policy: consistent. The age rating in section 5 must match.
 - "Existing 90-day log retention" is a promise the policy makes. SDK_DISCLOSURES.md warns it is not verified for Firebase Analytics or Crashlytics retention.
 
+## 10b. Changes on main since the Codex prep (found when merging, October 5)
+
+- The in-app "Your data" screen was removed. Extra data groups are now controlled only in Apple Health (Settings › Health › Data Access & Devices › KROK). I updated APP_STORE.md and the Health permission text to match. PRIVACY_READINESS.md and the runbook still mention switch-off behaviour in places; treat those as stale.
+- **Open question: medications.** shared/coverage.json sets medications to default off, and the only switch that turned them on was removed. Confirm in the final build whether KROK requests medication access. If it does not, say nothing about medications; if it does, the permission text and privacy policy must say so. I removed the "medications off until you turn them on" sentence from the Health permission text because I could not verify it.
+
 ## 11. Order of work while the build is not ready
 
 Can do now, no build needed:

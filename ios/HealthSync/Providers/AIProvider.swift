@@ -15,6 +15,9 @@ struct AIProvider: Identifiable, Hashable {
     let company: String
     let setupURL: URL
     let websiteLabel: String
+    /// Where the Sign in with Apple setup sends people (the page that adds a custom connector).
+    let oauthURL: URL
+    let oauthLabel: String
     /// A requirement or tip shown above the steps.
     let notice: String?
     let steps: [Step]
@@ -22,6 +25,7 @@ struct AIProvider: Identifiable, Hashable {
     static let claude = AIProvider(
         id: "claude", name: "Claude", company: "Anthropic",
         setupURL: URL(string: "https://claude.ai/settings/connectors")!, websiteLabel: "claude.ai",
+        oauthURL: URL(string: "https://claude.ai/new#customize/connectors")!, oauthLabel: "claude.ai",
         notice: "On Claude’s free plan you can have one custom connector. If you already have one, remove it first.",
         steps: [
             Step(title: "Copy your private link", detail: "This link lets Claude read your Health data. Keep it private.", chips: []),
@@ -32,6 +36,7 @@ struct AIProvider: Identifiable, Hashable {
     static let chatgpt = AIProvider(
         id: "chatgpt", name: "ChatGPT", company: "OpenAI",
         setupURL: URL(string: "https://chatgpt.com/#settings/Connectors")!, websiteLabel: "chatgpt.com",
+        oauthURL: URL(string: "https://chatgpt.com/plugins")!, oauthLabel: "chatgpt.com/plugins",
         notice: "Requires ChatGPT Plus, Pro or Business.",
         steps: [
             Step(title: "Copy your private link", detail: "This link lets ChatGPT read your Health data. Keep it private.", chips: []),

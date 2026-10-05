@@ -45,6 +45,16 @@ describe('get_race_goal', () => {
     expect(trot).toMatchObject({ goalTime: '0:25:00', daysUntilRace: 53 });
     expect(trot).not.toHaveProperty('goalPacePerKm');
     expect(JSON.stringify(r.notes)).toMatch(/not a measured/);
+    // Points readiness questions at assess_race_readiness while a race is still ahead.
+    expect(JSON.stringify(r.notes)).toMatch(/call assess_race_readiness/);
+  });
+
+  it('does not point at the readiness tool when there is no race ahead', async () => {
+    const env = makeEnv(Date.UTC(2026, 9, 20));
+    env.meta.addUser(env.uid, { tz: 'UTC', raceGoals: { 'old-marathon': { raceName: 'Old', raceDate: '2026-10-11', goalSeconds: 12_600, updatedAt: 1 } } });
+    const q = { uid: env.uid, meta: env.meta, data: env.data, now: () => env.now, tz: 'UTC' };
+    expect(JSON.stringify((await getRaceGoal(q)).notes)).not.toMatch(/assess_race_readiness/);
+    expect(JSON.stringify((await getRaceGoal({ ...q, uid: 'nobody' })).notes)).not.toMatch(/assess_race_readiness/);
   });
 
   it('falls back to UTC for a missing or invalid timezone and handles no goal', async () => {
@@ -58,5 +68,33 @@ describe('get_race_goal', () => {
   it('formats h:mm:ss', () => {
     expect(formatHms(3661)).toBe('1:01:01');
     expect(formatHms(86_400)).toBe('24:00:00');
+  });
+});
+
+describe('readiness pointer in the tools a model reaches for first', () => {
+  const setup = async (raceDate: string | null) => {
+    const { seedRun } = await import('../helpers/workouts.js');
+    const env = makeEnv(Date.UTC(2024, 5, 30, 12));
+    if (raceDate) env.meta.users.get(env.uid)!.raceGoals = { 'chicago-marathon-2024': { raceName: 'Chicago Marathon', raceDate, goalSeconds: 13_500, updatedAt: 1 } };
+    await seedRun(env);
+    return { uid: env.uid, meta: env.meta, data: env.data, incoming: env.incoming, now: () => env.now, tz: 'UTC' };
+  };
+  it('get_workouts and get_training_load point at assess_race_readiness while a marathon is ahead', async () => {
+    const { getWorkouts } = await import('../../src/query/workouts.js');
+    const { getTrainingLoad } = await import('../../src/query/health.js');
+    const q = await setup('2024-07-13');
+    const w = await getWorkouts(q, { start_date: '2024-06-01', end_date: '2024-06-30' });
+    const l = await getTrainingLoad(q, { end_date: '2024-06-30' });
+    expect(JSON.stringify(w.notes)).toMatch(/call assess_race_readiness/);
+    expect(JSON.stringify(l.notes)).toMatch(/call assess_race_readiness/);
+  });
+  it('stays silent without a marathon ahead, and never fails the tool', async () => {
+    const { getWorkouts } = await import('../../src/query/workouts.js');
+    for (const date of [null, '2024-06-01']) {
+      const q = await setup(date);
+      const w = await getWorkouts(q, { start_date: '2024-06-01', end_date: '2024-06-30' });
+      expect(JSON.stringify(w.notes)).not.toMatch(/assess_race_readiness/);
+      expect(w.count).toBeGreaterThan(0);
+    }
   });
 });
