@@ -43,4 +43,14 @@ jobs:
         run: |
           bundle config set --local path vendor/bundle
           bundle install --quiet
-          bundle exec fastlane submit_review
+          python3 - <<'PY'
+          import json, os
+          json.dump({"key_id": os.environ["ASC_KEY_ID"], "issuer_id": os.environ["ASC_ISSUER_ID"],
+                     "key": os.environ["ASC_KEY_P8"], "in_house": False}, open("asc_key.json", "w"))
+          PY
+          if [ "$SUBMIT" = "true" ]; then echo "Submitting build $BUILD_NUMBER for App Review"; else echo "Dry run: attaching build $BUILD_NUMBER, NOT submitting"; fi
+          bundle exec fastlane run deliver \
+            api_key_path:asc_key.json app_identifier:"$BUNDLE_ID" build_number:"$BUILD_NUMBER" \
+            skip_binary_upload:true skip_metadata:true skip_screenshots:true force:true \
+            submit_for_review:"$SUBMIT" automatic_release:false precheck_include_in_app_purchases:false
+          rm -f asc_key.json

@@ -123,25 +123,6 @@ platform :ios do
     end
   end
 
-  # Attaches an already-uploaded TestFlight build to the App Store version and, only when SUBMIT=true,
-  # submits it for App Review. Never uploads a binary, metadata or screenshots, and never releases
-  # automatically: after approval the owner releases it in App Store Connect.
-  # BUILD_NUMBER (required) is the TestFlight build, e.g. 68.
-  lane :submit_review do
-    key = api_key
-    bundle = ENV.fetch("BUNDLE_ID")
-    build = ENV.fetch("BUILD_NUMBER")
-    submit = ENV["SUBMIT"] == "true"
-    UI.important(submit ? "Submitting build #{build} for App Review" : "Dry run: attaching build #{build}, NOT submitting")
-    deliver(
-      api_key: key, app_identifier: bundle, build_number: build,
-      skip_binary_upload: true, skip_metadata: true, skip_screenshots: true,
-      force: true, submit_for_review: submit, automatic_release: false,
-      precheck_include_in_app_purchases: false,
-      submission_information: { export_compliance_uses_encryption: false, add_id_info_uses_idfa: false }
-    )
-  end
-
   # Best effort: if Apple refuses a tester, the build is still on TestFlight and the owner can add
   # them with one click (App Store Connect > TestFlight > Team). scripts/tasks/testers.py prints why.
   private_lane :add_internal_testers do |_key|
