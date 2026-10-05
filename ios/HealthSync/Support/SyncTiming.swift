@@ -45,6 +45,7 @@ final class SyncTiming: @unchecked Sendable {
 
     /// Times `body` under `name` (a phase such as "detail.read", "upload", "outbox.enqueue").
     func measure<T>(_ name: StaticString, _ body: () async throws -> T) async rethrows -> T {
+        let probe = SyncProbe.begin("\(name)"); defer { SyncProbe.end(probe) }
         let id = signposter.makeSignpostID()
         let state = signposter.beginInterval(name, id: id)
         let t0 = DispatchTime.now().uptimeNanoseconds
@@ -59,6 +60,7 @@ final class SyncTiming: @unchecked Sendable {
     }
 
     func measureSync<T>(_ name: StaticString, _ body: () throws -> T) rethrows -> T {
+        let probe = SyncProbe.begin("\(name)"); defer { SyncProbe.end(probe) }
         let id = signposter.makeSignpostID()
         let state = signposter.beginInterval(name, id: id)
         let t0 = DispatchTime.now().uptimeNanoseconds
@@ -158,6 +160,10 @@ final class SyncTiming: @unchecked Sendable {
             let device = "app cpu \(String(format: "%.2f", avgCores)) cores avg, \(String(format: "%.2f", recentCores)) now (of \(ProcessInfo.processInfo.activeProcessorCount)) · heat \(heat) · low power \(ProcessInfo.processInfo.isLowPowerModeEnabled ? "ON" : "off")"
             return startup + "\n" + device + "\n" + "\(rate) workouts/min · \(counters["read.limit"] ?? 0) queries in flight · \(perWorkout) samples per workout · \(String(format: "%.0f", Double(counters["hk.samples"] ?? 0) / max(Date().timeIntervalSince(start), 1))) samples/s · read \(avg("detail.read"))s per workout · encode \(avg("detail.encode"))s per workout · compress \(avg("batch.compress"))s · save \(avg("outbox.enqueue"))s · upload \(avg("upload"))s per batch (\(String(format: "%.1f", mb)) MB) · \(uploads) uploads · \(waits)"
         }
+    }
+
+    var experimentSummary: String {
+        lock.withLock { counters.keys.filter { $0.hasPrefix("experiment.") }.sorted().map { "\($0)=\(counters[$0]!)" }.joined(separator: " ") }
     }
 
     /// Upload numbers of this app session's sync, for the speed test (nil before the first upload).

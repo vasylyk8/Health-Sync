@@ -12,6 +12,7 @@ final class DiagnosticBatchSink: Uploader, @unchecked Sendable {
     init(root: URL, delay: TimeInterval) throws {
         self.root = root; self.delay = delay
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        if let data = try? Data(contentsOf: root.appendingPathComponent("manifest.json")), let saved = try? JSONDecoder().decode([SavedBatch].self, from: data) { files = saved.map { ($0.type, root.appendingPathComponent($0.file)) } }
     }
     func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {
         try Task.checkCancellation()
@@ -24,12 +25,15 @@ final class DiagnosticBatchSink: Uploader, @unchecked Sendable {
         try gz.write(to: url, options: [.atomic, .completeFileProtection])
         try await Task.sleep(for: .seconds(max(0, delay)))
         try Task.checkCancellation()
-        lock.withLock { files.append((typeId, url)); bytes += gz.count }
+        try lock.withLock { files.append((typeId, url)); bytes += gz.count
+            let saved = files.map { SavedBatch(type: $0.0, file: $0.1.lastPathComponent) }; try JSONEncoder().encode(saved).write(to: root.appendingPathComponent("manifest.json"), options: [.atomic, .completeFileProtection])
+        }
     }
     var batches: [(String, URL)] { lock.withLock { files } }
     func summary() -> String {
         lock.withLock { String(format: "Simulated uploads: %d batches · %.2f MB · %.2fs total request time (overlaps) · peak %d", files.count, Double(bytes) / 1_000_000, elapsed, peak) }
     }
+    private struct SavedBatch: Codable { let type: String, file: String }
     struct InvalidBatch: Error {}
 }
 
@@ -73,12 +77,20 @@ struct DiagnosticRecordIndex: Sendable {
         let a = try FileHandle(forReadingFrom: reference.file), b = try FileHandle(forReadingFrom: file)
         defer { try? a.close(); try? b.close() }
         var result = HistoryRecordComparison(exact: count == reference.count && Set(groups.keys) == Set(reference.groups.keys), equivalent: count == reference.count && Set(groups.keys) == Set(reference.groups.keys), maximumDelta: 0, changedRecords: 0)
-        for key in Set(groups.keys).union(reference.groups.keys) {
+        for key in Set(groups.keys).union(reference.groups.keys).sorted() {
             try Task.checkCancellation()
             let originals = reference.groups[key] ?? [], candidates = groups[key] ?? []
             guard originals.count == candidates.count else {
                 result.exact = false; result.equivalent = false
                 result.changedRecords += max(originals.count, candidates.count)
+                let location = originals.first ?? candidates.first
+                if let location {
+                    let object = try Self.read(originals.isEmpty ? b : a, location) as? [String: Any] ?? [:]
+                    let kind = object["k"] as? String ?? "record"
+                    let day = object["day"] as? String ?? ""
+                    let keys = (object["m"] as? [String: Any])?.keys.sorted().joined(separator: ",") ?? (object["ty"] as? String ?? "")
+                    result.changedFields["\(kind).\(keys).\(day).occurrences", default: 0] += max(originals.count, candidates.count)
+                }
                 continue
             }
             func frequencies(_ locations: [Location]) -> [String: Int] {
@@ -102,6 +114,16 @@ struct DiagnosticRecordIndex: Sendable {
                 }
                 result.changedRecords += 1
                 guard let best else { result.equivalent = false; continue }
+                let candidate = try Self.read(b, remaining[best.0])
+                let differences = HistoryRecordComparison.differingFields(original, candidate, tolerance: tolerance)
+                let label = (original as? [String: Any])?["k"] as? String ?? "record"
+                for field in Set(differences.map { label + "." + $0.0 }) { result.changedFields[field, default: 0] += 1 }
+                if result.examples.count < 8, let first = differences.first {
+                    let day = (original as? [String: Any])?["day"] as? String
+                    let date = day.map { " day=" + $0 } ?? ""
+                    let values = first.1.flatMap { a in first.2.map { b in " reference=\(a) candidate=\(b)" } } ?? " shape/value changed"
+                    result.examples.append("Difference \(label)\(date) field=\(first.0)\(values)")
+                }
                 remaining.remove(at: best.0)
                 result.maximumDelta = max(result.maximumDelta, best.1)
                 if !best.1.isFinite || best.1 > tolerance { result.equivalent = false }

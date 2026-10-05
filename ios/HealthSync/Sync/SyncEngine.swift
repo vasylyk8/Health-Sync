@@ -71,6 +71,8 @@ actor SyncEngine {
 
     struct Config: Sendable {
         /// Optional diagnostic callback; nil for normal syncs.
+        var diagnosticSerialPhases = false
+        var diagnosticChunkMonths = 12
         var phaseObserver: (@Sendable (String, Double, Double) -> Void)? = nil
         /// Workouts per anchored page. Pages are also split into ≤ 5 MB uploads.
         var workoutPageLimit = 200
@@ -324,6 +326,7 @@ actor SyncEngine {
                     }
                 }
             })
+            if config.diagnosticSerialPhases { for task in background { try await task.value } }
             phase = 4
             try await step {
                 let index = try await indexTask.value
@@ -499,7 +502,7 @@ actor SyncEngine {
         var incomplete = false
         while chunkStart < end {
             try checkTime()
-            let chunkEnd = min(cal.date(byAdding: .year, value: 1, to: chunkStart) ?? end, end)
+            let chunkEnd = min(cal.date(byAdding: .month, value: max(1, config.diagnosticChunkMonths), to: chunkStart) ?? end, end)
             let started = Date()
             let batches: [DailyBatch]
             do {
@@ -592,7 +595,7 @@ actor SyncEngine {
         var chunkStart = start
         while chunkStart < end {
             try checkTime()
-            let chunkEnd = min(cal.date(byAdding: .year, value: 1, to: chunkStart) ?? end, end)
+            let chunkEnd = min(cal.date(byAdding: .month, value: max(1, config.diagnosticChunkMonths), to: chunkStart) ?? end, end)
             let started = Date()
             let records = try await SyncTiming.shared.measure("hk.hourlyChunk") { try await source.hourlySeries(from: chunkStart, to: chunkEnd) }
             let readMs = Self.ms(since: started)
@@ -1036,3 +1039,4 @@ private final class SeqPool: @unchecked Sendable {
         }
     }
 }
+

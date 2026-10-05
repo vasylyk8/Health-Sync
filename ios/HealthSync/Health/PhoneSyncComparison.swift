@@ -6,6 +6,7 @@ import UIKit
 enum PhoneSyncComparisonContext {
     @TaskLocal static var width: Int?
     @TaskLocal static var cutoff: Date?
+    @TaskLocal static var queryLimit: Int?
     static var samplePredicate: NSPredicate? {
         cutoff.map { HKQuery.predicateForSamples(withStart: nil, end: $0, options: .strictEndDate) }
     }
@@ -15,12 +16,14 @@ enum PhoneSyncComparison {
     struct Options: Sendable {
         // Mirror the order so each width runs twice at complementary positions.
         var order = Bool.random() ? [1, 2, 4, 4, 2, 1] : [1, 4, 2, 2, 4, 1]
+        var strategies: [InitialSyncExperiments.Strategy]?
         var uploadDelay: TimeInterval = 2
         var coolingTimeout: TimeInterval = 600
         var cutoff = Calendar.current.startOfDay(for: Date())
     }
     struct Run: Sendable {
         let width: Int, wall: Double, records: Int
+        var strategy: InitialSyncExperiments.Strategy = .baseline
         let complete: Bool, comparison: HistoryRecordComparison?
     }
     struct Result: Sendable {
@@ -33,6 +36,7 @@ enum PhoneSyncComparison {
                     sourceFactory: @escaping @Sendable () -> any HealthSource,
                     onUpdate: @escaping @Sendable (String) -> Void) async throws -> Result {
         guard options.order.first == 1, options.order.allSatisfy({ [1, 2, 4].contains($0) }) else { throw InvalidOrder() }
+        guard options.strategies == nil || options.strategies?.count == options.order.count else { throw InvalidOrder() }
         let fm = FileManager.default
         let parent = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("PhoneSyncComparison", isDirectory: true)
         try fm.createDirectory(at: parent, withIntermediateDirectories: true)
@@ -65,6 +69,8 @@ enum PhoneSyncComparison {
             let box = Outbox(root: runRoot.appendingPathComponent("outbox"))
             let phases = DiagnosticPhaseTimes()
             let source = sourceFactory()
+            let strategy = options.strategies?[number] ?? .baseline
+            let statisticsCache = DailyStatisticsCache()
             var config = SyncEngine.Config()
             config.phaseObserver = { phases.record($0, start: $1, end: $2) }
             let engine = SyncEngine(source: source, uploader: sink, outbox: box, scope: scope, config: config,
@@ -78,7 +84,19 @@ enum PhoneSyncComparison {
             let timing = SyncTiming(persistEnabled: false)
             let outcome = try await PhoneSyncComparisonContext.$width.withValue(width) {
                 try await PhoneSyncComparisonContext.$cutoff.withValue(options.cutoff) {
-                    try await SyncTiming.$diagnostic.withValue(timing) { try await engine.run() }
+                    try await SyncTiming.$diagnostic.withValue(timing) {
+                        try await InitialSyncExperiments.$strategy.withValue(options.strategies == nil ? nil : strategy) {
+                            let historyStart = strategy.wider ? try await source.earliestDailyDate().map { Calendar.current.startOfDay(for: $0) } : nil
+                            return try await InitialSyncExperiments.$historyStart.withValue(historyStart) {
+                                try await InitialSyncExperiments.$historyEnd.withValue(options.cutoff) {
+                                    try await InitialSyncExperiments.$statistics.withValue(statisticsCache) {
+                                        try await withTaskCancellationHandler { try await engine.run() }
+                                            onCancel: { Task { await statisticsCache.cancelAll() } }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             let wall = ProcessInfo.processInfo.systemUptime - start
@@ -92,12 +110,25 @@ enum PhoneSyncComparison {
             let complete = outcome == .finished && box.pending().isEmpty && box.state.detailsDone.count == box.state.workoutTotal
                 && box.state.workoutTotal > 0 && index.count > 0
                 && box.state.dailyFullAt == options.cutoff && box.state.hourlyAt == options.cutoff
-            runs.append(Run(width: width, wall: wall, records: index.count, complete: complete, comparison: comparison))
+            runs.append(Run(width: width, wall: wall, records: index.count, strategy: strategy, complete: complete, comparison: comparison))
             report += String(format: "\nRun %d · width %d · total %.2fs · %@ · %d/%d workouts · %d health records · heat %d→%d\n%@\n%@\n%@\n%@\n", number + 1, width, wall, complete ? "complete" : "INCOMPLETE", box.state.detailsDone.count, box.state.workoutTotal, index.count, heat, ProcessInfo.processInfo.thermalState.rawValue, phases.summary(), sink.summary(), timing.diagnosticSummary(), comparison.map { "Against serial run 1: \($0.equivalent ? "MATCH" : "DIFFER") · exact=\($0.exact) · changed=\($0.changedRecords) · max numeric delta=\($0.maximumDelta)" } ?? "Serial reference captured. Every health record and duplicate occurrence is compared; batch headers are excluded.")
+            if options.strategies != nil { report += "Strategy: \(strategy.rawValue)\n" }
+            if let comparison, !comparison.equivalent { report += comparison.detailSummary + "\n" }
+            if options.strategies != nil { report += "Statistics cache hits: \(await statisticsCache.hits) \(timing.experimentSummary)\n" }
             onUpdate(report)
             if number > 0 { try fm.removeItem(at: runRoot) }
         }
-        report += "\nMeans (two runs per width; observed phone conditions, simulated uploads):\n"
+        if options.strategies != nil {
+            report += "\nStrategy means at width 2 (simulated uploads):\n"
+            for strategy in InitialSyncExperiments.Strategy.allCases {
+                let selected = runs.filter { $0.strategy == strategy && $0.width == 2 }
+                guard !selected.isEmpty else { continue }
+                report += String(format: "%@: %.2fs (%d runs), %@\n", strategy.rawValue,
+                                 selected.map(\.wall).reduce(0, +) / Double(selected.count), selected.count,
+                                 selected.allSatisfy { $0.complete && ($0.comparison?.equivalent ?? true) } ? "records match serial" : "needs investigation")
+            }
+        }
+        report += "\nMeans by width (observed conditions, simulated uploads):\n"
         for width in [1, 2, 4] {
             let selected = runs.filter { $0.width == width }
             guard !selected.isEmpty else { continue }

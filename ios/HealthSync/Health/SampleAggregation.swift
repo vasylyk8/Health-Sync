@@ -1,7 +1,7 @@
 import Foundation
 
 /// One Apple Health reading reduced to what the daily and hourly aggregation needs. HealthKit-free, so the rules are unit-tested.
-struct RawReading: Equatable, Sendable {
+struct RawReading: Codable, Equatable, Sendable {
     var start: Date
     var end: Date
     /// Cumulative types: the amount. Discrete types: the average of the reading (a series reading holds `count` values).
@@ -62,7 +62,7 @@ struct RawReading: Equatable, Sendable {
 ///   1.7% worst day, distance 0.1% / 1.7%; per 5-minute slot instead it was +0.7% in all, 0.7% / 3.8% and 0.6% / 7.3%.
 struct SampleAggregator {
     enum Granularity { case day, hour }
-    enum Style { case cumulative, arithmetic, timeWeighted, equivalentLevel }
+    enum Style: String, Codable, Sendable { case cumulative, arithmetic, timeWeighted, equivalentLevel }
 
     /// Half the time HealthKit's time-weighted average gives an instantaneous reading (measured: 45 s in all). Sound levels
     /// are weighted by duration alone.
@@ -200,6 +200,7 @@ struct SampleAggregator {
 
     /// Each slot's amount after merging its sources (see the type's comment), with the slot's start.
     private func mergedSlots() -> [(Date, Double)] {
+        let probe = SyncProbe.begin("aggregate.sourceMerge"); defer { SyncProbe.end(probe) }
         var slots = self.slots
         let spans = watchUnion()
         for r in deferred {
@@ -284,8 +285,22 @@ struct SampleAggregator {
         return s.map(\.value).reduce(0, +) / Double(s.count)
     }
 
+    /// Same cumulative merge rules, once for both consumers. No raw reads or duplicate decisions are changed.
+    func cumulativeDailyHourly(includeHourly: Bool) -> RawHistorySummary {
+        precondition(style == .cumulative)
+        var days: [String: Double] = [:], hours: [Date: Double] = [:]
+        for (slot, value) in mergedSlots() {
+            days[SleepNights.dayKey(slot, calendar: calendar), default: 0] += value
+            if includeHourly { hours[hour(slot), default: 0] += value }
+        }
+        let values = days.keys.sorted().map { ($0, days[$0]!) }
+        return RawHistorySummary(daily: Dictionary(uniqueKeysWithValues: [DailyAgg.sum, .avg, .min, .max, .last].map { ($0.rawValue, values) }),
+                                 hourly: hours.keys.sorted().map { HourBucket(t: $0.msValue, v: hours[$0]!, lo: nil, hi: nil) })
+    }
+
     /// One value per local day that has readings ("YYYY-MM-DD", value).
     func daily(_ agg: DailyAgg) -> [(String, Double)] {
+        let probe = SyncProbe.begin("aggregate.daily"); defer { SyncProbe.end(probe) }
         if style == .cumulative {
             var days: [String: Double] = [:]
             for (slot, v) in mergedSlots() { days[SleepNights.dayKey(slot, calendar: calendar), default: 0] += v }

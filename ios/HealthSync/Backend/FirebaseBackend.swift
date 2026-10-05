@@ -193,3 +193,19 @@ private final class AppCheckFactory: NSObject, AppCheckProviderFactory {
         #endif
     }
 }
+
+
+struct FirebaseDiagnosticUploader: Uploader, Sendable {
+    let backend: FirebaseBackend
+    let expectedUID: String
+    func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {
+        try await backend.diagnosticUpload(gz: gz, sha256: sha256, expectedUID: expectedUID)
+    }
+}
+extension FirebaseBackend {
+    func diagnosticUpload(gz: Data, sha256: String, expectedUID: String) async throws {
+        guard Auth.auth().currentUser?.uid == expectedUID, gz.count <= 5 * 1024 * 1024 else { throw BackendError.notSignedIn }
+        let reply = try await SyncProbe.measure("network.isolatedProbe") { try await call("diagnosticProbe", ["expectedUid": expectedUID, "gz": gz.base64EncodedString(), "sha256": sha256]) }
+        guard Auth.auth().currentUser?.uid == expectedUID, let receipt = reply as? [String: Any], receipt["accountVerified"] as? Bool == true, receipt["sha256"] as? String == sha256, receipt["duplicateVerified"] as? Bool == true, let delta = receipt["maxDelta"] as? Double, delta <= 1e-9 else { throw BackendError.badResponse }
+    }
+}

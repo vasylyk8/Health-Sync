@@ -4,21 +4,31 @@ import Foundation
 /// Separate syncs/accounts cannot see one another's cached summaries, even when cancellation overlaps.
 enum SharedRawHistory {
     @TaskLocal static var cache: RawHistoryCache?
+    @TaskLocal static var statistics: DailyStatisticsCache?
     @TaskLocal static var endingAt: Date?
 
     static func withFreshCache<T>(endingAt cutoff: Date? = nil, _ body: () async throws -> T) async rethrows -> T {
-        let session = RawHistoryCache()
+        let shared = InitialSyncExperiments.strategy?.unified == true
+        let session = RawHistoryCache(rowLimit: shared ? 400_000 : 100_000, entryLimit: shared ? 128 : 32)
+        let stats = InitialSyncExperiments.statistics ?? DailyStatisticsCache()
         return try await withTaskCancellationHandler {
             do {
-                return try await $endingAt.withValue(cutoff) {
-                    try await $cache.withValue(session) { try await body() }
+                let result = try await $endingAt.withValue(cutoff) {
+                    try await $cache.withValue(session) { try await $statistics.withValue(stats) { try await body() } }
                 }
+                if InitialSyncExperiments.strategy != nil {
+                    SyncTiming.shared.count("experiment.cacheBuilds", await session.builds)
+                    SyncTiming.shared.count("experiment.cacheHits", await session.hits)
+                    SyncTiming.shared.set("experiment.cachedRowsPeak", await session.peakRows)
+                }
+                return result
             } catch {
                 await session.cancelAll()
+                await stats.cancelAll()
                 throw error
             }
         } onCancel: {
-            Task { await session.cancelAll() }
+            Task { await session.cancelAll(); await stats.cancelAll() }
         }
     }
 }
@@ -46,13 +56,15 @@ actor RawHistoryCache {
     private var completed: [RawHistoryKey: RawHistorySummary] = [:]
     private var order: [RawHistoryKey] = []
     private let rowLimit: Int
+    private let entryLimit: Int
+    private var prioritized = Set<RawHistoryKey>()
     private var rows = 0
     private(set) var hits = 0
     private(set) var builds = 0
     private(set) var peakRows = 0
-    init(rowLimit: Int = 100_000) { self.rowLimit = rowLimit }
+    init(rowLimit: Int = 100_000, entryLimit: Int = 32) { self.rowLimit = rowLimit; self.entryLimit = max(1, entryLimit) }
 
-    func value(_ key: RawHistoryKey, build: @escaping @Sendable () async throws -> RawHistorySummary) async throws -> RawHistorySummary {
+    func value(_ key: RawHistoryKey, retentionPriority: Bool = false, build: @escaping @Sendable () async throws -> RawHistorySummary) async throws -> RawHistorySummary {
         try Task.checkCancellation()
         if let value = completed[key] { hits += 1; return value }
         if let task = running[key] {
@@ -69,12 +81,16 @@ actor RawHistoryCache {
             try Task.checkCancellation()
             running[key] = nil
             if value.cost <= rowLimit {
-                while rows + value.cost > rowLimit || completed.count >= 32 {
+                while rows + value.cost > rowLimit || completed.count >= entryLimit {
                     guard !order.isEmpty else { break }
-                    if let removed = completed.removeValue(forKey: order.removeFirst()) { rows -= removed.cost }
+                    let index = order.firstIndex { !prioritized.contains($0) } ?? 0
+                    let key = order.remove(at: index)
+                    prioritized.remove(key)
+                    if let removed = completed.removeValue(forKey: key) { rows -= removed.cost }
                 }
                 completed[key] = value
                 order.append(key)
+                if retentionPriority { prioritized.insert(key) }
                 rows += value.cost
                 peakRows = max(peakRows, rows)
             }

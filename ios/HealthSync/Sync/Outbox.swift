@@ -287,3 +287,4 @@ final class Outbox: @unchecked Sendable {
     private func batchURL(_ id: String) -> URL { root.appendingPathComponent("batches/\(id).ndjson.gz") }
     private func pendingURL(_ id: String) -> URL { root.appendingPathComponent("pending/\(id).json") }
 }
+
