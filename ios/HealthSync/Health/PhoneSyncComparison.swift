@@ -93,7 +93,7 @@ enum PhoneSyncComparison {
                 && box.state.workoutTotal > 0 && index.count > 0
                 && box.state.dailyFullAt == options.cutoff && box.state.hourlyAt == options.cutoff
             runs.append(Run(width: width, wall: wall, records: index.count, complete: complete, comparison: comparison))
-            report += String(format: "\nRun %d · width %d · total %.2fs · %@ · %d/%d workouts · %d health records · heat %d→%d\n%@\n%@\n%@\n", number + 1, width, wall, complete ? "complete" : "INCOMPLETE", box.state.detailsDone.count, box.state.workoutTotal, index.count, heat, ProcessInfo.processInfo.thermalState.rawValue, phases.summary(), sink.summary(), timing.diagnosticSummary(), comparison.map { "Against serial run 1: \($0.equivalent ? "MATCH" : "DIFFER") · exact=\($0.exact) · changed=\($0.changedRecords) · max numeric delta=\($0.maximumDelta)" } ?? "Serial reference captured. Every health record and duplicate occurrence is compared; batch headers are excluded.")
+            report += String(format: "\nRun %d · width %d · total %.2fs · %@ · %d/%d workouts · %d health records · heat %d→%d\n%@\n%@\n%@\n%@\n", number + 1, width, wall, complete ? "complete" : "INCOMPLETE", box.state.detailsDone.count, box.state.workoutTotal, index.count, heat, ProcessInfo.processInfo.thermalState.rawValue, phases.summary(), sink.summary(), timing.diagnosticSummary(), comparison.map { "Against serial run 1: \($0.equivalent ? "MATCH" : "DIFFER") · exact=\($0.exact) · changed=\($0.changedRecords) · max numeric delta=\($0.maximumDelta)" } ?? "Serial reference captured. Every health record and duplicate occurrence is compared; batch headers are excluded.")
             onUpdate(report)
             if number > 0 { try fm.removeItem(at: runRoot) }
         }
