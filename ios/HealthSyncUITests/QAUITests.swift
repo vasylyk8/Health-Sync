@@ -58,6 +58,12 @@ final class QAUITests: XCTestCase {
         // At the largest text sizes the menu is taller than the screen: scroll it.
         if !delete.waitForExistence(timeout: 3) { app.swipeUp() }
         delete.tap()
+        // The menu action and confirmation share a label. Wait for the dialog before
+        // finding its button, or a cold simulator can tap the disappearing menu twice.
+        guard app.staticTexts["Delete all your data from KROK?"].waitForExistence(timeout: 10) else {
+            XCTFail("delete confirmation did not appear")
+            return app
+        }
         let confirm = app.sheets.buttons["Delete All My Data"].exists ? app.sheets.buttons["Delete All My Data"] : app.buttons["Delete All My Data"].firstMatch
         confirm.tap()
         XCTAssertTrue(app.buttons["connectHealth"].waitForExistence(timeout: 5))

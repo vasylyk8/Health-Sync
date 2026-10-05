@@ -40,6 +40,10 @@ jobs:
           print(pref[0])")
           echo "SIM_DEVICE=$DEVICE" >> "$GITHUB_ENV"
           echo "Using $DEVICE"
+      - name: Boot the simulator before the first UI launch
+        run: |
+          xcrun simctl boot "$SIM_DEVICE" || true
+          xcrun simctl bootstatus "$SIM_DEVICE" -b
       - name: Generate project
         run: xcodegen generate --spec project.yml
       - name: QA UI tests
