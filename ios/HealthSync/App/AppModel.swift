@@ -332,9 +332,10 @@ final class AppModel: ObservableObject {
                 let ns = error as NSError
                 benchmarkText += "\nTest failed (\(ns.domain) \(ns.code)). Temporary test data is removed; normal synced data is retained."
             }
+            // Suppress queued progress updates before yielding to the normal engine.
+            comparisonRunning = false
             await engine.resumeAfterDiagnostic()
             benchmarkRunning = false
-            comparisonRunning = false
             comparisonTask = nil
             UIApplication.shared.isIdleTimerDisabled = false
         }
