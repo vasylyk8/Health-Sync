@@ -278,8 +278,15 @@ actor SyncEngine {
             phase = 4
 #if DEBUG
             if config.historyBeforeDetails {
-                try await daily.value
-                try await hourly.value
+                try await withTaskCancellationHandler {
+                    try Task.checkCancellation()
+                    try await daily.value
+                    try await hourly.value
+                    try Task.checkCancellation()
+                } onCancel: {
+                    daily.cancel()
+                    hourly.cancel()
+                }
             }
 #endif
             try await step {
