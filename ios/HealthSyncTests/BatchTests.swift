@@ -80,7 +80,9 @@ final class BatchTests: XCTestCase {
         let ids = Set(file.workoutQuantityTypes.map(\.id) + file.dailyMetrics.map(\.id) + (file.eventTypes ?? []).map(\.id) + (file.hourlyMetrics ?? []).map(\.id))
         // Left out on purpose (see docs/COVERAGE_MATRIX.md): reproductive and sexual health, ECG, clinical records, questionnaires.
         let forbidden = ["SexualActivity", "Contraceptive", "Pregnancy", "Lactation", "ProgesteroneTest", "Menopause", "Electrocardiogram", "HKClinical", "GAD7", "PHQ9",
-                         "PelvicPain", "BreastPain", "VaginalDryness", "HotFlashes", "BladderIncontinence", "Audiogram", "Handwashing", "Toothbrushing", "BloodType", "FitzpatrickSkinType"]
+                         "PelvicPain", "BreastPain", "VaginalDryness", "HotFlashes", "BladderIncontinence", "Audiogram", "Handwashing", "Toothbrushing", "BloodType", "FitzpatrickSkinType",
+                         "BloodGlucose", "InsulinDelivery", "BloodPressure", "AtrialFibrillation", "HighHeartRateEvent", "LowHeartRateEvent", "IrregularHeartRhythm", "HypertensionEvent",
+                         "LowCardioFitnessEvent", "ForcedExpiratory", "ForcedVital", "PeakExpiratory", "InhalerUsage", "StateOfMind", "Medication", "Headache", "Fatigue", "Fever", "Nausea"]
         for item in forbidden {
             XCTAssertFalse(ids.contains { $0.contains(item) }, "\(item) must not be read")
         }
@@ -92,9 +94,9 @@ final class BatchTests: XCTestCase {
         let coreOnly = HealthTypes.readPermissions(for: scope, categories: ["core"])
         let all = HealthTypes.readPermissions(for: scope, categories: Set((file.categories ?? []).map(\.id)))
         XCTAssertTrue(coreOnly.contains(HKObjectType.workoutType()))
-        XCTAssertFalse(coreOnly.contains(HKObjectType.quantityType(forIdentifier: .bloodGlucose)!), "glucose is only requested once its category is on")
+        XCTAssertFalse(coreOnly.contains(HKObjectType.quantityType(forIdentifier: .dietaryCaffeine)!), "nutrition is only requested once its category is on")
         XCTAssertFalse(coreOnly.contains { $0 is HKCharacteristicType })
-        XCTAssertTrue(all.contains(HKObjectType.quantityType(forIdentifier: .bloodGlucose)!))
+        XCTAssertTrue(all.contains(HKObjectType.quantityType(forIdentifier: .dietaryCaffeine)!))
         XCTAssertGreaterThan(all.count, coreOnly.count)
         for event in scope.events { XCTAssertTrue((file.categories ?? []).contains { $0.id == event.category }, "unknown category \(event.category)") }
     }
@@ -127,7 +129,7 @@ final class BatchTests: XCTestCase {
         let box = Outbox(root: root)
         try box.update { $0.dailyFullAt = Date(); $0.dailyVersion = 0 }
         XCTAssertEqual(Outbox(root: root).state.dailyVersion, 0)
-        XCTAssertEqual(SyncEngine.dailyVersion, 17)
+        XCTAssertEqual(SyncEngine.dailyVersion, 18)
         XCTAssertEqual(SyncEngine.hourlyVersion, 13)
         XCTAssertEqual(SyncEngine.detailVersion, 1)
     }

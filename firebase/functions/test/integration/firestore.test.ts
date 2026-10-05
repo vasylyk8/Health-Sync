@@ -57,7 +57,7 @@ describe('OAuth on real Firestore transactions', () => {
     await run(process.execPath, ['scripts/prepare-reviewer.mjs', '--apply', '--reuse', '--reseed'], { env });
     expect((await db.doc(`users/${uid}`).get()).get('oauthEpochs.claude')).toBe(1);
     expect((await getAuth().getUser(uid)).tokensValidAfterTime).toBe(beforeReuse);
-    expect((await db.doc(`users/${uid}`).get()).get('categories')).toEqual(['core', 'devices', 'mind', 'nutrition', 'profile']);
+    expect((await db.doc(`users/${uid}`).get()).get('categories')).toEqual(['core', 'nutrition', 'profile']);
     // Never convert an ordinary/customer account into a reviewer by accident.
     await db.doc(`users/${uid}`).update({ synthetic: false });
     await expect(run(process.execPath, ['scripts/prepare-reviewer.mjs', '--apply'], { env })).rejects.toThrow();
@@ -236,16 +236,16 @@ describe('setCategories', () => {
     await registerDevice(db, 'u8', 'UTC');
     const data = new DirBlobs();
     const deps = { meta, data };
-    // Every group except medications starts on, so choosing two switches the other defaults off (and deletes their data, none yet).
-    expect(await setCategories(db, deps, 'u8', ['devices', 'nutrition'])).toEqual({ categories: ['core', 'devices', 'nutrition'], removed: ['heart', 'mind', 'cycle', 'profile'] });
-    await meta.publish({ uid: 'u8', type: '_events_devices', batchId: 'g1', generation: 1, mutate: (m) => add(m, 'data/u8/_events_devices/2024-06/g1.parquet') });
+    // Every group starts on, so choosing two switches the other defaults off (and deletes their data, none yet).
+    expect(await setCategories(db, deps, 'u8', ['cycle', 'nutrition'])).toEqual({ categories: ['core', 'cycle', 'nutrition'], removed: ['profile'] });
+    await meta.publish({ uid: 'u8', type: '_daily_cycle', batchId: 'g1', generation: 1, mutate: (m) => add(m, 'data/u8/_daily_cycle/2024-06/g1.parquet') });
     await meta.publish({ uid: 'u8', type: '_events_nutrition', batchId: 'n1', generation: 1, mutate: (m) => add(m, 'data/u8/_events_nutrition/2024-06/n1.parquet') });
-    await data.write('data/u8/_events_devices/2024-06/g1.parquet', Buffer.from('x'));
+    await data.write('data/u8/_daily_cycle/2024-06/g1.parquet', Buffer.from('x'));
     await data.write('data/u8/_events_nutrition/2024-06/n1.parquet', Buffer.from('x'));
     const out = await setCategories(db, deps, 'u8', ['nutrition']);
-    expect(out).toEqual({ categories: ['core', 'nutrition'], removed: ['devices'] });
+    expect(out).toEqual({ categories: ['core', 'nutrition'], removed: ['cycle'] });
     expect([...data.paths]).toEqual(['data/u8/_events_nutrition/2024-06/n1.parquet']);
-    expect(await meta.getManifest('u8', '_events_devices')).toBeNull();
+    expect(await meta.getManifest('u8', '_daily_cycle')).toBeNull();
     expect(await meta.getManifest('u8', '_events_nutrition')).not.toBeNull();
     expect((await db.doc('users/u8').get()).get('categories')).toEqual(['core', 'nutrition']);
     await expect(setCategories(db, deps, 'u8', ['bogus'])).rejects.toThrow(/categories must be/);

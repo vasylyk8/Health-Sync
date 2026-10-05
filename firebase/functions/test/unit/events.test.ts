@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { purgeCategoryData } from '../../src/account.js';
+import { parseCategories, purgeCategoryData, purgeRetiredType } from '../../src/account.js';
 import { loadType } from '../../src/query/context.js';
 import { withDuck } from '../../src/query/duck.js';
 import { deps, makeEnv, upload, type Env } from '../helpers/memory.js';
@@ -55,65 +55,97 @@ describe('hourly series', () => {
 
 describe('event logs', () => {
   const s = Array.from({ length: 12 }, (_, i) => H0 + i * 300_000);
-  const glucose = [101, 104, 110, 118, 126, 131, 128, 120, 112, 106, 102, 99];
+  const water = [101, 104, 110, 118, 126, 131, 128, 120, 112, 106, 102, 99];
 
   it('is dropped while the category is switched off and stored once it is on', async () => {
     const env = makeEnv();
     withCategories(env, ['core']);
-    const off = await upload(env, { type: '_events_devices', schema: 2, mode: 'anchored' }, [{ k: 'ev', ty: 'BloodGlucose', u: 'mg/dL', src: 'Dexcom', s, v: glucose }]);
+    const off = await upload(env, { type: '_events_nutrition', schema: 2, mode: 'anchored' }, [{ k: 'ev', ty: 'DietaryWater', u: 'mL', src: 'Health', s, v: water }]);
     expect(off.result).toBe('discarded');
-    expect(await env.meta.getManifest(env.uid, '_events_devices')).toBeNull();
-    withCategories(env, ['core', 'devices']);
-    const on = await upload(env, { type: '_events_devices', schema: 2, mode: 'anchored' }, [{ k: 'ev', ty: 'BloodGlucose', u: 'mg/dL', src: 'Dexcom', s, v: glucose }]);
+    expect(await env.meta.getManifest(env.uid, '_events_nutrition')).toBeNull();
+    withCategories(env, ['core', 'nutrition']);
+    const on = await upload(env, { type: '_events_nutrition', schema: 2, mode: 'anchored' }, [{ k: 'ev', ty: 'DietaryWater', u: 'mL', src: 'Health', s, v: water }]);
     expect(on.result).toBe('published');
-    const rows = await read(env, '_events_devices', `SELECT agg, src, count(*), min(v), max(v) FROM r GROUP BY agg, src`);
-    expect(rows).toEqual([['BloodGlucose', 'Dexcom', 12n, 99, 131]]);
+    const rows = await read(env, '_events_nutrition', `SELECT agg, src, count(*), min(v), max(v) FROM r GROUP BY agg, src`);
+    expect(rows).toEqual([['DietaryWater', 'Health', 12n, 99, 131]]);
   });
 
   it('keeps one row per reading when the same readings arrive twice (no ids needed)', async () => {
     const env = makeEnv();
-    withCategories(env, ['core', 'devices']);
-    const rec = { k: 'ev', ty: 'BloodGlucose', u: 'mg/dL', src: 'Dexcom', s, v: glucose };
-    await upload(env, { type: '_events_devices', schema: 2 }, [rec]);
-    await upload(env, { type: '_events_devices', schema: 2 }, [{ ...rec, v: glucose.map((g) => g + 1) }]);
-    const rows = await read(env, '_events_devices', `SELECT count(*), min(v) FROM r`);
+    withCategories(env, ['core', 'nutrition']);
+    const rec = { k: 'ev', ty: 'DietaryWater', u: 'mL', src: 'Health', s, v: water };
+    await upload(env, { type: '_events_nutrition', schema: 2 }, [rec]);
+    await upload(env, { type: '_events_nutrition', schema: 2 }, [{ ...rec, v: water.map((g) => g + 1) }]);
+    const rows = await read(env, '_events_nutrition', `SELECT count(*), min(v) FROM r`);
     expect(rows).toEqual([[12n, 100]]);
   });
 
   it('applies deletions by id and accepts compact columns, end times and metadata', async () => {
     const env = makeEnv();
-    withCategories(env, ['core', 'mind']);
+    withCategories(env, ['core', 'nutrition']);
     const start = [H0, H0 + 86_400_000, H0 + 2 * 86_400_000];
-    const chunk = encodeChunk({ t: start, cols: { c: [3, 2, 4] }, plans: { c: 'exact' } });
+    const chunk = encodeChunk({ t: start, cols: { v: [95, 80, 120] }, plans: { v: 'exact' } });
     const rec = {
-      k: 'ev', ty: 'Fatigue', src: 'Health', enc: 1, n: 3, s: chunk.t, c: chunk.c,
+      k: 'ev', ty: 'DietaryCaffeine', u: 'mg', src: 'Health', enc: 1, n: 3, s: chunk.t, v: chunk.v,
       e: encodeChunk({ t: start.map((x) => x + HOUR), cols: {}, plans: {} }).t,
       ids: ['aaa-1', 'bbb-2', 'ccc-3'], meta: [null, { HKWasUserEntered: true }, null],
     };
-    const r = await upload(env, { type: '_events_mind', schema: 2 }, [rec]);
+    const r = await upload(env, { type: '_events_nutrition', schema: 2 }, [rec]);
     expect(r.result).toBe('published');
-    await upload(env, { type: '_events_mind', schema: 2 }, [{ k: 'd', id: 'bbb-2' }]);
-    const rows = await read(env, '_events_mind', `SELECT id, c, e - s, extra FROM r ORDER BY s`);
-    expect(rows.map((x) => [x[0], x[1], Number(x[2]), x[3]])).toEqual([['aaa-1', 3, HOUR, null], ['ccc-3', 4, HOUR, null]]);
+    await upload(env, { type: '_events_nutrition', schema: 2 }, [{ k: 'd', id: 'bbb-2' }]);
+    const rows = await read(env, '_events_nutrition', `SELECT id, v, e - s, extra FROM r ORDER BY s`);
+    expect(rows.map((x) => [x[0], x[1], Number(x[2]), x[3]])).toEqual([['aaa-1', 95, HOUR, null], ['ccc-3', 120, HOUR, null]]);
   });
 
   it('rejects an event type that does not belong in the batch type, and unknown types', async () => {
     const env = makeEnv();
-    withCategories(env, ['core', 'devices', 'mind']);
-    const wrong = await upload(env, { type: '_events_mind', schema: 2 }, [{ k: 'ev', ty: 'BloodGlucose', s, v: glucose }]);
+    withCategories(env, ['core', 'nutrition', 'profile']);
+    const wrong = await upload(env, { type: '_events_profile', schema: 2 }, [{ k: 'ev', ty: 'DietaryWater', s, v: water }]);
     expect(wrong.result).toBe('rejected');
-    const unknown = await upload(env, { type: '_events_mind', schema: 2 }, [{ k: 'ev', ty: 'Nope', s, v: glucose }]);
+    const unknown = await upload(env, { type: '_events_nutrition', schema: 2 }, [{ k: 'ev', ty: 'Nope', s, v: water }]);
     expect(unknown.result).toBe('rejected');
   });
 
   it('removes every file and manifest of a category when it is switched off', async () => {
     const env = makeEnv();
-    withCategories(env, ['core', 'devices']);
-    await upload(env, { type: '_events_devices', schema: 2 }, [{ k: 'ev', ty: 'InsulinDelivery', u: 'IU', s: s.slice(0, 2), v: [1.5, 0.5], meta: [{ HKInsulinDeliveryReason: 2 }, null] }]);
+    withCategories(env, ['core', 'nutrition']);
+    await upload(env, { type: '_events_nutrition', schema: 2 }, [{ k: 'ev', ty: 'DietaryCaffeine', u: 'mg', s: s.slice(0, 2), v: [1.5, 0.5], meta: [{ HKWasUserEntered: true }, null] }]);
+    expect(await env.meta.getManifest(env.uid, '_events_nutrition')).not.toBeNull();
+    expect((await env.data.list(`data/${env.uid}/_events_nutrition/`)).length).toBeGreaterThan(0);
+    await purgeCategoryData({ meta: env.meta, data: env.data }, env.uid, 'nutrition');
+    expect(await env.meta.getManifest(env.uid, '_events_nutrition')).toBeNull();
+    expect(await env.data.list(`data/${env.uid}/_events_nutrition/`)).toEqual([]);
+  });
+});
+
+describe('retired types (glucose, medications, heart alerts, symptoms, mood)', () => {
+  const s = [H0, H0 + 300_000];
+
+  it('acknowledges and drops batches from old app builds, whatever the saved categories', async () => {
+    const env = makeEnv();
+    withCategories(env, ['core', 'devices', 'mind', 'heart', 'medications']);
+    for (const [type, ty] of [['_events_devices', 'BloodGlucose'], ['_events_mind', 'Fatigue'], ['_events_heart', 'HighHeartRateEvent'], ['_events_medications', 'Medication']] as const) {
+      const r = await upload(env, { type, schema: 2, mode: 'anchored' }, [{ k: 'ev', ty, s, v: [100, 101] }]);
+      expect(r.result).toBe('discarded');
+      expect(await env.meta.getManifest(env.uid, type)).toBeNull();
+    }
+    const daily = await upload(env, { type: '_daily_mind', schema: 2, mode: 'stats' }, [{ k: 'day', d: '2024-06-20', m: { mindfulMin: 5 } }]);
+    expect(daily.result).toBe('discarded');
+  });
+
+  it('deletes stored files and manifests of a retired type', async () => {
+    const env = makeEnv();
+    const path = `data/${env.uid}/_events_devices/2024-06/old.parquet`;
+    await env.data.write(path, Buffer.from('x'));
+    await env.meta.publish({ uid: env.uid, type: '_events_devices', batchId: 'old', generation: 1, mutate: (m) => m });
     expect(await env.meta.getManifest(env.uid, '_events_devices')).not.toBeNull();
-    expect((await env.data.list(`data/${env.uid}/_events_devices/`)).length).toBeGreaterThan(0);
-    await purgeCategoryData({ meta: env.meta, data: env.data }, env.uid, 'devices');
+    await purgeRetiredType({ meta: env.meta, data: env.data }, env.uid, '_events_devices');
     expect(await env.meta.getManifest(env.uid, '_events_devices')).toBeNull();
     expect(await env.data.list(`data/${env.uid}/_events_devices/`)).toEqual([]);
+  });
+
+  it('ignores retired category ids in a saved choice and in a category change', () => {
+    expect(parseCategories(['mind', 'cycle', 'devices'])).toEqual(['core', 'cycle']);
+    expect(() => parseCategories(['bogus'])).toThrow();
   });
 });

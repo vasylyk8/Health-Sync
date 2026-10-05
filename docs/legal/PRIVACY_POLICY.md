@@ -1,6 +1,6 @@
 # KROK Privacy Policy (DRAFT – needs legal review before launch)
 
-_Last updated: 4 October 2026. Controller: 2ndOp Inc · support@2ndopinions.ai._
+_Last updated: 5 October 2026. Controller: 2ndOp Inc · support@2ndopinions.ai._
 
 ## What KROK does
 KROK copies your **workouts** from Apple Health, with their detailed measurements and GPS routes, plus **daily and hourly summaries** (sleep, heart rate, steps and similar), to our servers, so that the AI assistants **you** connect (Anthropic's Claude and/or OpenAI's ChatGPT) can answer questions about your training and recovery. If you choose, KROK can also share further groups of Apple Health data (see "Additional data groups").
@@ -15,15 +15,11 @@ KROK copies your **workouts** from Apple Health, with their detailed measurement
 ## Additional data groups (on by default, you choose)
 These groups are read when you connect Apple Health, if you track them. Apple Health shows each type and lets you allow or deny it. You control each group in Apple Health (**Settings › Health › Data Access & Devices › KROK**): turn a type off there and KROK stops reading it. KROK has no separate per-group switch; to remove data already copied to our servers, use **••• menu → Delete All My Data** or email support@2ndopinions.ai.
 - **Nutrition and alcohol:** logged food and drink with the nutrients and times, alcoholic drinks, blood alcohol content.
-- **Heart alerts and lung function:** high/low heart rate and irregular rhythm notifications, atrial fibrillation burden, lung function measurements, inhaler use.
-- **Glucose, insulin and blood pressure:** readings recorded in Apple Health (for example by a continuous glucose monitor).
-- **Mood and symptoms:** state of mind entries, mindful minutes and symptoms you log (such as headache, fever, fatigue).
 - **Menstrual cycle:** cycle tracking entries.
-- **Medications:** the list of medications you choose to share (names only, no dose history).
 - **Profile:** date of birth, sex, wheelchair use and activity mode, used to interpret your numbers.
 This is health data of a particularly sensitive kind. KROK describes it back to you through your assistant; it does not diagnose, and neither KROK nor the assistant gives medical advice.
 
-We do **not** read clinical records or documents, reproductive and sexual-health data such as pregnancy or contraception, or ECG recordings.
+We do **not** read clinical records or documents, reproductive and sexual-health data such as pregnancy or contraception, or ECG recordings. Glucose, insulin, blood pressure, heart alerts, lung function, mood, symptoms and medications are **no longer read**: earlier versions of KROK could read them, and data of those kinds already copied to our servers is being deleted.
 
 If you enter an optional **expected finish time for a race**, it is stored with the race name and date, shared with the AI assistants you connect, and deleted with your account.
 

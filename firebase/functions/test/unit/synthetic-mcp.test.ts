@@ -37,7 +37,7 @@ describe('every daily metric the phone can send comes back out of get_daily_cont
   it('groups select the right metrics', async () => {
     const r = await ask('get_daily_context', { start_date: '2024-03-04', end_date: '2024-03-04', groups: ['sleep'] });
     expect(Object.keys(r.days[0]).sort()).toEqual(['date', 'sleepAsleepMin', 'sleepAwakeMin', 'sleepBreathingDisturbances', 'sleepCoreMin', 'sleepDeepMin', 'sleepInBedMin', 'sleepRemMin', 'sleepingWristTempC']);
-    for (const g of ['heart', 'activity', 'mobility', 'body', 'nutrition', 'cycle', 'mind', 'audio']) {
+    for (const g of ['heart', 'activity', 'mobility', 'body', 'nutrition', 'cycle', 'audio']) {
       const x = await ask('get_daily_context', { start_date: '2024-03-04', end_date: '2024-03-04', groups: [g] });
       expect(Object.keys(x.days[0]).length, `group ${g}`).toBeGreaterThan(2);
     }

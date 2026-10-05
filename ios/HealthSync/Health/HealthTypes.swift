@@ -109,7 +109,7 @@ struct HourlyMetric: @unchecked Sendable {
     let cols: [String]
 }
 
-enum EventKind: Sendable { case quantity, category, medication, characteristic }
+enum EventKind: Sendable { case quantity, category, characteristic }
 
 /// One kind of event or timed entry, uploaded in its category's `_events_<category>` batches.
 struct EventType: @unchecked Sendable {
@@ -136,7 +136,6 @@ struct DailyMetric: @unchecked Sendable {
         case category(HKCategoryType, CategoryMode)
         case sleep(HKCategoryType)
         case rings
-        case stateOfMind
     }
 
     let key: String
@@ -228,8 +227,6 @@ enum HealthTypes {
         case "category":
             guard let ct = HKObjectType.categoryType(forIdentifier: HKCategoryTypeIdentifier(rawValue: s.id)) else { return nil }
             return EventType(name: s.name, category: s.category, kind: .category, sampleType: ct, unit: nil, unitLabel: nil, dense: dense)
-        case "medication":
-            return EventType(name: s.name, category: s.category, kind: .medication, sampleType: nil, unit: nil, unitLabel: nil, dense: false)
         case "characteristic":
             return EventType(name: s.name, category: s.category, kind: .characteristic, sampleType: nil, unit: nil, unitLabel: nil, dense: false)
         default:
@@ -259,9 +256,6 @@ enum HealthTypes {
             return DailyMetric(key: s.key, kind: .sleep(ct), category: s.category ?? "core")
         case "activitySummary":
             return DailyMetric(key: s.key, kind: .rings, category: s.category ?? "core")
-        case "stateOfMind":
-            if #available(iOS 18.0, *) { return DailyMetric(key: s.key, kind: .stateOfMind, category: s.category ?? "core") }
-            return nil
         default:
             return nil
         }
@@ -289,8 +283,6 @@ enum HealthTypes {
             case .category(let t, _): set.insert(t)
             case .sleep(let t): set.insert(t)
             case .rings: set.insert(HKObjectType.activitySummaryType())
-            case .stateOfMind:
-                if #available(iOS 18.0, *) { set.insert(HKObjectType.stateOfMindType()) }
             }
         }
         return set

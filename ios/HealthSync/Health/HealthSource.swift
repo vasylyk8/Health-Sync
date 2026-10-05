@@ -33,9 +33,6 @@ protocol HealthSource: Sendable {
     func requestAuthorization(scope: SyncScope) async throws
     /// Asks for the types of the given consent categories ("core" is always included).
     func requestAuthorization(scope: SyncScope, categories: Set<String>) async throws
-    /// Apple's separate per-medication permission sheet (iOS 26). Kept apart from `requestAuthorization` so a slow or
-    /// missing second sheet can never hold up the main permission step; never throws.
-    func requestMedicationAuthorization() async
     /// Asks only for types this install was never asked about (one the app reads since an update); never throws.
     func requestNewTypes(scope: SyncScope, categories: Set<String>) async
     /// Workout summaries started in [from, to), newest first (the fast "recent" pass).
@@ -53,8 +50,6 @@ protocol HealthSource: Sendable {
     func dailyContextBatches(from: Date, to: Date, categories: Set<String>) async throws -> [DailyBatch]
     /// Hourly buckets (heart rate, steps, HRV) in [from, to) as `hs` records.
     func hourlySeries(from: Date, to: Date) async throws -> [Record]
-    /// The medications the user chose to share, as `ev` records (names only; no dose history).
-    func medicationRecords() async throws -> [Record]
     /// The profile entry (date of birth, sex, wheelchair use, move mode) as one `ev` record, or none.
     func profileRecords() async throws -> [Record]
     /// Earliest sample across the daily-context metrics, to know how far back to start.
@@ -75,7 +70,6 @@ protocol HealthSource: Sendable {
 }
 
 extension HealthSource {
-    func requestMedicationAuthorization() async {}
     func requestNewTypes(scope: SyncScope, categories: Set<String>) async {}
     func requestAuthorization(scope: SyncScope, categories: Set<String>) async throws { try await requestAuthorization(scope: scope) }
     func dailyContextBatches(from: Date, to: Date, categories: Set<String>) async throws -> [DailyBatch] {
@@ -84,7 +78,6 @@ extension HealthSource {
     func hourlySeries(from: Date, to: Date) async throws -> [Record] { [] }
     func observeOtherData(categories: Set<String>, onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {}
     func profileRecords() async throws -> [Record] { [] }
-    func medicationRecords() async throws -> [Record] { [] }
     var queryConcurrency: Int { 1 }
     func setQueryConcurrency(_ n: Int) {}
     func benchmark(onUpdate: @escaping @Sendable (String) -> Void) async { onUpdate("The speed test needs Apple Health on a real iPhone.") }

@@ -26,8 +26,7 @@ Routes are sent at one point per 5 s (about 35% of the previous route size, esti
 |---|---|
 | Hourly heart rate (avg/min/max) and steps, one year | ~43 KB (about 20–25 KB per year uploaded in the compact format); 13 years ≈ 0.3–0.6 MB |
 | Daily rows, one year (3 metrics in the test; the real rows have up to 87 keys) | ~32 KB test; real rows a few hundred KB per year at most |
-| Glucose, a month of 5-minute readings | 3 KB (≈ 0.1 MB per year of CGM data) |
-| Symptom entries | ~0.1 KB each |
+| Nutrition entries | ~0.1 KB each |
 Each monthly Parquet file costs about 2.7 KB of fixed overhead, which the 6-hourly compaction merges away.
 
 ## Ongoing cost for one active user (estimate)

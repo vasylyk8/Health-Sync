@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 // @ts-expect-error plain JS module shared with the monitoring scripts
 import { batches, CATEGORIES, evalCases, runId, TZ } from '../../../../scripts/synthetic/data.mjs';
 import { ingestObject } from '../../src/ingest/ingest.js';
-import { getGlucose, getHealthEvents, getHourlySeries } from '../../src/query/health.js';
+import { getHourlySeries } from '../../src/query/health.js';
 import { getDailyContext, getWorkout, getWorkoutRoute, getWorkoutSeries, getWorkouts, workoutBestEfforts, workoutHrDrift, workoutHrZones, workoutSplits } from '../../src/query/workouts.js';
 import { deps, makeEnv, type Env } from '../helpers/memory.js';
 
@@ -66,17 +66,13 @@ describe('synthetic user answers match the eval expectations', () => {
     expect((night.days as { sleepAsleepMin: number }[])[0]!.sleepAsleepMin).toBe(expected(8));
   });
 
-  it('eval 10-13: hourly series, glucose around a run and symptom log', async () => {
+  it('eval 10-11: hourly series', async () => {
     const hr = await getHourlySeries(q(), { series: 'HeartRate', start_date: '2024-03-04', end_date: '2024-03-04', resolution: 'hour' });
     const hours = hr.hours as [string, number][];
     expect(hours.find((h) => h[0].includes('14:00'))![1]).toBe(expected(9));
     const steps = await getHourlySeries(q(), { series: 'StepCount', start_date: '2024-03-04', end_date: '2024-03-04', resolution: 'hour' });
     const sh = steps.hours as [string, number][];
     expect(sh.filter((h) => h[0].includes('09:00') || h[0].includes('10:00')).reduce((n, h) => n + h[1], 0)).toBe(expected(10));
-    const g = await getGlucose(q(), { workout_id: id('2024-03-04') });
-    expect((g.during_workout as { mean_mg_dl: number }).mean_mg_dl).toBe(expected(11));
-    const e = await getHealthEvents(q(), { types: ['Headache'], start_date: '2024-03-01', end_date: '2024-03-31', limit: 500 });
-    expect(e.count).toBe(expected(12));
   });
 
   it('smoke test answers (scripts/tasks/smoke.sh)', async () => {

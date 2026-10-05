@@ -654,12 +654,6 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             for (day, values) in try await activityRings(from: start, to: to, calendar: cal) {
                 for (k, v) in values { out.append(DailyCell(day: day, key: k, value: v)) }
             }
-        case .stateOfMind:
-            if #available(iOS 18.0, *) {
-                for (day, values) in try await moods(from: start, to: to, calendar: cal) {
-                    for (k, v) in values { out.append(DailyCell(day: day, key: k, value: v)) }
-                }
-            }
         }
         return out
     }
@@ -672,9 +666,6 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             case .category(let t, _): return t
             case .sleep(let t): return t
             case .rings: return nil
-            case .stateOfMind:
-                if #available(iOS 18.0, *) { return HKObjectType.stateOfMindType() }
-                return nil
             }
         }
         return await withTaskGroup(of: Date?.self) { group in
@@ -907,20 +898,6 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             if let g = s.standHoursGoal { v["ringStandGoalHours"] = .double(g.doubleValue(for: .count())) }
             return (String(format: "%04d-%02d-%02d", y, m, d), v)
         }
-    }
-
-    @available(iOS 18.0, *)
-    private func moods(from: Date, to: Date, calendar: Calendar) async throws -> [(String, [String: RecordValue])] {
-        let predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: .strictStartDate)
-        let found = try await fetch(HKObjectType.stateOfMindType(), predicate: predicate, sort: nil).compactMap { $0 as? HKStateOfMind }
-        var byDay: [String: [Double]] = [:]
-        for m in found { byDay[SleepNights.dayKey(m.startDate, calendar: calendar), default: []].append(m.valence) }
-        var out: [(String, [String: RecordValue])] = []
-        for (day, values) in byDay {
-            let mean = values.reduce(0, +) / Double(values.count)
-            out.append((day, ["moodValenceAvg": RecordValue.double(mean), "moodEntries": RecordValue.int(Int64(values.count))]))
-        }
-        return out
     }
 
     // MARK: Hourly series, events, profile
@@ -1217,37 +1194,6 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             out.append(contentsOf: SeriesRecords.eventChunks(type: event.name, unit: event.unitLabel, source: group.source.name, bundle: group.source.bundleIdentifier, points: group.points))
         }
         return out
-    }
-
-    /// Medications use per-object authorization: the user picks which ones to share on Apple's own sheet.
-    func requestMedicationAuthorization() async {
-        #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            try? await store.requestPerObjectReadAuthorization(for: HKObjectType.userAnnotatedMedicationType(), predicate: nil)
-        }
-        #endif
-    }
-
-    func medicationRecords() async throws -> [Record] {
-        #if compiler(>=6.2)
-        guard #available(iOS 26.0, *) else { return [] }
-        let meds = try await HKUserAnnotatedMedicationQueryDescriptor(predicate: nil, limit: nil).result(for: store)
-        guard !meds.isEmpty else { return [] }
-        var ids: [RecordValue] = []
-        var metas: [RecordValue] = []
-        for m in meds {
-            // A stable short id from Apple's concept identifier (which may contain characters the batch format does not allow).
-            let digest = SHA256.hash(data: Data(String(describing: m.medication.identifier).utf8))
-            ids.append(.string("med-" + digest.prefix(12).map { String(format: "%02x", $0) }.joined()))
-            var meta: [String: RecordValue] = ["name": .string(String(m.medication.displayText.prefix(200))), "archived": .bool(m.isArchived), "scheduled": .bool(m.hasSchedule)]
-            if let nick = m.nickname, !nick.isEmpty { meta["nickname"] = .string(String(nick.prefix(100))) }
-            metas.append(.object(meta))
-        }
-        let now = Date().ms
-        return [["k": "ev", "ty": "Medication", "s": .array(Array(repeating: now, count: meds.count)), "ids": .array(ids), "meta": .array(metas)]]
-        #else
-        return []
-        #endif
     }
 
     func profileRecords() async throws -> [Record] {

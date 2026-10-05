@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  getDailyContext, getGlucose, getHealthEvents, getHourlySeries, getNutritionLog, getProfile, getRecovery, getTrainingLoad,
+  getDailyContext, getHourlySeries, getNutritionLog, getProfile, getRecovery, getTrainingLoad,
 } from '../../src/query/health.js';
 import { derivedWeather } from '../../src/query/workouts.js';
 import { deps, makeEnv, upload, type Env } from '../helpers/memory.js';
@@ -138,63 +138,20 @@ describe('training load', () => {
   });
 });
 
-describe('glucose, events, nutrition and profile (opt-in categories)', () => {
-  const run = 'run-glucose-aaaaaaaa';
+describe('nutrition and profile (opt-in categories)', () => {
+  const run = 'run-nutrition-aaaaaaaa';
   const t0 = Date.UTC(2024, 5, 20, 7, 0);
 
   async function seed(env: Env) {
-    enable(env, 'devices', 'mind', 'nutrition', 'profile');
+    enable(env, 'nutrition', 'profile');
     await seedWorkout(env, run, t0, 30, { hrAvg: 150, hrMax: 170 });
-    const times = Array.from({ length: 12 * 9 }, (_, i) => Date.UTC(2024, 5, 20, 5, 0) + i * 300_000); // 05:00-13:55
-    const value = times.map((t) => (t < t0 ? 105 : t < t0 + 30 * 60_000 ? 85 : 165));
-    await upload(env, { type: '_events_devices', schema: 2 }, [
-      { k: 'ev', ty: 'BloodGlucose', u: 'mg/dL', src: 'Dexcom', s: times, v: value },
-      { k: 'ev', ty: 'InsulinDelivery', u: 'IU', src: 'Pump', s: [t0 - 3_600_000], v: [2], meta: [{ HKInsulinDeliveryReason: 2 }] },
-    ]);
   }
-
-  it('reports glucose before, during and after a workout, and range statistics', async () => {
-    const env = makeEnv();
-    await seed(env);
-    const g = await getGlucose(deps(env), { workout_id: run });
-    expect((g.before_workout as { mean_mg_dl: number }).mean_mg_dl).toBe(105);
-    expect((g.during_workout as { mean_mg_dl: number; min_mg_dl: number }).mean_mg_dl).toBe(85);
-    expect((g.after_workout as { max_mg_dl: number; time_above_high_pct: number }).max_mg_dl).toBe(165);
-    expect(g.at_start_mg_dl).toEqual({ value: 85, minutes_before_start: 0 });
-    expect((g.insulin as { units: number }[])[0]!.units).toBe(2);
-    const range = await getGlucose(deps(env), { start_date: '2024-06-20', end_date: '2024-06-20' });
-    const o = range.overall as { readings: number; time_in_range_pct: number; time_below_low_pct: number; gmi_percent: number };
-    expect(o.readings).toBe(108);
-    expect(o.time_in_range_pct).toBe(100);
-    expect(o.time_below_low_pct).toBe(0);
-    expect(o.gmi_percent).toBeGreaterThan(5);
-  });
 
   it('refuses while a category is switched off, with a message the AI can pass on', async () => {
     const env = makeEnv();
     env.meta.users.get(env.uid)!.categories = ['core'];
-    await expect(getGlucose(deps(env), { start_date: '2024-06-20', end_date: '2024-06-20' })).rejects.toMatchObject({ code: 'category_disabled' });
-    await expect(getHealthEvents(deps(env), { category: 'mind', start_date: '2024-06-20', end_date: '2024-06-20' })).rejects.toThrow(/switched off/);
-  });
-
-  it('lists symptoms with severity, blood pressure pairs and medications', async () => {
-    const env = makeEnv();
-    enable(env, 'devices', 'mind', 'medications');
-    await upload(env, { type: '_events_mind', schema: 2 }, [{ k: 'ev', ty: 'Fatigue', src: 'Health', s: [t0], c: [3], ids: ['sym-1'] }]);
-    await upload(env, { type: '_events_devices', schema: 2 }, [
-      { k: 'ev', ty: 'BloodPressureSystolic', u: 'mmHg', s: [t0], v: [118], ids: ['bp-1'] },
-      { k: 'ev', ty: 'BloodPressureDiastolic', u: 'mmHg', s: [t0], v: [76], ids: ['bp-2'] },
-    ]);
-    await upload(env, { type: '_events_medications', schema: 2 }, [{ k: 'ev', ty: 'Medication', s: [t0], ids: ['med-1'], meta: [{ name: 'Metoprolol', form: 'tablet' }] }]);
-    const sym = await getHealthEvents(deps(env), { category: 'mind', start_date: '2024-06-20', end_date: '2024-06-20' });
-    expect(sym.events).toEqual([{ time: '2024-06-20 07:00', type: 'Fatigue', severity: 'moderate', source: 'Health' }]);
-    const bp = await getHealthEvents(deps(env), { types: ['BloodPressureSystolic', 'BloodPressureDiastolic'], start_date: '2024-06-20', end_date: '2024-06-20' });
-    expect((bp.events as { value: number }[]).map((e) => e.value)).toEqual([118, 76]);
-    const meds = await getHealthEvents(deps(env), { category: 'medications', start_date: '2024-06-20', end_date: '2024-06-20' });
-    expect((meds.events as { details: { name: string } }[])[0]!.details.name).toBe('Metoprolol');
-    // The medication list is a current snapshot: it is returned whatever the date range.
-    const later = await getHealthEvents(deps(env), { category: 'medications', start_date: '2024-09-01', end_date: '2024-09-02' });
-    expect(later.count).toBe(1);
+    await expect(getNutritionLog(deps(env), { start_date: '2024-06-20', end_date: '2024-06-20' })).rejects.toMatchObject({ code: 'category_disabled' });
+    await expect(getProfile(deps(env))).rejects.toMatchObject({ code: 'category_disabled' });
   });
 
   it('shows what was eaten before a workout and the profile', async () => {

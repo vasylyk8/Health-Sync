@@ -68,6 +68,13 @@ export const DEFAULT_CATEGORIES: string[] = CATEGORIES.filter((c) => c.default).
 export const EVENT_TYPES = new Map(COVERAGE.eventTypes.map((e) => [e.name, e]));
 export const HOURLY_METRICS = new Map(COVERAGE.hourlyMetrics.map((h) => [h.name, h]));
 
+/**
+ * Batch types and consent categories that were removed from the product. Old app builds may still send the
+ * batches; the server acknowledges and drops them, and a scheduled job deletes what was stored earlier.
+ */
+export const RETIRED_TYPES: ReadonlySet<string> = new Set(['_events_heart', '_events_devices', '_events_mind', '_events_medications', '_daily_mind']);
+export const RETIRED_CATEGORIES: ReadonlySet<string> = new Set(['heart', 'devices', 'mind', 'medications']);
+
 /** Consent category of a batch type ("core" unless the coverage file says otherwise). */
 export const categoryOfType = (type: string): string => TYPES_BY_ID.get(type)?.category ?? 'core';
 

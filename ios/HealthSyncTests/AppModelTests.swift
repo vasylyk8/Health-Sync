@@ -408,21 +408,19 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.busy)
     }
 
-    func testMedicationsStartOffSoFirstRunHasOnePermissionSheet() {
+    func testRemovedGroupsAreNotOfferedAndAreDroppedFromASavedChoice() {
         let scope = HealthTypes.scope(HealthTypes.loadCoverage())
-        XCTAssertNotEqual(scope.categories.first { $0.id == "medications" }?.default, true)
+        let ids = Set(scope.categories.map(\.id))
+        for removed in ["devices", "heart", "mind", "medications"] { XCTAssertFalse(ids.contains(removed), "\(removed) was removed from the app") }
         XCTAssertEqual(scope.categories.first { $0.id == "cycle" }?.default, true, "other groups keep their defaults")
-    }
-
-    func testMedicationSheetIsNotPartOfTheMainPermissionRequest() async throws {
-        let source = MedicationSource()
-        var scope = SyncScope.empty
-        scope.categories = [CoverageCategory(id: "core", label: "Core", default: true), CoverageCategory(id: "medications", label: "Medications", default: true)]
+        let defaults = UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!
+        defaults.set(["core", "cycle", "devices", "mind", "medications"], forKey: ConsentStore.key)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let model = AppModel(backend: StubBackend(), source: source, outbox: Outbox(root: root), scope: scope, telemetry: NoTelemetry(), defaults: UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!)
-        await model.connectHealth()
-        XCTAssertEqual(model.phase, .account, "onboarding moves on once the main permission sheet is answered")
-        XCTAssertTrue(source.mainRequested)
+        let model = AppModel(backend: StubBackend(), source: ScriptedSource(), outbox: Outbox(root: root), scope: scope, telemetry: NoTelemetry(), defaults: defaults)
+        XCTAssertTrue(model.isEnabled("cycle"))
+        XCTAssertFalse(model.isEnabled("devices"))
+        XCTAssertFalse(model.isEnabled("mind"))
+        XCTAssertFalse(model.isEnabled("medications"))
     }
 
     func testErrorMessagesAreActionable() {
@@ -488,23 +486,6 @@ final class ConnectPermissionTests: XCTestCase {
         XCTAssertTrue(model.busy)
         connecting.cancel()
     }
-}
-
-/// Source that records the medication sheet separately from the main request, and never answers the former.
-final class MedicationSource: HealthSource, @unchecked Sendable {
-    private(set) var mainRequested = false
-    var isAvailable: Bool { true }
-    func requestAuthorization(scope: SyncScope) async throws { mainRequested = true }
-    func requestMedicationAuthorization() async { try? await Task.sleep(for: .seconds(3600)) }
-    func workouts(from: Date, to: Date) async throws -> [Record] { [] }
-    func anchoredPage(_ type: SyncType, anchor: Data?, limit: Int) async throws -> AnchoredPage {
-        AnchoredPage(records: [], newAnchor: nil, objectCount: 0)
-    }
-    func workoutIndex() async throws -> [WorkoutRef] { [] }
-    func workoutDetail(id: String, gen: Int64) async throws -> [Record]? { nil }
-    func dailyContext(from: Date, to: Date) async throws -> [Record] { [] }
-    func earliestDailyDate() async throws -> Date? { nil }
-    func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {}
 }
 
 /// Source whose reads ignore cancellation for a few seconds (a sync that is slow to stop).

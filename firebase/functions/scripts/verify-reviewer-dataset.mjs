@@ -23,7 +23,7 @@ try {
   assert.equal((await meta.getUser(uid))?.synthetic, true);
   assert.equal((await getAuth().getUser(uid)).customClaims?.krokReviewer, true);
   current = 'fixture ingestion';
-  const required = ['HKWorkoutTypeIdentifier', '_daily', '_hourly', '_events_devices', '_events_mind', '_events_nutrition', '_events_profile'];
+  const required = ['HKWorkoutTypeIdentifier', '_daily', '_hourly', '_events_nutrition', '_events_profile'];
   for (let attempt = 0; attempt < 30; attempt++) {
     const manifests = await Promise.all(required.map((type) => meta.getManifest(uid, type)));
     if (manifests.every(Boolean)) break;
@@ -48,7 +48,6 @@ try {
     ['get_hourly_series', health.getHourlySeries, { ...dates, series: 'HeartRate' }],
     ['get_recovery', health.getRecovery, { date: '2024-03-07', timezone: q.tz }],
     ['get_training_load', health.getTrainingLoad, { end_date: '2024-03-07', days: 14, max_hr: 200 }],
-    ['get_glucose', health.getGlucose, dates], ['get_health_events', health.getHealthEvents, { ...dates, category: 'mind' }],
     ['get_nutrition_log', health.getNutritionLog, dates], ['get_profile', health.getProfile, {}],
   ];
   for (const [name, fn, args] of cases) {
@@ -59,8 +58,6 @@ try {
     if (name === 'get_workout_route') { assert.equal(data.trimmed_ends, true); assert(data.returned > 10); }
     if (name === 'get_workout_series') { assert(data.points.some((p) => p[1] === 140)); assert(data.points.some((p) => p[1] === 150)); }
     if (name === 'get_daily_context') assert.equal(data.days[0].steps, 10000);
-    if (name === 'get_glucose') assert(data.overall?.readings > 0);
-    if (name === 'get_health_events') assert(data.count > 0);
     if (name === 'get_nutrition_log') assert.equal(data.count, 7);
     if (name === 'get_profile') assert.equal(data.profile.dob, '1990-05-01');
     outcomes.push({ check: name, status: 'passed' });

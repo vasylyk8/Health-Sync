@@ -31,9 +31,9 @@ rejects every other batch type and record kind, and drops batches of a category 
 | `HKWorkoutTypeIdentifier` | `recent`, `anchored`, `reconcile` | `w`, `d` | workout summaries and deletions |
 | `_wstream` | `workoutdata` | `ws`, `wd` | raw data of workouts (streams, GPS route) |
 | `_daily` | `stats` | `day` | daily context rows (core category) |
-| `_daily_nutrition`, `_daily_cycle`, `_daily_mind` | `stats` | `day` | daily rows of an optional category |
+| `_daily_nutrition`, `_daily_cycle` | `stats` | `day` | daily rows of an optional category |
 | `_hourly` | `stats` | `hs` | hourly heart rate, steps and HRV buckets |
-| `_events_heart`, `_events_nutrition`, `_events_devices`, `_events_mind`, `_events_medications`, `_events_profile` | `anchored` | `ev`, `d` | event/sample logs of an optional category |
+| `_events_nutrition`, `_events_profile` | `anchored` | `ev`, `d` | event/sample logs of an optional category |
 | `_status` | `status` | `c` | "checked, nothing new" for the types above |
 
 - `seq`: per-type monotonic counter; the server keeps the highest `seq` per record id ("latest wins"). The app keeps its counters across upgrades, and a counter that is empty or still small (a fresh install, or an older app) starts at the current time in milliseconds, so a reinstall never numbers below what an earlier install sent.
@@ -77,7 +77,7 @@ Re-reading a workout uses a new `gen`: a newer generation replaces older files o
 
 **`hs` hourly buckets** (in a `_hourly` batch): `st` series name, `u` unit, `enc: 1`, `n`, `t` (start of each local hour as epoch ms), `v` (average, or the sum for cumulative types), optional `lo` / `hi` (minimum / maximum). Columns use the compact encoding above (plain arrays are accepted too). Hours without readings are not sent. Series: `HeartRate` (avg/min/max), `StepCount` (sum), `HeartRateVariabilitySDNN` and `HeartRateVariabilityRMSSD` (avg).
 
-**`ev` event / sample chunk** (in an `_events_<category>` batch): `ty` event type (names in `eventTypes` of `shared/coverage.json`), `u` unit, `src` / `bid` writing app, `enc: 1`, `n`, `s` start times, optional `e` end times, `v` / `v2` values (compact columns), `c` category value (integers), `ids` (HealthKit UUIDs) and `meta` (per-event metadata, scalar values). A chunk holds the samples of one type from one source. Dense series (blood glucose readings, blood pressure) are sent **without** `ids` and `meta` to stay small; their identity is `(type, start, source)`. The `Profile` event (`_events_profile`) is one entry with `meta` = `{dob, sex, wheelchair, moveMode}`. The `Medication` event lists the medications the user chose to share (names only, no dose history).
+**`ev` event / sample chunk** (in an `_events_<category>` batch): `ty` event type (names in `eventTypes` of `shared/coverage.json`), `u` unit, `src` / `bid` writing app, `enc: 1`, `n`, `s` start times, optional `e` end times, `v` / `v2` values (compact columns), `c` category value (integers), `ids` (HealthKit UUIDs) and `meta` (per-event metadata, scalar values). A chunk holds the samples of one type from one source. The `Profile` event (`_events_profile`) is one entry with `meta` = `{dob, sex, wheelchair, moveMode}`.
 
 **`c` status entry**: `t` batch type, `at` time checked, `cu` = its full history is delivered.
 
@@ -88,7 +88,7 @@ Computed on the phone in the user's local calendar (`dailyMetrics` in `shared/co
 - Fitness trends: `vo2max`, `walkingSpeedMps`, `walkingStepLengthM`, `walkingAsymmetryPct`, `walkingDoubleSupportPct`, `walkingSteadinessPct`, `stairAscentSpeedMps`, `stairDescentSpeedMps`, `sixMinuteWalkM`.
 - Body: `bodyMassKg`, `bodyFatPct`, `leanMassKg`, `bmi`, `heightM`, `waistM` (latest value of the day).
 - Nutrition and hydration (only if logged): `dietaryKcal`, `proteinG`, `carbsG`, `fatG`, `sugarG`, `fiberG`, `sodiumG`, `waterL`, `caffeineG`.
-- Mind and cycle (optional categories): `mindfulMin`, `moodValenceAvg`, `moodEntries`, `basalBodyTempC`, and menstrual-cycle category values as lists of HealthKit values (`cycleMenstrualFlow`, `cycleIntermenstrualBleeding`, `cycleOvulationTestResult`, `cycleCervicalMucusQuality`, `cycleInfrequentMenstrualCycles`, `cycleIrregularMenstrualCycles`, `cyclePersistentIntermenstrualBleeding`, `cycleProlongedMenstrualPeriods`). Sexual activity, contraceptive, pregnancy and lactation data are deliberately **not** read.
+- Mindful minutes (core): `mindfulMin`. Cycle (optional category): `basalBodyTempC`, and menstrual-cycle category values as lists of HealthKit values (`cycleMenstrualFlow`, `cycleIntermenstrualBleeding`, `cycleOvulationTestResult`, `cycleCervicalMucusQuality`, `cycleInfrequentMenstrualCycles`, `cycleIrregularMenstrualCycles`, `cyclePersistentIntermenstrualBleeding`, `cycleProlongedMenstrualPeriods`). Sexual activity, contraceptive, pregnancy and lactation data are deliberately **not** read.
 - Heart and body extras (core): `hrAvg`, `hrMin`, `hrMax`, `hrvMin`, `hrvMax`, `hrvRmssd`, `respiratoryMin`, `respiratoryMax`, `spo2Max`, `bodyTempC`, `perfusionIndexPct`, `uvExposure`, `moveMin`, `nikeFuel`, `timesFallen`, `pushCount`, `swimStrokes`, per-sport distances (`wheelchairDistanceM`, `snowDistanceM`, `xcSkiDistanceM`, `paddleDistanceM`, `rowingDistanceM`, `skatingDistanceM`), audio exposure (`envAudioAvg/Max`, `headphoneAudioAvg/Max`, `soundReductionAvg`, `envAudioEvents`, `headphoneAudioEvents` as counts). Every metric accepts all HealthKit sources the user authorized. HealthKit's statistics remain authoritative; sparse discrete metrics use authorized raw samples only to fill buckets the statistics query omitted. `alcoholBeverages` is in the nutrition category.
 
 ## 3. What the phone sends, and when
@@ -149,17 +149,17 @@ The phone's upload ack only means **accepted**. "Synced" in the app and every to
 - Header `perf` accepts only `readMs` and `uploadMs` (strict schema); on-device timing lives in `sync-timing.json`, not in batches.
 
 ## 7. Data categories and consent
-Every batch type belongs to one category (`categories` and `types[].category` in `shared/coverage.json`). `core` (workouts, activity, sleep and recovery, hourly series) is always on. The others start on (`default` in `categories`; `medications` starts off because Apple asks for it on a separate per-medication sheet) and can be switched off in the app (**Your data**): `nutrition` (nutrition, alcohol), `heart` (heart alerts, lung function), `devices` (glucose, insulin, blood pressure), `mind` (state of mind, mindful minutes, symptoms), `cycle` (menstrual cycle), `medications` (medication list), `profile` (date of birth, sex, wheelchair use, move mode).
+Every batch type belongs to one category (`categories` and `types[].category` in `shared/coverage.json`). `core` (workouts, activity, sleep and recovery, mindful minutes, hourly series) is always on. The others start on (`default` in `categories`): `nutrition` (nutrition, alcohol), `cycle` (menstrual cycle) and `profile` (date of birth, sex, wheelchair use, move mode). The phone requests only types of categories that are on. In October 2026 the `devices` (glucose, insulin, blood pressure), `heart` (heart alerts, lung function), `mind` (state of mind, symptoms) and `medications` categories were removed: the server acknowledges and drops batches of the retired types `_events_heart`, `_events_devices`, `_events_mind`, `_events_medications` and `_daily_mind` from old app builds, and the `purgeRetiredTypes` job deletes data stored earlier.
 - The phone asks HealthKit for the types of the categories that are on; Apple's sheet lets the user deny single types.
 - The `setCategories` callable stores the choice (`users/{uid}.categories`, `core` always included). The app calls it **before** it starts syncing a newly enabled category. Switching a category off deletes its Parquet files, manifests and coverage on the server and resets the phone's anchors for it, so switching it on again resends everything.
 - The server drops (acknowledges but does not store) batches of a category that is not enabled, and tools never serve a disabled category.
 - `getStatus` returns the enabled `categories`; a reinstalled app adopts them.
-- Sensitive categories (`devices`, `mind`, `cycle`, `medications`, `profile`) never appear in logs or analytics, and tools that return them tell the AI to describe data and trends only, with no diagnosis and no medication or dosing advice.
+- Sensitive categories (`cycle`, `profile`) never appear in logs or analytics, and tools that return them tell the AI to describe data and trends only, with no diagnosis and no medication or dosing advice.
 
 ## 8. Staying in sync after the first upload
-- **App opens or comes to the foreground:** a full catch-up (workouts, recent daily rows, hourly series, event logs, profile and medications).
+- **App opens or comes to the foreground:** a full catch-up (workouts, recent daily rows, hourly series, event logs and profile).
 - **New workout saved** (background delivery, immediately): the workout, its raw data, and the daily rows.
-- **New heart rate, steps or event readings** (glucose, nutrition, symptoms... of the groups that are on): HealthKit background delivery wakes the app, at most about once an hour per type (iOS decides); the wake sends events, the hourly series and the daily rows.
+- **New heart rate, steps or event readings** (nutrition of the groups that are on): HealthKit background delivery wakes the app, at most about once an hour per type (iOS decides); the wake sends events, the hourly series and the daily rows.
 - **Periodic refresh:** the app asks iOS for a background refresh about hourly; iOS runs it when it sees fit (often a few times a day, less if the phone is unused or low on power).
 - Background work only runs while the phone is unlocked (HealthKit data is encrypted when it locks) and is limited to about 20-25 s per wake; unfinished work resumes next time. Daily rows are re-read at most every 15 minutes and the last 3 days are always refreshed; the whole history is re-read weekly. Hourly series refresh at most hourly (last 3 days).
 - **Workout zones:** on iOS 27 the workout summary carries Apple's own zone boundaries and time in each zone (`zones`).

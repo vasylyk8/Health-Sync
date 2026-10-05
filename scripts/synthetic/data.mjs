@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 
 /** Bump when the synthetic data changes: the seed script then replaces what is stored. */
-export const DATA_VERSION = 2;
+export const DATA_VERSION = 3;
 export const UID = 'synthetic-monitor';
 export const TZ = 'Europe/Berlin';
 const DAY = 86_400_000;
@@ -66,21 +66,10 @@ function run(d) {
 /** Hourly heart rate (UTC hour h of any day): average 55 + h, minimum 5 lower, maximum 10 higher. Steps: 500 from 08:00 to 19:59 UTC. */
 export const hourHr = (h) => 55 + h;
 export const hourSteps = (h) => (h >= 8 && h < 20 ? 500 : 0);
-/** Glucose every 5 minutes in March 2024: 90 mg/dL while a run is on (all runs start 17:00 UTC), otherwise 100. */
-export const GLUCOSE_FROM = Date.UTC(2024, 2, 1);
-export const GLUCOSE_TO = Date.UTC(2024, 3, 1);
-export const glucoseAt = (t) => {
-  const d = Math.floor((t - start) / DAY);
-  const s0 = start + d * DAY + 17 * H;
-  return isRunDay(d) && t >= s0 && t < s0 + runKm(d) * PACE * 1000 ? 90 : 100;
-};
-/** A headache entry at 08:00 UTC on every fifth day. */
-export const headacheOn = (d) => d % 5 === 0;
-export const SYMPTOM_ID = (d) => `sym-${String(d).padStart(4, '0')}`;
 /** Categories of the original synthetic data (the reviewer account and the real-AI evals use exactly this). */
-export const CATEGORIES = ['core', 'devices', 'mind'];
-/** Categories of the full synthetic data (monitor user, local probe, MCP tests): everything except medications, which is off by default. */
-export const FULL_CATEGORIES = ['core', 'nutrition', 'heart', 'devices', 'mind', 'cycle', 'profile'];
+export const CATEGORIES = ['core'];
+/** Categories of the full synthetic data (monitor user, local probe, MCP tests): every category the product still has. */
+export const FULL_CATEGORIES = ['core', 'nutrition', 'cycle', 'profile'];
 
 // Every daily metric the phone can send (shared/coverage.json), with a simple deterministic value, so tests can
 // check that each one survives the whole path and comes back out of get_daily_context unchanged.
@@ -101,18 +90,16 @@ export function dailyValue(key, d) {
   if (key === 'sleepAsleepMin') return sleepMinutes(d);
   return (KEY_INDEX.get(key) + 1) * 10 + (d % 5);
 }
-const DAILY_TYPE_OF = { core: '_daily', nutrition: '_daily_nutrition', cycle: '_daily_cycle', mind: '_daily_mind' };
+const DAILY_TYPE_OF = { core: '_daily', nutrition: '_daily_nutrition', cycle: '_daily_cycle' };
 /** Hourly HRV (SDNN) of UTC hour h: 40 + h ms. */
 export const hourHrv = (h) => 40 + h;
 /** Nutrition entries at 12:00 UTC every third day (a meal 5 hours before the 17:00 runs on those days that are Mondays): energy and protein. */
 export const mealOn = (d) => d % 3 === 0;
 export const MEAL_KCAL = (d) => 600 + (d % 7) * 50;
 export const MEAL_PROTEIN = (d) => 30 + (d % 5);
-/** One high heart rate alert every 20th day at 14:00 UTC. */
-export const alertOn = (d) => d % 20 === 0;
 export const PROFILE = { dob: '1985-06-15', sex: 'male', wheelchair: false, moveMode: 'activeEnergy' };
 
-/** Returns the batches (arrays of JSON lines) to upload. `full` adds every daily metric, hourly HRV, nutrition, heart events and the profile. */
+/** Returns the batches (arrays of JSON lines) to upload. `full` adds every daily metric, hourly HRV, nutrition and the profile. */
 export function batches(full = false) {
   const out = [];
   const runs = [];
@@ -121,7 +108,7 @@ export function batches(full = false) {
   for (const r of runs) out.push(r.streams);
   // Daily rows: one daily type per category, each with the metrics of that category.
   const window = { start: start - DAY, end: Date.now() };
-  for (const [type, cat] of Object.entries(full ? { _daily: 'core', _daily_nutrition: 'nutrition', _daily_cycle: 'cycle', _daily_mind: 'mind' } : { _daily: 'core' })) {
+  for (const [type, cat] of Object.entries(full ? { _daily: 'core', _daily_nutrition: 'nutrition', _daily_cycle: 'cycle' } : { _daily: 'core' })) {
     const keys = full ? [...DAILY_KEYS].filter(([, c]) => c === cat).map(([k]) => k) : ['steps', 'restingHr', 'sleepAsleepMin'];
     const rows = [];
     for (let d = 0; d < days; d++) rows.push({ k: 'day', day: dateOf(d), m: Object.fromEntries(keys.map((k) => [k, dailyValue(k, d)])) });
@@ -144,15 +131,8 @@ export function batches(full = false) {
     ...(full ? [{ k: 'hs', st: 'HeartRateVariabilitySDNN', u: 'ms', t: hT, v: vV }] : []),
   ]);
 
-  // Glucose (dense, no ids) and headache entries (with ids).
-  const gT = [], gV = [];
-  for (let t = GLUCOSE_FROM; t < GLUCOSE_TO; t += 5 * 60_000) { gT.push(t); gV.push(glucoseAt(t)); }
-  out.push([header('_events_devices', 'anchored', { caughtUp: true }), { k: 'ev', ty: 'BloodGlucose', u: 'mg/dL', src: 'Synthetic CGM', bid: 'synthetic.cgm', s: gT, v: gV }]);
-  const aT = [], aId = [], aC = [];
-  for (let d = 0; d < days; d++) if (headacheOn(d)) { aT.push(start + d * DAY + 8 * H); aId.push(SYMPTOM_ID(d)); aC.push(2); }
-  out.push([header('_events_mind', 'anchored', { caughtUp: true }), { k: 'ev', ty: 'Headache', src: 'Health', bid: 'com.apple.Health', s: aT, c: aC, ids: aId }]);
   if (!full) return out;
-  // Nutrition entries (energy and protein, logged together by one app) and high heart rate alerts.
+  // Nutrition entries (energy and protein, logged together by one app).
   const nT = [], nE = [], nP = [];
   for (let d = 0; d < days; d++) if (mealOn(d)) { nT.push(start + d * DAY + 12 * H); nE.push(MEAL_KCAL(d)); nP.push(MEAL_PROTEIN(d)); }
   out.push([
@@ -160,9 +140,6 @@ export function batches(full = false) {
     { k: 'ev', ty: 'DietaryEnergyConsumed', u: 'kcal', src: 'Synthetic Food Log', bid: 'synthetic.food', s: nT, v: nE },
     { k: 'ev', ty: 'DietaryProtein', u: 'g', src: 'Synthetic Food Log', bid: 'synthetic.food', s: nT, v: nP },
   ]);
-  const hiT = [], hiId = [];
-  for (let d = 0; d < days; d++) if (alertOn(d)) { hiT.push(start + d * DAY + 14 * H); hiId.push(`hhr-${String(d).padStart(4, '0')}`); }
-  out.push([header('_events_heart', 'anchored', { caughtUp: true }), { k: 'ev', ty: 'HighHeartRateEvent', src: 'Apple Watch', bid: 'com.apple.health', s: hiT, ids: hiId }]);
   out.push([header('_events_profile', 'anchored', { caughtUp: true }), { k: 'ev', ty: 'Profile', src: 'Health', bid: 'com.apple.Health', s: [start], meta: [PROFILE] }]);
   return out;
 }
@@ -178,8 +155,6 @@ export function evalCases() {
   const juneRhr = range(dayIndex('2024-06-01'), dayIndex('2024-06-30')).map(restingHrOn);
   const mar4 = dayIndex('2024-03-04');
   const jan15 = dayIndex('2024-01-15');
-  const mar4Start = Date.UTC(2024, 2, 4, 17);
-  const headaches = range(dayIndex('2024-03-01'), dayIndex('2024-03-31')).filter(headacheOn);
   return [
     { q: 'How many running workouts did I do in the first quarter of 2024 (January to March)?', expect: [runsQ1.length] },
     { q: 'What total distance in km did I run in the first quarter of 2024? Round to a whole number.', expect: [sum(runsQ1.map(runKm))] },
@@ -192,7 +167,5 @@ export function evalCases() {
     { q: 'How many minutes did I sleep on the night ending 2024-04-10?', expect: [sleepMinutes(dayIndex('2024-04-10'))] },
     { q: 'What was my average heart rate in the hour from 14:00 to 15:00 local time (Europe/Berlin) on 2024-03-04? Use my hourly heart rate data.', expect: [hourHr(13)] },
     { q: 'How many steps did I take between 09:00 and 11:00 local time (Europe/Berlin) on 2024-03-04, hour by hour from my hourly data?', expect: [hourSteps(8) + hourSteps(9)] },
-    { q: 'What was my average blood glucose in mg/dL during my run on 2024-03-04? Round to a whole number.', expect: [glucoseAt(mar4Start + 60_000)] },
-    { q: 'How many headaches did I log in March 2024?', expect: [headaches.length] },
   ];
 }
