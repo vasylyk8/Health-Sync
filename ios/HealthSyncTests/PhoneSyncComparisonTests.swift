@@ -59,7 +59,7 @@ final class PhoneSyncComparisonTests: XCTestCase {
     }
     func testOverridesAndTimingAreConfinedToDiagnosticTaskTree() async throws {
         let normal = SyncTiming.shared
-        let privateTiming = SyncTiming()
+        let privateTiming = SyncTiming(persistEnabled: false)
         for width in [1, 2, 4] {
             try await PhoneSyncComparisonContext.$width.withValue(width) {
                 try await PhoneSyncComparisonContext.$cutoff.withValue(Date(timeIntervalSince1970: 1_700_000_000)) {
@@ -74,6 +74,15 @@ final class PhoneSyncComparisonTests: XCTestCase {
         XCTAssertEqual(DailyMetricConcurrency.width, 2)
         XCTAssertTrue(SyncTiming.shared === normal)
         XCTAssertNil(PhoneSyncComparisonContext.samplePredicate)
+    }
+
+    func testDiagnosticTimingDoesNotOverwriteNormalSyncTimingFile() throws {
+        let file = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("sync-timing.json")
+        let before = try? Data(contentsOf: file)
+        let privateTiming = SyncTiming(persistEnabled: false)
+        privateTiming.count("diagnostic", 1)
+        privateTiming.checkpoint("diagnostic")
+        XCTAssertEqual(try? Data(contentsOf: file), before)
     }
 
     private var scope: SyncScope { HealthTypes.scope(HealthTypes.loadCoverage()) }

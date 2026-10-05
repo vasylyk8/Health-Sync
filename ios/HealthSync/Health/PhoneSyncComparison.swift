@@ -75,7 +75,7 @@ enum PhoneSyncComparison {
             }
             let heat = ProcessInfo.processInfo.thermalState.rawValue
             let start = ProcessInfo.processInfo.systemUptime
-            let timing = SyncTiming()
+            let timing = SyncTiming(persistEnabled: false)
             let outcome = try await PhoneSyncComparisonContext.$width.withValue(width) {
                 try await PhoneSyncComparisonContext.$cutoff.withValue(options.cutoff) {
                     try await SyncTiming.$diagnostic.withValue(timing) { try await engine.run() }

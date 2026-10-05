@@ -9,6 +9,9 @@ final class SyncTiming: @unchecked Sendable {
     @TaskLocal static var diagnostic: SyncTiming?
     static var shared: SyncTiming { diagnostic ?? production }
 
+    private let persistEnabled: Bool
+    init(persistEnabled: Bool = true) { self.persistEnabled = persistEnabled }
+
     private let log = Logger(subsystem: "app.healthsync", category: "sync")
     private let signposter = OSSignposter(subsystem: "app.healthsync", category: "sync")
     private let lock = NSLock()
@@ -212,6 +215,7 @@ final class SyncTiming: @unchecked Sendable {
     }
 
     private func persistIfDue() {
+        guard persistEnabled else { return }
         let snapshot: (Data, Bool) = lock.withLock {
             guard Date().timeIntervalSince(lastWrite) > 30 else { return (Data(), false) }
             lastWrite = Date()
