@@ -1,8 +1,7 @@
-#if DEBUG
 import Foundation
 import CoreFoundation
 
-struct HistoryRecordComparison {
+struct HistoryRecordComparison: Sendable {
     var exact: Bool
     var equivalent: Bool
     var maximumDelta: Double
@@ -41,7 +40,7 @@ struct HistoryRecordComparison {
         return result
     }
 
-    private static func signature(_ value: Any) -> Any {
+    static func signature(_ value: Any) -> Any {
         if let number = value as? NSNumber {
             return CFGetTypeID(number) == CFBooleanGetTypeID() ? value : 0
         }
@@ -50,7 +49,7 @@ struct HistoryRecordComparison {
         return value
     }
 
-    private static func distance(_ a: Any, _ b: Any) -> Double? {
+    static func distance(_ a: Any, _ b: Any) -> Double? {
         if let a = a as? NSNumber, let b = b as? NSNumber {
             let ab = CFGetTypeID(a) == CFBooleanGetTypeID(), bb = CFGetTypeID(b) == CFBooleanGetTypeID()
             if ab || bb { return ab == bb && a == b ? 0 : nil }
@@ -72,4 +71,3 @@ struct HistoryRecordComparison {
     }
     private struct BadRecord: Error {}
 }
-#endif

@@ -80,6 +80,7 @@ struct HealthSyncApp: App {
             #endif
         }
         .onChange(of: scenePhase) { _, phase in
+            if phase != .active { model.stopSyncComparison(reason: "KROK left the foreground or the phone locked") }
             if phase == .active, !benchMode { model.start() }
             if phase == .background { model.flushStats() }
         }
