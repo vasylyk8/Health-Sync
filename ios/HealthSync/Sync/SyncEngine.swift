@@ -204,6 +204,10 @@ actor SyncEngine {
             report(syncing: false)
         }
 
+        return try await SharedRawHistory.withFreshCache(endingAt: now()) { try await self.runInReadSession() }
+    }
+
+    private func runInReadSession() async throws -> Outcome {
         try await flush()
         try startReconcileIfNeeded()
 
@@ -214,6 +218,7 @@ actor SyncEngine {
         var background: [Task<Void, Error>] = []
         func stopBackground() async {
             for task in background { task.cancel() }
+            await SharedRawHistory.cache?.cancelAll()
             for task in background { _ = await task.result }
         }
         do {
@@ -304,6 +309,10 @@ actor SyncEngine {
             running = false
             self.deadline = nil
         }
+        try await SharedRawHistory.withFreshCache(endingAt: now()) { try await self.workoutChangesInReadSession(wt, deadline: deadline) }
+    }
+
+    private func workoutChangesInReadSession(_ wt: SyncType, deadline: Date) async throws {
         try await flush()
         do {
             while now() < deadline {
@@ -388,7 +397,7 @@ actor SyncEngine {
             }
             lastDailyAt = nil
         }
-        let end = now()
+        let end = SharedRawHistory.endingAt ?? now()
         // An update of an app that already synced reads the whole history once more, only to fill the totals on Home
         // (rows whose content did not change are not sent again).
         let full = (outbox.state.dailyFullAt.map { end.timeIntervalSince($0) > config.dailyFullEvery } ?? true) || stats.needsDailyBackfill
@@ -488,7 +497,7 @@ actor SyncEngine {
                 s.hourlyVersion = Self.hourlyVersion
             }
         }
-        let end = now()
+        let end = SharedRawHistory.endingAt ?? now()
         var start: Date
         if let through = outbox.state.hourlyThrough {
             if let at = outbox.state.hourlyAt, end.timeIntervalSince(at) < config.hourlyEvery { return }

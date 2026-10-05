@@ -47,6 +47,8 @@ final class DailyCheckUITests: XCTestCase {
         if !output.label.contains("DAILYSEM OK") { failures.append("raw aggregation vs HealthKit statistics: " + lines("DAILYSEM")) }
         if !output.label.contains("DAILYRAW OK") { failures.append("daily pass without statistics: " + lines("DAILYRAW")) }
         if !output.label.contains("DAILYCOMPLETE OK") { failures.append("partial hours and long samples: " + lines("DAILYCOMPLETE")) }
+        if !output.label.contains("DAILYSHARED FRESH OK") { failures.append("later Health imports were not re-read") }
+        if output.label.contains("DAILYSHARED FAIL") { failures.append("shared cache was not exercised") }
         XCTAssertTrue(failures.isEmpty, failures.joined(separator: " || "))
     }
 }

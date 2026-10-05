@@ -149,7 +149,15 @@ enum DailyCheck {
             let shapes = cal.date(byAdding: .day, value: -900, to: today)!
             for (from, to) in [(before, cal.date(byAdding: .day, value: 2, to: day)!), (shapes, cal.date(byAdding: .day, value: 32, to: shapes)!),
                                (cal.date(byAdding: .day, value: -11, to: today)!, Date())] {
-                let r = try await source.statisticsVersusRaw(from: from, to: to)
+                let r = try await SharedRawHistory.withFreshCache {
+                    let result = try await source.statisticsVersusRaw(from: from, to: to)
+                    if let cache = SharedRawHistory.cache {
+                        m.log("DAILYSHARED " + (await cache.summary))
+                        let hits = await cache.hits
+                        if hits == 0 { m.log("DAILYSHARED FAIL shared cache was not exercised") }
+                    }
+                    return result
+                }
                 compared += r.compared
                 differences += r.differences
             }
@@ -227,7 +235,7 @@ enum DailyCheck {
         let source = HealthKitSource(scope: scope)
         source.debugEmptyStatistics = true
         do {
-            let records = try await source.dailyContext(from: cal.date(byAdding: .day, value: -11, to: today)!, to: Date())
+            let records = try await SharedRawHistory.withFreshCache { try await source.dailyContext(from: cal.date(byAdding: .day, value: -11, to: today)!, to: Date()) }
             var missingDays: [String] = []
             for d in 1 ... 10 {
                 let day = SleepNights.dayKey(cal.date(byAdding: .day, value: -d, to: today)!, calendar: cal)
@@ -255,7 +263,7 @@ enum DailyCheck {
                 m.log("DAILYCOMPLETE FAIL hourly steps unavailable")
                 return
             }
-            let buckets = try await hourly.hourlyBuckets(metric, from: day, to: end)
+            let buckets = try await SharedRawHistory.withFreshCache { try await hourly.hourlyBuckets(metric, from: day, to: end) }
             let total = buckets.compactMap(\.v).reduce(0, +)
             guard buckets.count == 3 && abs(total - 2415) < 1e-6 else {
                 m.log("DAILYCOMPLETE FAIL partial hourly statistics: buckets=\(buckets.count) total=\(total)")
@@ -269,7 +277,7 @@ enum DailyCheck {
             let raw = HealthKitSource(scope: scope)
             raw.debugEmptyStatistics = true
             let to = cal.date(byAdding: .hour, value: 12, to: target)!
-            let batches = try await raw.dailyContextBatches(from: target, to: to, categories: [])
+            let batches = try await SharedRawHistory.withFreshCache { try await raw.dailyContextBatches(from: target, to: to, categories: []) }
             let rows = batches.flatMap(\.records)
             let key = SleepNights.dayKey(target, calendar: cal)
             guard let row = rows.first(where: { $0["day"] == .string(key) }), case .object(let values)? = row["m"],
@@ -286,6 +294,38 @@ enum DailyCheck {
         } catch {
             m.log("DAILYCOMPLETE FAIL \(error)")
         }
+    }
+
+    /// A later import must be visible with the same source and exact historical window in the next sync.
+    private static func checkFreshSharedRead(_ m: BenchModel, store: HKHealthStore, scope: SyncScope, today: Date, calendar cal: Calendar) async {
+        let day = cal.date(byAdding: .day, value: -990, to: today)!
+        let to = cal.date(byAdding: .day, value: 1, to: day)!
+        let source = HealthKitSource(scope: scope)
+        source.debugEmptyStatistics = true
+        func steps(_ records: [Record]) -> Double? {
+            guard case .object(let values)? = records.first?["m"] else { return nil }
+            switch values["steps"] {
+            case .double(let n): return n
+            case .int(let n): return Double(n)
+            default: return nil
+            }
+        }
+        func sample(_ value: Double, hour: Int) -> HKQuantitySample {
+            let start = cal.date(byAdding: .hour, value: hour, to: day)!
+            return HKQuantitySample(type: HKQuantityType(.stepCount), quantity: HKQuantity(unit: .count(), doubleValue: value), start: start, end: start.addingTimeInterval(1800))
+        }
+        do {
+            try await store.save(sample(100, hour: 8))
+            let before = try await SharedRawHistory.withFreshCache { try await source.dailyContext(from: day, to: to) }
+            guard let initial = steps(before), abs(initial - 100) < 1e-6 else { m.log("DAILYSHARED FAIL initial fixture: \(String(describing: steps(before)))"); return }
+            try await store.save(sample(300, hour: 12))
+            let after = try await SharedRawHistory.withFreshCache { try await source.dailyContext(from: day, to: to) }
+            guard let updated = steps(after), abs(updated - 400) < 1e-6 else { m.log("DAILYSHARED FAIL stale reading after import: \(String(describing: steps(after)))"); return }
+            source.debugEmptyStatistics = false
+            let apple = try await SharedRawHistory.withFreshCache { try await source.statisticsVersusRaw(from: day, to: to) }
+            guard apple.compared > 0 && apple.differences.isEmpty else { m.log("DAILYSHARED FAIL updated fixture differs from Apple"); return }
+            m.log("DAILYSHARED FRESH OK same source, same window, updated steps 100 to 400")
+        } catch { m.log("DAILYSHARED FAIL freshness: \(error)") }
     }
 
     static func run(_ m: BenchModel) async {
@@ -334,7 +374,7 @@ enum DailyCheck {
         let expected = Set((coverage?.dailyMetrics ?? []).filter { ($0.category ?? "core") == "core" && seeded.contains($0.id) }.map(\.key)).union(["sleepAsleepMin"])
         let source = HealthKitSource(scope: scope)
         do {
-            let records = try await source.dailyContext(from: cal.date(byAdding: .day, value: -11, to: today)!, to: Date())
+            let records = try await SharedRawHistory.withFreshCache { try await source.dailyContext(from: cal.date(byAdding: .day, value: -11, to: today)!, to: Date()) }
             var found = Set<String>()
             var rows = 0
             for r in records {
@@ -369,6 +409,7 @@ enum DailyCheck {
         await dumpBatches(m, source: source, from: cal.date(byAdding: .day, value: -11, to: today)!)
         await runHistory(m, store: store, scope: scope, today: today, calendar: cal)
         await checkCompleteness(m, store: store, scope: scope, today: today, calendar: cal)
+        await checkFreshSharedRead(m, store: store, scope: scope, today: today, calendar: cal)
         m.log("BENCH DONE")
     }
 }
