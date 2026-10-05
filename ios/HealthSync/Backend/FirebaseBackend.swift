@@ -20,7 +20,24 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
 
     private var functions: Functions { Functions.functions(region: Self.region) }
 
+    private let signInLock = NSLock()
+    private var pendingSignIn: Task<String, Error>?
+
+    /// One sign-in at a time: calls that overlap while nobody is signed in (for example the "health_connect_started"
+    /// event and the sign-in of onboarding, right after Log out) share one anonymous account instead of each creating
+    /// their own and leaving the phone with an account its onboarding does not know about.
     func signIn() async throws -> String {
+        let task: Task<String, Error> = signInLock.withLock {
+            if let pendingSignIn { return pendingSignIn }
+            let created = Task { try await self.performSignIn() }
+            pendingSignIn = created
+            return created
+        }
+        defer { signInLock.withLock { pendingSignIn = nil } }
+        return try await task.value
+    }
+
+    private func performSignIn() async throws -> String {
         if let user = Auth.auth().currentUser {
             do {
                 _ = try await user.getIDToken()
