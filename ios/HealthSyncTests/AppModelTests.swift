@@ -408,6 +408,25 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.busy)
     }
 
+    func testANewSyncStillRunsAfterTheReplacedAccountsSlowSyncStops() async throws {
+        let source = SlowFirstReadSource()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let backend = StubBackend()
+        backend.uid = "throwaway"
+        let model = AppModel(backend: backend, source: source, outbox: Outbox(root: root), scope: .empty, telemetry: NoTelemetry(), defaults: UserDefaults(suiteName: "appmodel-\(UUID().uuidString)")!)
+        model.engineBusyPoll = .milliseconds(100)
+        await model.connectHealth()
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertTrue(source.reading, "the first sync is deep in a read that ignores cancellation")
+        backend.restoredUid = "owner"
+        await model.linkAppleAccount(AppleSignInResult(idToken: "t", nonce: "n", authorizationCode: "c"))
+        XCTAssertEqual(model.phase, .home)
+        // The replaced account's sync ends when its read does; the new account's sync then starts instead of giving up.
+        let deadline = Date().addingTimeInterval(20)
+        while source.readsAfterTheFirst == 0, Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertGreaterThan(source.readsAfterTheFirst, 0, "a sync ran after the slow one stopped")
+    }
+
     func testMedicationsStartOffSoFirstRunHasOnePermissionSheet() {
         let scope = HealthTypes.scope(HealthTypes.loadCoverage())
         XCTAssertNotEqual(scope.categories.first { $0.id == "medications" }?.default, true)
@@ -527,6 +546,34 @@ final class StubbornSource: HealthSource, @unchecked Sendable {
     func workoutIndex() async throws -> [WorkoutRef] { block(); return [] }
     func workoutDetail(id: String, gen: Int64) async throws -> [Record]? { nil }
     func dailyContext(from: Date, to: Date) async throws -> [Record] { block(); return [] }
+    func earliestDailyDate() async throws -> Date? { nil }
+    func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {}
+}
+
+/// Source whose first read ignores cancellation for a few seconds; later reads are instant.
+final class SlowFirstReadSource: HealthSource, @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+    private var _reading = false
+    var reading: Bool { lock.withLock { _reading } }
+    var readsAfterTheFirst: Int { lock.withLock { max(0, calls - 1) } }
+    var isAvailable: Bool { true }
+    func requestAuthorization(scope: SyncScope) async throws {}
+    private func read() {
+        let first: Bool = lock.withLock { calls += 1; return calls == 1 }
+        guard first else { return }
+        lock.withLock { _reading = true }
+        let end = Date().addingTimeInterval(3)
+        while Date() < end { Thread.sleep(forTimeInterval: 0.05) }
+    }
+    func workouts(from: Date, to: Date) async throws -> [Record] { read(); return [] }
+    func anchoredPage(_ type: SyncType, anchor: Data?, limit: Int) async throws -> AnchoredPage {
+        read()
+        return AnchoredPage(records: [], newAnchor: nil, objectCount: 0)
+    }
+    func workoutIndex() async throws -> [WorkoutRef] { read(); return [] }
+    func workoutDetail(id: String, gen: Int64) async throws -> [Record]? { nil }
+    func dailyContext(from: Date, to: Date) async throws -> [Record] { read(); return [] }
     func earliestDailyDate() async throws -> Date? { nil }
     func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {}
 }

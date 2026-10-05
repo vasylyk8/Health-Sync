@@ -203,6 +203,10 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// How often, and how many times, a sync checks again when the engine is busy (tests shorten it).
+    var engineBusyPoll: Duration = .seconds(3)
+    var engineBusyPolls = 200
+
     /// How long to wait for Apple Health before showing `permissionStallHint` (tests shorten it).
     var permissionHintDelay: Duration = .seconds(12)
     static let permissionStallHint = "Apple Health isn't responding. If you don't see its permission screen, restart your iPhone, then open KROK and try again."
@@ -393,9 +397,12 @@ final class AppModel: ObservableObject {
             // A background wake-up may be using the engine for a moment; wait for it instead of skipping the sync.
             var outcome = try await engine.run()
             var waits = 0
-            while outcome == .alreadyRunning && waits < 6 {
+            // Busy engine: a background wake-up, or the sync of a replaced or logged-out account that is still winding
+            // down (it ignores cancellation until its current Health read ends). Wait for it as long as it takes,
+            // because giving up leaves nothing running and the upload stuck.
+            while outcome == .alreadyRunning && waits < engineBusyPolls {
                 waits += 1
-                try await Task.sleep(for: .seconds(5))
+                try await Task.sleep(for: engineBusyPoll)
                 outcome = try await engine.run()
             }
             await refreshStatus()
@@ -640,8 +647,9 @@ final class AppModel: ObservableObject {
             appleAccountLinked = await backend.hasAppleAccount()
             if let freshUid, let current = try? await backend.signIn(), current != freshUid {
                 stopped = true
-                // The sync running on the replaced account is thrown away: don't make the person wait for it to wind down.
-                await stopSync(waitingAtMost: 3)
+                // The sync running on the replaced account is thrown away: it is told to stop, and the new one waits for it
+                // if it is slow (the sign-in button shows a loader meanwhile).
+                await stopSync(waitingAtMost: 10)
                 try await startOverOnRestoredAccount()
                 defaults.set(current, forKey: Self.syncedUidKey)
             }
@@ -670,6 +678,7 @@ final class AppModel: ObservableObject {
         guard let task = syncTask else { return }
         task.cancel()
         syncTask = nil
+        await engine.abortRun()
         await Self.finishWithin(seconds: seconds) { await task.value }
     }
 
