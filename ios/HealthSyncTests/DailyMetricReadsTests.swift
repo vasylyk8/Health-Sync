@@ -10,6 +10,17 @@ final class DailyMetricReadsTests: XCTestCase {
         func counts() -> (Int, Int, Int) { (active, peak, started) }
     }
 
+    func testShippingDefaultIsTwoReads() async throws {
+        XCTAssertEqual(DailyMetricConcurrency.productionWidth, 2)
+        XCTAssertEqual(DailyMetricConcurrency.width, 2)
+        #if DEBUG
+        await DailyMetricExperiment.$width.withValue(4) {
+            XCTAssertEqual(DailyMetricConcurrency.width, 4)
+        }
+        XCTAssertEqual(DailyMetricConcurrency.width, 2)
+        #endif
+    }
+
     func testOutOfOrderResultsKeepEveryDestinationAndBound() async throws {
         for width in [2, 4] {
             let activity = Activity()

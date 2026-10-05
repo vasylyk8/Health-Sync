@@ -58,7 +58,7 @@ enum HealthBench {
         startMainThreadWatchdog()
         let args = ProcessInfo.processInfo.arguments
         if args.contains("-dailyCheck") {
-            let width = args.firstIndex(of: "-dailyConcurrency").flatMap { Int(args[$0 + 1]) } ?? 1
+            let width = args.firstIndex(of: "-dailyConcurrency").flatMap { Int(args[$0 + 1]) } ?? DailyMetricConcurrency.productionWidth
             await DailyMetricExperiment.$width.withValue(width) { await DailyCheck.run(m) }
             return
         }

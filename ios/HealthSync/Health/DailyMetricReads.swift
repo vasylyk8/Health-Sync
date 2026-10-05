@@ -1,10 +1,22 @@
-#if DEBUG
 import Foundation
 
-/// Experiment only. Child tasks inherit the selected width; production keeps the serial reader.
-enum DailyMetricExperiment {
-    @TaskLocal static var width = 1
+/// The phone always uses two reads; diagnostic builds can compare other widths.
+enum DailyMetricConcurrency {
+    static let productionWidth = 2
+    static var width: Int {
+        #if DEBUG
+        return DailyMetricExperiment.width
+        #else
+        return productionWidth
+        #endif
+    }
 }
+
+#if DEBUG
+enum DailyMetricExperiment {
+    @TaskLocal static var width = DailyMetricConcurrency.productionWidth
+}
+#endif
 
 enum DailyMetricCollectionError: Error { case invalidIndex, duplicateIndex, missingResult }
 
@@ -63,4 +75,3 @@ enum DailyMetricReads {
         }
     }
 }
-#endif
