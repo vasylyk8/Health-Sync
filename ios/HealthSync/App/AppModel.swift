@@ -36,6 +36,10 @@ final class AppModel: ObservableObject {
     @Published var benchmarkText = ""
     @Published var benchmarkRunning = false
     @Published var showBenchmark = false
+    @Published private(set) var comparisonRunning = false
+    @Published var benchmarkTitle = "Speed test"
+    private var comparisonTask: Task<Void, Never>?
+    private var comparisonStopReason: String?
     private var syncTask: Task<Void, Never>?
 
     let providers = AIProvider.all
@@ -105,7 +109,7 @@ final class AppModel: ObservableObject {
     /// The first sync only makes progress while the phone is unlocked (HealthKit data is unreadable
     /// when it locks), so keep the screen on until the history is in. Normal syncs don't need this.
     private func keepScreenAwakeDuringFirstSync() {
-        let firstSync = progress.isSyncing && !progress.historyComplete
+        let firstSync = benchmarkRunning || (progress.isSyncing && !progress.historyComplete)
         if UIApplication.shared.isIdleTimerDisabled != firstSync { UIApplication.shared.isIdleTimerDisabled = firstSync }
     }
 
@@ -279,6 +283,7 @@ final class AppModel: ObservableObject {
     func runSpeedTest() {
         guard !benchmarkRunning else { return }
         benchmarkRunning = true
+        benchmarkTitle = "Speed test"
         benchmarkText = "Pausing sync…"
         showBenchmark = true
         UIApplication.shared.isIdleTimerDisabled = true
@@ -291,8 +296,60 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Full initial-sync comparison, with private temporary outboxes and a local destination.
+    func runSyncComparison() {
+        guard !benchmarkRunning, Theme.isInternalBuild else { return }
+        benchmarkRunning = true
+        comparisonRunning = true
+        comparisonStopReason = nil
+        benchmarkTitle = "Compare initial sync"
+        benchmarkText = "Pausing normal sync…\nThis reads your history six times (1, 2 and 4 daily reads, twice each). It can take 20–40 minutes, plus cooling. Keep KROK open. Your synced data is retained; nothing is sent to the server."
+        showBenchmark = true
+        UIApplication.shared.isIdleTimerDisabled = true
+        let chosen = enabledCategories
+        comparisonTask = Task {
+            syncTask?.cancel()
+            await syncTask?.value
+            syncTask = nil
+            do {
+                try await engine.pauseForDiagnostic()
+                try Task.checkCancellation()
+                let scope = self.scope
+                let result = try await PhoneSyncComparison.run(scope: scope, categories: chosen,
+                    sourceFactory: { HealthKitSource(scope: scope) },
+                    onUpdate: { text in Task { @MainActor in
+                        if self.comparisonRunning && self.comparisonStopReason == nil { self.benchmarkText = text }
+                    } })
+                benchmarkText = result.report
+            } catch is CancellationError {
+                benchmarkText += "\nStopped: \(comparisonStopReason ?? "cancelled"). Partial runs are not a valid full comparison. Temporary batches are removed."
+            } catch is PhoneSyncComparison.TooHot {
+                benchmarkText += "\nStopped: the phone needs to cool. Retry later; unfinished runs are not included as successful."
+            } catch is PhoneSyncComparison.ConditionsChanged {
+                benchmarkText += "\nStopped: Low Power Mode changed during the test. Retry with consistent settings."
+            } catch {
+                // Error codes only: avoid accidentally exporting private values in an error description.
+                let ns = error as NSError
+                benchmarkText += "\nTest failed (\(ns.domain) \(ns.code)). Temporary test data is removed; normal synced data is retained."
+            }
+            await engine.resumeAfterDiagnostic()
+            benchmarkRunning = false
+            comparisonRunning = false
+            comparisonTask = nil
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+    }
+
+    func stopSyncComparison(reason: String = "stopped by you") {
+        guard comparisonRunning else { return }
+        comparisonStopReason = reason
+        benchmarkText += "\nStopping… waiting for active reads to finish."
+        comparisonTask?.cancel()
+    }
+
     /// Closing the results resumes the sync.
     func finishSpeedTest() {
+        UIApplication.shared.isIdleTimerDisabled = false
         showBenchmark = false
         guard !benchmarkRunning else { return }
         start()
@@ -366,6 +423,7 @@ final class AppModel: ObservableObject {
     }
 
     func syncNow() async {
+        guard !benchmarkRunning else { return }
         let syncStarted = ProcessInfo.processInfo.systemUptime
         do {
             try await ensureCurrentAccount()
@@ -418,6 +476,7 @@ final class AppModel: ObservableObject {
 
     /// What a background refresh does: the same quick catch-up as a wake for new data.
     func runBackgroundRefresh() async {
+        guard !benchmarkRunning else { return }
         scheduleBackgroundRefresh()
         try? await engine.runWorkoutChanges(deadline: Date().addingTimeInterval(25))
     }

@@ -99,7 +99,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     // MARK: Workout summaries
 
     func workouts(from: Date, to: Date) async throws -> [Record] {
-        let predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: .strictStartDate)
+        let window = HKQuery.predicateForSamples(withStart: from, end: to, options: .strictStartDate)
+        let predicate = PhoneSyncComparisonContext.samplePredicate.map { NSCompoundPredicate(andPredicateWithSubpredicates: [window, $0]) } ?? window
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
         let samples = try await fetch(HKObjectType.workoutType(), predicate: predicate, sort: sort)
         return await withPlans(samples.compactMap { $0 as? HKWorkout })
@@ -150,7 +151,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         guard let sampleType = type.sampleType else { return AnchoredPage(records: [], newAnchor: anchor, objectCount: 0) }
         let hkAnchor = anchor.flatMap { try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: $0) }
         let (samples, deleted, newAnchor): ([HKSample], [HKDeletedObject], HKQueryAnchor?) = try await withCheckedThrowingContinuation { cont in
-            let q = HKAnchoredObjectQuery(type: sampleType, predicate: nil, anchor: hkAnchor, limit: limit) { _, samples, deleted, newAnchor, error in
+            let q = HKAnchoredObjectQuery(type: sampleType, predicate: PhoneSyncComparisonContext.samplePredicate, anchor: hkAnchor, limit: limit) { _, samples, deleted, newAnchor, error in
                 if let error { cont.resume(throwing: error) } else { cont.resume(returning: (samples ?? [], deleted ?? [], newAnchor)) }
             }
             store.execute(q)
@@ -170,7 +171,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     func workoutIndex() async throws -> [WorkoutRef] {
         // Unsorted and sorted here: asking HealthKit to sort is much slower (speed test row B1).
-        let samples = try await fetch(HKObjectType.workoutType(), predicate: nil, sort: nil)
+        let samples = try await fetch(HKObjectType.workoutType(), predicate: PhoneSyncComparisonContext.samplePredicate, sort: nil)
             .sorted { $0.startDate != $1.startDate ? $0.startDate > $1.startDate : $0.uuid.uuidString < $1.uuid.uuidString }
         let workouts = samples.compactMap { $0 as? HKWorkout }
         cacheLock.withLock { workoutCache = Dictionary(workouts.map { ($0.uuid.uuidString, $0) }, uniquingKeysWith: { first, _ in first }) }
@@ -1213,7 +1214,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         if let wheelchair = try? store.wheelchairUse().wheelchairUse, wheelchair != .notSet { meta["wheelchair"] = .bool(wheelchair == .yes) }
         if let mode = try? store.activityMoveMode().activityMoveMode { meta["moveMode"] = mode == .appleMoveTime ? "appleMoveTime" : "activeEnergy" }
         guard !meta.isEmpty else { return [] }
-        return [["k": "ev", "ty": "Profile", "s": .array([Date().ms]), "ids": .array(["profile"]), "meta": .array([.object(meta)])]]
+        return [["k": "ev", "ty": "Profile", "s": .array([(PhoneSyncComparisonContext.cutoff ?? Date()).ms]), "ids": .array(["profile"]), "meta": .array([.object(meta)])]]
     }
 
     // MARK: Background delivery

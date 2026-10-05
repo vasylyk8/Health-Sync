@@ -5,7 +5,9 @@ import os
 /// (os_signpost / Points of Interest, subsystem "app.healthsync", category "sync"), a summary is
 /// logged as it goes and written to `sync-timing.json` in Application Support. Never contains health values.
 final class SyncTiming: @unchecked Sendable {
-    static let shared = SyncTiming()
+    private static let production = SyncTiming()
+    @TaskLocal static var diagnostic: SyncTiming?
+    static var shared: SyncTiming { diagnostic ?? production }
 
     private let log = Logger(subsystem: "app.healthsync", category: "sync")
     private let signposter = OSSignposter(subsystem: "app.healthsync", category: "sync")
@@ -62,6 +64,16 @@ final class SyncTiming: @unchecked Sendable {
             record("\(name)", ms: Double(DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000)
         }
         return try body()
+    }
+
+    /// Counts and durations only; run-local diagnostics never reuse the production session.
+    func diagnosticSummary() -> String {
+        lock.withLock {
+            let names = ["detail.readWait", "detail.send", "detail.encode", "batch.encode", "batch.compress", "outbox.enqueue", "upload"]
+            return names.map { name in
+                String(format: "%@=%.2fs", name, (stats[name]?.totalMs ?? 0) / 1000)
+            }.joined(separator: " ")
+        }
     }
 
     /// Marks the start of Step 4 (raw workout data) so the live speed is measured from there.

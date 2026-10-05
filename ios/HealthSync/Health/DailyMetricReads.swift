@@ -4,6 +4,7 @@ import Foundation
 enum DailyMetricConcurrency {
     static let productionWidth = 2
     static var width: Int {
+        if let width = PhoneSyncComparisonContext.width { return width }
         #if DEBUG
         return DailyMetricExperiment.width
         #else
