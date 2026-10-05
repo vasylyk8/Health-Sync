@@ -191,6 +191,13 @@ actor SyncEngine {
         if let deadline, now() >= deadline { throw OutOfTime() }
     }
 
+    /// Makes a running sync stop at its next time check (its account was replaced or logged out, so what it reads is
+    /// thrown away). Without this a sync that is deep in a long Health read keeps the engine busy for minutes, and the
+    /// next sync finds it busy.
+    func abortRun() {
+        if running { deadline = .distantPast }
+    }
+
     /// Full sync. `deadline` bounds background runs; everything is resumable.
     @discardableResult
     func run(deadline: Date? = nil) async throws -> Outcome {
