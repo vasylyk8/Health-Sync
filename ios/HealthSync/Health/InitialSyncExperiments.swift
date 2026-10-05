@@ -28,6 +28,12 @@ enum InitialSyncExperiments {
         return (from, to)
     }
 
+    static func canSelectivelyRead(style: SampleAggregator.Style, hourlyConsumer: Bool, calibrating: Bool) -> Bool {
+        // Cumulative suppression needs Watch neighbors across the whole span of any overlapping phone sample,
+        // potentially well outside the gap. Keep the established full fallback rather than changing that rule.
+        strategy?.selective == true && style != .cumulative && !hourlyConsumer && !calibrating
+    }
+
     /// Only use selective reads for a small gap in otherwise dense statistics.
     /// Sparse types and broad failures keep the full existing raw recovery path.
     static func missingWindows(present: Set<String>, from: Date, to: Date, calendar: Calendar) -> [DateInterval]? {

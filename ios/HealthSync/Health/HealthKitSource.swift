@@ -728,7 +728,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let raw: [(String, Double)]
         // Sharing a full raw scan with an hourly consumer is cheaper than starting an extra selective scan.
         let hourlyConsumer = scope.hourly.contains { $0.type.identifier == type.identifier && $0.unit.unitString == unit.unitString }
-        if InitialSyncExperiments.strategy?.selective == true, !calibrate, !hourlyConsumer,
+        if InitialSyncExperiments.canSelectivelyRead(style: Self.aggregationStyle(type), hourlyConsumer: hourlyConsumer, calibrating: calibrate),
            let windows = InitialSyncExperiments.missingWindows(present: Set(out.map(\.0)), from: from, to: to, calendar: calendar) {
             raw = try await selectiveRawDaily(type, unit: unit, agg: agg, scale: scale, from: from, to: to, calendar: calendar, windows: windows)
         } else {

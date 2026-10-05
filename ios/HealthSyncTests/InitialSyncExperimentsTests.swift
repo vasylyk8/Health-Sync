@@ -75,6 +75,25 @@ final class InitialSyncExperimentsTests: XCTestCase {
         for (a, b) in zip(unified.hourly, hourly) { XCTAssertEqual(a.v!, b.v!, accuracy: 1e-9) }
         XCTAssertTrue(day.cumulativeDailyHourly(includeHourly: false).hourly.isEmpty)
     }
+    func testSelectiveFallbackKeepsCumulativeWatchNeighborsOutsideTheGap() async {
+        let from = date("2026-03-01"), to = date("2026-04-01"), gap = date("2026-03-08")
+        let phone = RawReading(start: date("2026-03-07"), end: date("2026-03-09"), value: 1000, source: "com.apple.health.phone")
+        let watch = RawReading(start: date("2026-03-07").addingTimeInterval(12 * 3600), end: date("2026-03-07").addingTimeInterval(13 * 3600), value: 500, source: "com.apple.health.watch", watch: true)
+        func amount(_ samples: [RawReading]) -> Double {
+            var a = SampleAggregator(calendar: calendar, from: from, to: to, style: .cumulative, granularity: .day)
+            samples.forEach { a.add($0) }
+            return a.daily(.sum).first { $0.0 == SleepNights.dayKey(gap, calendar: calendar) }?.1 ?? 0
+        }
+        XCTAssertEqual(amount([phone, watch]), 0)
+        XCTAssertGreaterThan(amount([phone]), 0, "A gap-only query would miss the Watch and wrongly count the phone")
+        await InitialSyncExperiments.$strategy.withValue(.selectiveFallback) {
+            XCTAssertFalse(InitialSyncExperiments.canSelectivelyRead(style: .cumulative, hourlyConsumer: false, calibrating: false))
+            XCTAssertTrue(InitialSyncExperiments.canSelectivelyRead(style: .timeWeighted, hourlyConsumer: false, calibrating: false))
+            XCTAssertFalse(InitialSyncExperiments.canSelectivelyRead(style: .arithmetic, hourlyConsumer: true, calibrating: false))
+            XCTAssertFalse(InitialSyncExperiments.canSelectivelyRead(style: .arithmetic, hourlyConsumer: false, calibrating: true))
+        }
+        XCTAssertFalse(InitialSyncExperiments.canSelectivelyRead(style: .arithmetic, hourlyConsumer: false, calibrating: false))
+    }
     func testAggregateCachePrefersSharedTypesWithinItsRowBound() async throws {
         let cache = RawHistoryCache(rowLimit: 2, entryLimit: 2)
         func key(_ name: String) -> RawHistoryKey { RawHistoryKey(type: name, unit: "count", scale: 1, from: date("2020-01-01"), to: date("2021-01-01"), calendar: "gregorian", timeZone: "UTC") }
