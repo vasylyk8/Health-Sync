@@ -648,9 +648,16 @@ final class AppModel: ObservableObject {
             Task { await refreshStatus() }
             if stopped { start() }
         } catch {
-            errorMessage = friendly(error)
+            errorMessage = friendly(error) + Self.signInDetail(error)
             if stopped, phase != .welcome { start() }
         }
+    }
+
+    /// The error code of a failed sign-in (it carries no health data), so a failure can be told apart from a screenshot.
+    private static func signInDetail(_ error: Error) -> String {
+        if error is AppleSignInError { return "" }
+        let ns = error as NSError
+        return "\n\n(sign-in: \(ns.domain) \(ns.code))"
     }
 
     /// Cancels the running sync and waits for it to stop, but never longer than `seconds`.
