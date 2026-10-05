@@ -9,6 +9,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: initial-options-accuracy-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   check:
     # Debug and the optimized Release build the phone runs: they can behave differently.

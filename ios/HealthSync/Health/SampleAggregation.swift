@@ -284,6 +284,19 @@ struct SampleAggregator {
         return s.map(\.value).reduce(0, +) / Double(s.count)
     }
 
+    /// Same cumulative merge rules, once for both consumers. No raw reads or duplicate decisions are changed.
+    func cumulativeDailyHourly(includeHourly: Bool) -> RawHistorySummary {
+        precondition(style == .cumulative)
+        var days: [String: Double] = [:], hours: [Date: Double] = [:]
+        for (slot, value) in mergedSlots() {
+            days[SleepNights.dayKey(slot, calendar: calendar), default: 0] += value
+            if includeHourly { hours[hour(slot), default: 0] += value }
+        }
+        let values = days.keys.sorted().map { ($0, days[$0]!) }
+        return RawHistorySummary(daily: Dictionary(uniqueKeysWithValues: [DailyAgg.sum, .avg, .min, .max, .last].map { ($0.rawValue, values) }),
+                                 hourly: hours.keys.sorted().map { HourBucket(t: $0.msValue, v: hours[$0]!, lo: nil, hi: nil) })
+    }
+
     /// One value per local day that has readings ("YYYY-MM-DD", value).
     func daily(_ agg: DailyAgg) -> [(String, Double)] {
         if style == .cumulative {

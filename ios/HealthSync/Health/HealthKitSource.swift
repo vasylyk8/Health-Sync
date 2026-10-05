@@ -1226,12 +1226,14 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let wantsHourly = scale == 1 && scope.hourly.contains { $0.type.identifier == type.identifier && $0.unit.unitString == unit.unitString }
         return try await cache.value(key) { [self] in
             let style = Self.aggregationStyle(type)
+            let unified = style == .cumulative && InitialSyncExperiments.strategy?.unified == true
             var day = SampleAggregator(calendar: calendar, from: from, to: to, style: style, granularity: .day)
             var hour = SampleAggregator(calendar: calendar, from: from, to: to, style: style, granularity: .hour)
             try await forEachRawReading(type, unit: unit, scale: scale, from: from, to: to) {
                 day.add($0)
-                if wantsHourly { hour.add($0) }
+                if wantsHourly && !unified { hour.add($0) }
             }
+            if unified { return day.cumulativeDailyHourly(includeHourly: wantsHourly) }
             let daily: [String: [(String, Double)]]
             if style == .cumulative {
                 let values = day.daily(.sum)

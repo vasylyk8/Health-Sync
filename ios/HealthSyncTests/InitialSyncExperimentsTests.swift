@@ -54,6 +54,27 @@ final class InitialSyncExperimentsTests: XCTestCase {
         let hits = await cache.hits
         XCTAssertEqual(hits, 1)
     }
+    func testUnifiedCumulativeKeepsWatchPriorityBoundariesAndHourlyValues() throws {
+        let from = date("2026-03-08"), to = date("2026-03-10")
+        let samples = [
+            RawReading(start: from.addingTimeInterval(-120), end: from.addingTimeInterval(1800), value: 1000, source: "com.apple.health.watch", watch: true),
+            RawReading(start: from, end: from.addingTimeInterval(1800), value: 1100, source: "com.apple.health.phone"),
+            RawReading(start: from.addingTimeInterval(7200), end: from.addingTimeInterval(8400), value: 300, source: "com.apple.health.phone"),
+            RawReading(start: from.addingTimeInterval(7200), end: from.addingTimeInterval(8400), value: 5000, source: "thirdparty"),
+            RawReading(start: to.addingTimeInterval(-1200), end: to.addingTimeInterval(1200), value: 600, source: "com.apple.health.watch", watch: true)
+        ]
+        var day = SampleAggregator(calendar: calendar, from: from, to: to, style: .cumulative, granularity: .day)
+        var hour = SampleAggregator(calendar: calendar, from: from, to: to, style: .cumulative, granularity: .hour)
+        for sample in samples { day.add(sample); hour.add(sample) }
+        let unified = day.cumulativeDailyHourly(includeHourly: true)
+        let expected = day.daily(.sum), actual = try XCTUnwrap(unified.daily[DailyAgg.sum.rawValue])
+        XCTAssertEqual(actual.map(\.0), expected.map(\.0))
+        for (a, b) in zip(actual, expected) { XCTAssertEqual(a.1, b.1, accuracy: 1e-9) }
+        let hourly = hour.hourly(avg: true, min: true, max: true)
+        XCTAssertEqual(unified.hourly.map(\.t), hourly.map(\.t))
+        for (a, b) in zip(unified.hourly, hourly) { XCTAssertEqual(a.v!, b.v!, accuracy: 1e-9) }
+        XCTAssertTrue(day.cumulativeDailyHourly(includeHourly: false).hourly.isEmpty)
+    }
     /// Investigation evidence: these existing rules are order-sensitive. Do not claim a phone root cause from this fixture.
     func testExistingWorkoutCollisionRuleDependsOnInputOrder() {
         let a = SeriesPoint(t: 1000, v: 70), b = SeriesPoint(t: 1000, v: 80)

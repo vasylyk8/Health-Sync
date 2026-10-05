@@ -6,6 +6,7 @@ enum InitialSyncExperiments {
         case baseline, selectiveFallback, sharedStatistics, widerStatistics, combined
         var selective: Bool { self == .selectiveFallback || self == .combined }
         var shared: Bool { self == .sharedStatistics || self == .widerStatistics || self == .combined }
+        var unified: Bool { self == .sharedStatistics || self == .combined }
         var wider: Bool { self == .widerStatistics || self == .combined }
     }
     @TaskLocal static var strategy: Strategy?
