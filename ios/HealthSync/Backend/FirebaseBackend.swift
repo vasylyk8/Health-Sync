@@ -103,16 +103,20 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
         do {
             _ = try await user.link(with: credential)
         } catch let error as NSError where error.domain == AuthErrorDomain && error.code == AuthErrorCode.credentialAlreadyInUse.rawValue {
-            // Restoring an existing account is allowed only before local onboarding,
-            // with an empty outbox. Never silently switch an active user's dataset.
-            guard let updated = error.userInfo[AuthErrorUserInfoUpdatedCredentialKey] as? AuthCredential else { throw AppleSignInError.accountConflict }
-            if let freshUid, user.isAnonymous, user.uid == freshUid {
-                // Onboarding on a reinstalled phone: the account this onboarding just created holds only a
-                // copy of this phone's data, which is uploaded again to the restored account. Delete it first
-                // (if that fails nothing has changed) and restore the account the Apple ID already owns.
+            // The Apple Account already owns a KROK account. Switching to it is allowed only on the account page of
+            // onboarding (`freshUid` is set), where the signed-in account is the anonymous one this onboarding just
+            // created; or before onboarding, with an empty outbox. Never silently switch an active user's dataset.
+            let updated = error.userInfo[AuthErrorUserInfoUpdatedCredentialKey] as? AuthCredential
+            if freshUid != nil, user.isAnonymous {
+                // Any anonymous account on the account page is this onboarding's: it holds only a copy of this phone's
+                // data, which is uploaded again to the restored account. It is not matched by uid, because a retry
+                // after a deletion that finished (or a sign-out that raced) signs in as a new anonymous account.
+                // Delete it first (if that fails nothing has changed) and restore the account the Apple ID owns.
                 _ = try await call("deleteAllData", [:])
-                _ = try await Auth.auth().signIn(with: updated)
+                // The credential Firebase hands back is the one that can still be used; the original may be spent.
+                _ = try await Auth.auth().signIn(with: updated ?? credential)
             } else {
+                guard let updated else { throw AppleSignInError.accountConflict }
                 let currentStatus = try await status()
                 guard allowExistingAccount, user.isAnonymous, currentStatus.typesWithData == 0 else { throw AppleSignInError.accountConflict }
                 _ = try await Auth.auth().signIn(with: updated)

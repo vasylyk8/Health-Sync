@@ -308,6 +308,19 @@ final class AppModelTests: XCTestCase {
         XCTAssertNotNil(model.errorMessage)
     }
 
+    func testSignInFailureShowsTheErrorCodeButAConflictDoesNot() async {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        await model.connectHealth()
+        backend.appleLinkError = NSError(domain: "FIRAuthErrorDomain", code: 17015)
+        await model.linkAppleAccount(AppleSignInResult(idToken: "t", nonce: "n", authorizationCode: "c"))
+        XCTAssertTrue(model.errorMessage?.contains("(sign-in: FIRAuthErrorDomain 17015)") == true)
+        model.errorMessage = nil
+        backend.appleLinkError = AppleSignInError.accountConflict
+        await model.linkAppleAccount(AppleSignInResult(idToken: "t", nonce: "n", authorizationCode: "c"))
+        XCTAssertFalse(model.errorMessage?.contains("(sign-in:") == true)
+    }
+
     func testRestoringAnExistingAccountStartsTheSyncOverAndFinishesOnboarding() async {
         let backend = StubBackend()
         backend.restoredUid = "restored-user"
