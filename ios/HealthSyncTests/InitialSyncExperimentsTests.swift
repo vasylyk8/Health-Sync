@@ -54,6 +54,21 @@ final class InitialSyncExperimentsTests: XCTestCase {
         let hits = await cache.hits
         XCTAssertEqual(hits, 1)
     }
+    /// Investigation evidence: these existing rules are order-sensitive. Do not claim a phone root cause from this fixture.
+    func testExistingWorkoutCollisionRuleDependsOnInputOrder() {
+        let a = SeriesPoint(t: 1000, v: 70), b = SeriesPoint(t: 1000, v: 80)
+        XCTAssertEqual(WorkoutRecords.dedupe([a, b]), [b])
+        XCTAssertEqual(WorkoutRecords.dedupe([b, a]), [a])
+    }
+    func testExistingWeightedFallbackCanChangeWithEqualTimeSpans() {
+        let from = date("2026-03-01"), to = date("2026-03-02")
+        func value(_ values: [Double]) -> Double? {
+            var a = SampleAggregator(calendar: calendar, from: from, to: to, style: .timeWeighted, granularity: .day)
+            for v in values { a.add(RawReading(start: from.addingTimeInterval(3600), end: from.addingTimeInterval(3660), value: v, source: "fixture")) }
+            return a.daily(.avg).first?.1
+        }
+        XCTAssertNotEqual(value([60, 80, 100]), value([60, 100, 80]))
+    }
     func testFieldDiagnosticsIdentifyMetricWithoutIgnoringValues() {
         let a: [String: Any] = ["k": "day", "day": "2020-01-01", "m": ["hrAvg": 72, "steps": 100]]
         let b: [String: Any] = ["k": "day", "day": "2020-01-01", "m": ["hrAvg": 73, "steps": 100]]
