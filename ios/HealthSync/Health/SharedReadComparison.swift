@@ -16,7 +16,7 @@ struct HistoryRecordComparison: Sendable {
     /// Field paths/counts and a bounded set of values. No account/workout/source identifiers.
     static func differingFields(_ a: Any, _ b: Any, path: String = "", tolerance: Double = 1e-9) -> [(String, Double?, Double?)] {
         if let a = a as? [String: Any], let b = b as? [String: Any] {
-            return Set(a.keys).union(b.keys).sorted().flatMap { key in
+            return Set(a.keys).union(b.keys).sorted().flatMap { key -> [(String, Double?, Double?)] in
                 let next = path.isEmpty ? key : path + "." + key
                 guard let av = a[key], let bv = b[key] else { return [(next, nil, nil)] }
                 return differingFields(av, bv, path: next, tolerance: tolerance)
