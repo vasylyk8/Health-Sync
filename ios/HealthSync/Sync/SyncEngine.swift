@@ -60,6 +60,12 @@ actor SyncEngine {
     static let detailVersion = 1
 
     struct Config: Sendable {
+#if DEBUG
+        /// Comparison knobs only: release scheduling remains unchanged.
+        var historyWorkoutReadLimit: Int? = nil
+        var historyBeforeDetails = false
+        var phaseObserver: (@Sendable (String, TimeInterval, TimeInterval) -> Void)? = nil
+#endif
         /// Workouts per anchored page. Pages are also split into ≤ 5 MB uploads.
         var workoutPageLimit = 200
         var recentDays = 30
@@ -213,6 +219,9 @@ actor SyncEngine {
 
         stepErrors = []
         uploadFailed = false
+#if DEBUG
+        let schedule = HistoryReadSchedule(normalLimit: config.detailReadConcurrency, historyLimit: config.historyWorkoutReadLimit)
+#endif
         // Steps that run alongside the workout raw data; always finished (or stopped) before the run returns,
         // so two runs never overlap.
         var background: [Task<Void, Error>] = []
@@ -231,7 +240,13 @@ actor SyncEngine {
             // Years of daily history and the summaries of every workout take a minute or more on a large
             // history and do not depend on the raw data (or on each other), so they run alongside it: the raw
             // data starts as soon as the list of workouts is known.
-            background.append(Task { try await self.step { try await SyncTiming.shared.measure("phase.daily") { try await self.dailyContext() } } })
+            let daily = Task {
+#if DEBUG
+                defer { schedule.finishedHistoryLane() }
+#endif
+                try await self.step { try await self.timedPhase("daily") { try await self.dailyContext() } }
+            }
+            background.append(daily)
             let history = Task {
                 try await self.step {
                     guard let wt = self.scope.workout else { return }
@@ -245,7 +260,13 @@ actor SyncEngine {
                 }
             }
             background.append(history)
-            background.append(Task { try await self.step { try await SyncTiming.shared.measure("phase.hourly") { try await self.hourlyHistory() } } })
+            let hourly = Task {
+#if DEBUG
+                defer { schedule.finishedHistoryLane() }
+#endif
+                try await self.step { try await self.timedPhase("hourly") { try await self.hourlyHistory() } }
+            }
+            background.append(hourly)
             background.append(Task {
                 try await self.step {
                     try await SyncTiming.shared.measure("phase.events") {
@@ -255,11 +276,21 @@ actor SyncEngine {
                 }
             })
             phase = 4
+#if DEBUG
+            if config.historyBeforeDetails {
+                try await daily.value
+                try await hourly.value
+            }
+#endif
             try await step {
                 let index = try await indexTask.value
                 try self.outbox.update { $0.workoutTotal = index.count }
                 self.report(syncing: true)
+#if DEBUG
+                try await self.timedPhase("details") { try await self.uploadDetails(index, readGate: schedule.gate) }
+#else
                 try await self.uploadDetails(index)
+#endif
             }
             phase = 3
             report(syncing: true)
@@ -294,6 +325,18 @@ actor SyncEngine {
             if uploadFailed { throw error }
             stepErrors.append(error)
             telemetry.nonFatal("sync.step", code: (error as NSError).code)
+        }
+    }
+
+    private func timedPhase(_ name: String, _ body: () async throws -> Void) async rethrows {
+#if DEBUG
+        let started = Date()
+        defer { config.phaseObserver?(name, started.timeIntervalSince1970, Date().timeIntervalSince1970) }
+#endif
+        switch name {
+        case "daily": try await SyncTiming.shared.measure("phase.daily", body)
+        case "hourly": try await SyncTiming.shared.measure("phase.hourly", body)
+        default: try await body()
         }
     }
 
@@ -613,7 +656,7 @@ actor SyncEngine {
     /// Reads and uploads the raw data of every workout that has none on the server yet, newest first.
     /// Workouts are read several at a time and sent in groups (one upload per group). While one group
     /// is being written and uploaded, the next is already being read from HealthKit.
-    private func uploadDetails(_ index: [WorkoutRef]) async throws {
+    private func uploadDetails(_ index: [WorkoutRef], readGate: ReadGate? = nil) async throws {
         if outbox.state.detailVersion < Self.detailVersion {
             try outbox.update {
                 $0.detailsDone = []
@@ -630,7 +673,7 @@ actor SyncEngine {
         let timing = SyncTiming.shared
         // Workouts in progress are bounded by a fixed gate (memory); how many HealthKit queries run at once
         // is tuned to what this iPhone answers fastest, since Apple documents no limit.
-        let gate = ReadGate(limit: config.detailReadConcurrency)
+        let gate = readGate ?? ReadGate(limit: config.detailReadConcurrency)
         let tuner = ReadTuner(
             current: { [source] in source.queryConcurrency }, apply: { [source] in source.setQueryConcurrency($0) },
             minLimit: 4, maxLimit: 96, step: 8, windowSize: 24)

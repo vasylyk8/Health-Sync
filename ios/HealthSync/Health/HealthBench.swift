@@ -78,10 +78,16 @@ enum HealthBench {
         }
         m.log("authorized")
         let shared = args.contains("-benchShared")
+        let scheduling = args.contains("-benchHistoryScheduling")
         let heavy = args.firstIndex(of: "-benchHeavy").flatMap { Int(args[$0 + 1]) } ?? 60
         let light = max(0, count - heavy)
-        await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: shared ? 9 : 1.3, heavyStride: shared ? 6 : 1, m)
+        await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: scheduling ? 16 : (shared ? 9 : 1.3), heavyStride: scheduling ? 12 : (shared ? 6 : 1), m)
         await seedBackground(store, count: 100_000, m)
+        if scheduling {
+            await HistorySchedulingBenchmark.run(scope, store: store, model: m, expected: count)
+            m.log("BENCH DONE")
+            return
+        }
         if shared {
             await SharedReadBenchmark.run(scope, store: store, model: m, expected: count)
             m.log("BENCH DONE")

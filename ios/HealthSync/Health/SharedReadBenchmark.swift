@@ -39,7 +39,7 @@ enum SharedReadBenchmark {
         m.log(passed ? "SHARED CHECK OK" : "SHARED CHECK FAILED")
     }
 
-    private static func seedHistoryDetails(_ store: HKHealthStore, _ m: BenchModel, scope: SyncScope) async {
+    static func seedHistoryDetails(_ store: HKHealthStore, _ m: BenchModel, scope: SyncScope) async {
         let workouts = (try? await HealthKitSource(scope: scope).workoutIndex()) ?? []
         guard let oldest = workouts.min(by: { $0.start < $1.start })?.start else { return }
         let cal = Calendar.current
@@ -72,7 +72,7 @@ enum SharedReadBenchmark {
 
 }
 
-private final class SharedCapture: Uploader, @unchecked Sendable {
+final class SharedCapture: Uploader, @unchecked Sendable {
     private let net = SimNet(perUploadMBs: 0.6, capMBs: 0.6)
     private let lock = NSLock()
     private var records: [String] = []
