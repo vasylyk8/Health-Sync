@@ -8,6 +8,8 @@ private final class SessionSource: HealthSource, @unchecked Sendable {
     var failAfterRead = false
     var sessions: [RawHistoryCache] = []
     var values: [Double] = []
+    var dailyEnd: Date?
+    var hourlyEnd: Date?
     func requestAuthorization(scope: SyncScope) async throws {}
     func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {}
     func workouts(from: Date, to: Date) async throws -> [Record] { [] }
@@ -18,6 +20,7 @@ private final class SessionSource: HealthSource, @unchecked Sendable {
     func workoutDetail(id: String, gen: Int64) async throws -> [Record]? { nil }
     func earliestDailyDate() async throws -> Date? { Date(timeIntervalSince1970: 1_759_536_000) }
     func dailyContext(from: Date, to: Date) async throws -> [Record] {
+        dailyEnd = to
         let cache = try XCTUnwrap(SharedRawHistory.cache, "both engine entry points must establish a read session")
         let key = RawHistoryKey(type: "steps", unit: "count", scale: 1, from: .distantPast, to: .distantFuture, calendar: "gregorian", timeZone: "UTC")
         let latest = latest
@@ -28,9 +31,29 @@ private final class SessionSource: HealthSource, @unchecked Sendable {
         if failAfterRead { throw ScriptedSource.HealthKitFailure() }
         return [["k": "day", "day": .string(SleepNights.dayKey(from, calendar: Calendar.current)), "m": .object(["steps": .double(value)])]]
     }
+    func hourlySeries(from: Date, to: Date) async throws -> [Record] { hourlyEnd = to; return [] }
+}
+
+private final class MovingClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var instant = Date(timeIntervalSince1970: 1_759_708_800)
+    func now() -> Date { lock.lock(); defer { lock.unlock() }; instant.addTimeInterval(1); return instant }
 }
 
 final class SharedReadSessionTests: XCTestCase {
+    func testDailyAndHourlyShareExactCutoffWithMovingClock() async throws {
+        let source = SessionSource(), clock = MovingClock()
+        let box = Outbox(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let scope = SyncScope(types: [], workoutQuantities: [], dailyMetrics: [DailyMetric(key: "rings", kind: .rings)],
+                              hourly: [HourlyMetric(name: "StepCount", type: HKQuantityType(.stepCount), unit: .count(), unitLabel: "count", cumulative: true, cols: ["sum"])])
+        let engine = SyncEngine(source: source, uploader: RecordingUploader(), outbox: box, scope: scope, now: { clock.now() })
+        let outcome = try await engine.run()
+        XCTAssertEqual(outcome, .finished)
+        XCTAssertNotNil(source.dailyEnd)
+        XCTAssertEqual(source.dailyEnd, source.hourlyEnd)
+        XCTAssertNil(SharedRawHistory.endingAt)
+    }
+
     func testSameEngineFullThenIncrementalReadsNewValues() async throws {
         let source = SessionSource(), box = Outbox(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         let scope = SyncScope(types: [SyncType(id: HealthTypes.workoutId, kind: .workout, sampleType: nil)], workoutQuantities: [], dailyMetrics: [DailyMetric(key: "rings", kind: .rings)])
