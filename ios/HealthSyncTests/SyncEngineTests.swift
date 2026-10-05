@@ -658,11 +658,6 @@ final class SyncEngineTests: XCTestCase {
 
     // MARK: Lines on Home
 
-    private var hourlyScope: SyncScope {
-        SyncScope(types: [workoutType], workoutQuantities: [], dailyMetrics: [DailyMetric(key: "rings", kind: .rings)],
-                  hourly: [HourlyMetric(name: "StepCount", type: HKQuantityType(.stepCount), unit: .count(), unitLabel: "count", cumulative: true, cols: ["sum"])])
-    }
-
     func testProgressReachesTheEndWithDaysHoursAndWorkouts() async throws {
         let source = ScriptedSource()
         let from = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: -30, to: Date()))
