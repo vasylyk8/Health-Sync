@@ -1,5 +1,23 @@
 import Foundation
 
+#if DEBUG
+/// Experiment-only coordination. The limit increases only after both history lanes return.
+final class HistoryReadSchedule: @unchecked Sendable {
+    let gate: ReadGate
+    private let lock = NSLock()
+    private var remaining = 2
+    private let normalLimit: Int
+    init(normalLimit: Int, historyLimit: Int?) {
+        self.normalLimit = normalLimit
+        gate = ReadGate(limit: historyLimit ?? normalLimit)
+    }
+    func finishedHistoryLane() {
+        let done = lock.withLock { remaining -= 1; return remaining == 0 }
+        if done { gate.setLimit(normalLimit) }
+    }
+}
+#endif
+
 /// Limits how many workouts are read from HealthKit at the same time, across all groups, and lets the
 /// limit change while reading (see `ReadTuner`).
 final class ReadGate: @unchecked Sendable {
