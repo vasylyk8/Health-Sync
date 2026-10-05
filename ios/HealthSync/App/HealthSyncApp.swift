@@ -26,7 +26,12 @@ struct HealthSyncApp: App {
         let backend: Backend
         let source: HealthSource
         let telemetry: Telemetry
-        if uiTesting || args.contains("-healthBench") {
+        var synthetic = uiTesting || args.contains("-healthBench")
+        #if DEBUG
+        // Test hosts and simulators have no GoogleService-Info.plist; Release never falls back to fakes.
+        if !synthetic, !FirebaseBackend.configure() { synthetic = true }
+        #endif
+        if synthetic {
             backend = FakeBackend(appleLinked: uiTesting && args.contains("-appleLinked"))
             source = FakeHealthSource()
             telemetry = NoTelemetry()
