@@ -553,22 +553,23 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             dailyCalibration = [:]
             dailyStatisticsErrors = [:]
         }
-        // Real-device build 52 reported 65 completions but 64 missing result slots. The first slot (restingHr)
-        // was never retried, leaving that metric missing even when a subsequent probe could read it.
-        // Keep each read and its destination together, without the task-group scheduling closure. Daily queries
-        // are small; correctness is more important than parallelizing this part of the historical sync.
+        // Build 52 lost task-group result slots. Each child now captures its own immutable
+        // input/index; one parent validates every destination before merging in metric order.
+        // Limit the phone to two reads. Existing raw recovery and sequential retries stay below.
         var perMetric = [[DailyCell]?](repeating: nil, count: metrics.count)
         var errors: [Int: Error] = [:]
-        for (i, metric) in metrics.enumerated() {
-            do {
-                perMetric[i] = try await SyncTiming.shared.measure("hk.daily") {
-                    try await self.dailyCells(metric, start: start, to: to, calendar: cal)
-                }
-            } catch {
-                errors[i] = error
+        let outcomes = try await DailyMetricReads.collect(metrics, width: DailyMetricConcurrency.width) { [self] metric in
+            try await SyncTiming.shared.measure("hk.daily") {
+                try await self.dailyCells(metric, start: start, to: to, calendar: cal)
             }
         }
-        let received = metrics.count
+        for (index, outcome) in outcomes.enumerated() {
+            switch outcome {
+            case .success(let cells): perMetric[index] = cells
+            case .failure(let error): errors[index] = error
+            }
+        }
+        let received = perMetric.filter { $0 != nil }.count + errors.count
         let lost = metrics.indices.filter { perMetric[$0] == nil && errors[$0] == nil }
         // A query that failed for a passing reason (Apple Health busy or briefly locked) works a moment later: try those
         // again one at a time. If one still fails, the whole chunk fails, so it is retried on the next run instead of

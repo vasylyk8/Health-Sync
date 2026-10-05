@@ -58,7 +58,8 @@ enum HealthBench {
         startMainThreadWatchdog()
         let args = ProcessInfo.processInfo.arguments
         if args.contains("-dailyCheck") {
-            await DailyCheck.run(m)
+            let width = args.firstIndex(of: "-dailyConcurrency").flatMap { Int(args[$0 + 1]) } ?? DailyMetricConcurrency.productionWidth
+            await DailyMetricExperiment.$width.withValue(width) { await DailyCheck.run(m) }
             return
         }
         let count = args.firstIndex(of: "-benchCount").flatMap { Int(args[$0 + 1]) } ?? 300
@@ -78,10 +79,16 @@ enum HealthBench {
         }
         m.log("authorized")
         let shared = args.contains("-benchShared")
+        let daily = args.contains("-benchDailyConcurrency")
         let heavy = args.firstIndex(of: "-benchHeavy").flatMap { Int(args[$0 + 1]) } ?? 60
         let light = max(0, count - heavy)
-        await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: shared ? 9 : 1.3, heavyStride: shared ? 6 : 1, m)
+        await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: daily ? 16 : (shared ? 9 : 1.3), heavyStride: daily ? 12 : (shared ? 6 : 1), m)
         await seedBackground(store, count: 100_000, m)
+        if daily {
+            await DailyConcurrencyBenchmark.run(scope, store: store, model: m, expected: count)
+            m.log("BENCH DONE")
+            return
+        }
         if shared {
             await SharedReadBenchmark.run(scope, store: store, model: m, expected: count)
             m.log("BENCH DONE")
