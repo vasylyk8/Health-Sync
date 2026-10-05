@@ -53,54 +53,74 @@ struct Wordmark: View {
     }
 }
 
-/// Four segments, each a quarter of the upload. Segments below the current share are solid; the one the
-/// upload is in shimmers (the first one before anything is uploaded).
+/// Four lines, one for each kind of data being read from Apple Health, with what has been read under each. A finished line
+/// is solid; a running line has a short bar that moves back and forth (it says "working", not "this much is done"); a line
+/// that has not started is empty.
 struct StepBar: View {
-    /// How much of the upload is done, 0...1.
-    let fraction: Double
-    static let segments = 4
-
-    /// Segment `index` is full once the upload has reached its end (25%, 50%, 75%, 100%).
-    static func isFilled(_ index: Int, fraction: Double) -> Bool {
-        fraction >= Double(index + 1) / Double(segments) - 1e-9
-    }
-
-    private var done: [Bool] { (0..<Self.segments).map { Self.isFilled($0, fraction: fraction) } }
-    private var currentIndex: Int? { done.firstIndex(of: false) }
+    let lines: [SyncLine]
 
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(Array(done.enumerated()), id: \.offset) { index, isDone in
-                Capsule()
-                    .fill(isDone ? Theme.ink : Theme.track)
-                    .frame(height: 4)
-                    .overlay(alignment: .leading) {
-                        if index == currentIndex { StepShimmer() }
-                    }
-                    .clipShape(Capsule())
+        HStack(alignment: .top, spacing: 4) {
+            ForEach(lines) { line in
+                VStack(alignment: .leading, spacing: 6) {
+                    LoadingLine(state: line.state)
+                    Text(line.name)
+                        .font(.caption2.weight(line.state == .waiting ? .regular : .semibold))
+                        .foregroundStyle(line.state == .waiting ? Theme.muted : Theme.ink)
+                    Text(line.detail)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.muted)
+                        .monospacedDigit()
+                }
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(line.name)
+                .accessibilityValue("\(line.detail), \(Self.word(line.state))")
             }
         }
-        .animation(.easeInOut(duration: 0.4), value: done)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Upload progress")
-        .accessibilityValue("\(Int((min(max(fraction, 0), 1) * 100).rounded())) percent uploaded")
+        .animation(.easeInOut(duration: 0.4), value: lines.map(\.state))
+    }
+
+    private static func word(_ state: SyncLine.State) -> String {
+        switch state {
+        case .waiting: return Copy.Home.Line.waitingAccessibility
+        case .running: return Copy.Home.Line.runningAccessibility
+        case .done: return Copy.Home.Line.doneAccessibility
+        }
     }
 }
 
-private struct StepShimmer: View {
-    @State private var phase: CGFloat = 0
+private struct LoadingLine: View {
+    let state: SyncLine.State
+
+    var body: some View {
+        Capsule()
+            .fill(state == .done ? Theme.ink : Theme.track)
+            .frame(height: 4)
+            .overlay(alignment: .leading) {
+                if state == .running { BouncingBand() }
+            }
+            .clipShape(Capsule())
+    }
+}
+
+/// A band that goes back and forth over its line. It stays in place for people who turned off motion.
+private struct BouncingBand: View {
+    @State private var atEnd = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geo in
             Capsule()
                 .fill(Theme.ink)
-                .frame(width: geo.size.width * 0.4)
-                .offset(x: reduceMotion ? 0 : (phase * 1.4 - 0.4) * geo.size.width)
+                .frame(width: geo.size.width * 0.38)
+                .offset(x: reduceMotion ? geo.size.width * 0.31 : (atEnd ? geo.size.width * 0.62 : 0))
         }
         .onAppear {
             guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: false)) { phase = 1 }
+            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { atEnd = true }
         }
     }
 }

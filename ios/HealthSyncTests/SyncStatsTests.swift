@@ -325,89 +325,150 @@ final class HeroMetricsTests: XCTestCase {
 }
 
 final class SyncEstimatorTests: XCTestCase {
-    private func feed(_ e: inout SyncEstimator, seconds: [Double], rate: Double, from startDone: Int = 0, total: Int = 1000, startAt: Double = 0) {
-        for t in seconds {
-            e.record(detailsDone: startDone + Int(rate * (t - seconds[0])), detailsTotal: total, historyComplete: false, now: startAt + t)
+    /// Progress of a first sync. By default the daily and hourly history are finished, so only the workouts count.
+    private func firstSync(done: Int = 0, total: Int = 1000, daily: Double = 1, hourly: Double = 1,
+                          dailyDone: Bool = true, hourlyDone: Bool = true, syncing: Bool = true) -> SyncProgress {
+        var p = SyncProgress(detailsDone: done, detailsTotal: total, isSyncing: syncing)
+        p.indexingDone = true
+        p.dailyDone = dailyDone
+        p.hourlyDone = hourlyDone
+        p.dailyFraction = daily
+        p.hourlyFraction = hourly
+        return p
+    }
+
+    /// Seconds shown, with "almost done" as 0 and "over an hour" as 100000.
+    private func seconds(_ e: SyncEstimator) -> Int {
+        switch e.estimate.kind {
+        case .left(let s): return s
+        case .almostDone: return 0
+        case .overAnHour: return 100_000
+        default: return -1
         }
     }
 
     func testStaysEstimatingUntilThereIsEnoughToMeasure() {
         var e = SyncEstimator()
-        e.record(detailsDone: 0, detailsTotal: 1000, historyComplete: false, now: 0)
+        e.record(firstSync(done: 0), now: 0)
         XCTAssertEqual(e.estimate.kind, .estimating)
-        e.record(detailsDone: 3, detailsTotal: 1000, historyComplete: false, now: 4)
-        XCTAssertEqual(e.estimate.kind, .estimating, "less than ten seconds of measurements")
+        e.record(firstSync(done: 3), now: 4)
+        XCTAssertEqual(e.estimate.kind, .estimating, "less than eight seconds of measurements")
     }
 
-    func testEstimateIsRoundedUpToABucket() {
+    func testNothingChangesWhileTheSyncIsNotRunning() {
         var e = SyncEstimator()
-        // 1 workout per second, 990 left after ten seconds: 16.5 minutes, shown as 20.
-        feed(&e, seconds: [0, 5, 10], rate: 1)
-        XCTAssertEqual(e.estimate.kind, .minutes(20))
-        XCTAssertEqual(e.estimate.text, "About 20 min left")
+        for t in [0.0, 5, 10] { e.record(firstSync(done: Int(t), syncing: false), now: t) }
+        XCTAssertEqual(e.estimate.kind, .estimating)
+    }
+
+    func testEstimateIsRoundedUpToAStep() {
+        var e = SyncEstimator()
+        // 1 workout per second, 990 left after ten seconds: 16.5 minutes, shown as the 15 to 20 step.
+        for t in [0.0, 5, 10] { e.record(firstSync(done: Int(t)), now: t) }
+        XCTAssertEqual(e.estimate.kind, .left(1_200))
+        XCTAssertEqual(e.estimate.text, "About 15–20 min left")
+    }
+
+    func testShortSyncsCountInHalfMinutes() {
+        var e = SyncEstimator()
+        // 10 workouts per second, 900 left after ten seconds: 90 seconds, plus the closing batch.
+        for t in [0.0, 5, 10] { e.record(firstSync(done: Int(10 * t)), now: t) }
+        XCTAssertEqual(e.estimate.kind, .left(120))
+        XCTAssertEqual(e.estimate.text, "About 2 min left")
+    }
+
+    func testTheSlowestJobSetsTheTime() {
+        var e = SyncEstimator()
+        // Workouts would be done in 90 seconds, but the hourly history has read 5% in ten seconds: 190 seconds left.
+        e.record(firstSync(done: 0, hourly: 0, hourlyDone: false), now: 0)
+        e.record(firstSync(done: 50, hourly: 0.025, hourlyDone: false), now: 5)
+        e.record(firstSync(done: 100, hourly: 0.05, hourlyDone: false), now: 10)
+        XCTAssertEqual(e.estimate.kind, .left(240))
+        XCTAssertEqual(e.estimate.text, "About 4 min left")
+    }
+
+    func testStaysEstimatingWhileAJobHasNotMovedYet() {
+        var e = SyncEstimator()
+        for t in [0.0, 5, 10] { e.record(firstSync(done: Int(10 * t), daily: 0, dailyDone: false), now: t) }
+        XCTAssertEqual(e.estimate.kind, .estimating, "the daily history has not finished a year yet, so nothing is known about it")
+    }
+
+    func testAJobThatIsOverdueIsNeverAlmostDone() {
+        var e = SyncEstimator()
+        e.record(firstSync(done: 0, hourly: 0, hourlyDone: false), now: 0)
+        e.record(firstSync(done: 50, hourly: 0.5, hourlyDone: false), now: 5)
+        // The hourly history predicted itself done at 10 s and still is not; the workouts finished long ago.
+        e.record(firstSync(done: 1000, hourly: 0.5, hourlyDone: false), now: 60)
+        XCTAssertEqual(e.estimate.kind, .left(60))
+        XCTAssertEqual(e.estimate.text, "Less than a minute left")
     }
 
     func testEstimateNeverRisesForShortSlowdowns() {
         var e = SyncEstimator()
-        feed(&e, seconds: [0, 5, 10], rate: 1)
-        XCTAssertEqual(e.estimate.kind, .minutes(20))
-        // Speed drops to a tenth for a minute: the raw estimate would be over an hour, the display holds.
+        for t in [0.0, 5, 10] { e.record(firstSync(done: Int(t)), now: t) }
+        XCTAssertEqual(e.estimate.kind, .left(1_200))
+        // Speed drops to a fifth: the raw estimate rises, the display holds for half a minute.
         var done = 10
-        for t in stride(from: 15.0, through: 70.0, by: 5.0) {
+        for t in stride(from: 15.0, through: 40.0, by: 5.0) {
             done += 1
-            e.record(detailsDone: done, detailsTotal: 1000, historyComplete: false, now: t)
-            XCTAssertLessThanOrEqual(minutes(e), 20, "at \(t)s")
+            e.record(firstSync(done: done), now: t)
+            XCTAssertLessThanOrEqual(seconds(e), 1_200, "at \(t)s")
         }
     }
 
     func testALastingSlowdownIsEventuallyShown() {
         var e = SyncEstimator()
-        feed(&e, seconds: [0, 5, 10], rate: 1)
+        for t in [0.0, 5, 10] { e.record(firstSync(done: Int(t)), now: t) }
         var done = 10
         for t in stride(from: 15.0, through: 400.0, by: 5.0) {
             done += 1
-            e.record(detailsDone: done, detailsTotal: 1000, historyComplete: false, now: t)
+            e.record(firstSync(done: done), now: t)
         }
-        XCTAssertGreaterThan(minutes(e), 20)
+        XCTAssertGreaterThan(seconds(e), 1_200)
     }
 
     func testEstimateFallsAsWorkIsDone() {
         var e = SyncEstimator()
-        feed(&e, seconds: [0, 5, 10], rate: 10, total: 1000)
-        let first = minutes(e)
-        feed(&e, seconds: [15, 20, 60], rate: 10, from: 100, total: 1000, startAt: 0)
-        XCTAssertLessThan(minutes(e), first)
+        for t in [0.0, 5, 10] { e.record(firstSync(done: Int(10 * t)), now: t) }
+        let first = seconds(e)
+        for t in [15.0, 20, 60] { e.record(firstSync(done: Int(10 * t)), now: t) }
+        XCTAssertLessThan(seconds(e), first)
     }
 
-    func testAlmostDoneWhenEverythingIsUploaded() {
+    func testAlmostDoneWhenEveryJobIsFinished() {
         var e = SyncEstimator()
-        e.record(detailsDone: 0, detailsTotal: 10, historyComplete: false, now: 0)
-        e.record(detailsDone: 10, detailsTotal: 10, historyComplete: false, now: 20)
+        e.record(firstSync(done: 0), now: 0)
+        e.record(firstSync(done: 1000), now: 20)
         XCTAssertEqual(e.estimate.kind, .almostDone)
     }
 
     func testFinishedWhenTheHistoryIsComplete() {
         var e = SyncEstimator()
-        e.record(detailsDone: 10, detailsTotal: 10, historyComplete: true, now: 20)
+        var p = firstSync(done: 10, total: 10)
+        p.stepsTotal = 14
+        p.stepsDone = 14
+        e.record(p, now: 20)
         XCTAssertEqual(e.estimate.kind, .finished)
     }
 
-    func testBucketsAreOrderedAndCoverTheRange() {
-        XCTAssertEqual(SyncEstimator.index(forMinutes: 0.2), -1)
-        XCTAssertEqual(SyncEstimator.estimate(forIndex: SyncEstimator.index(forMinutes: 0.9)).kind, .minutes(1))
-        XCTAssertEqual(SyncEstimator.estimate(forIndex: SyncEstimator.index(forMinutes: 4)).kind, .minutes(5))
-        XCTAssertEqual(SyncEstimator.estimate(forIndex: SyncEstimator.index(forMinutes: 60)).kind, .minutes(60))
-        XCTAssertEqual(SyncEstimator.estimate(forIndex: SyncEstimator.index(forMinutes: 61)).kind, .overAnHour)
-        XCTAssertEqual(SyncEstimator.buckets, SyncEstimator.buckets.sorted())
+    func testStepsAreOrderedAndCoverTheRange() {
+        XCTAssertEqual(SyncEstimator.steps, SyncEstimator.steps.sorted())
+        XCTAssertEqual(SyncEstimator.index(forSeconds: 20), -1)
+        XCTAssertEqual(SyncEstimator.estimate(forIndex: SyncEstimator.index(forSeconds: 20)).kind, .almostDone)
+        XCTAssertEqual(SyncEstimator.estimate(forIndex: SyncEstimator.index(forSeconds: 31)).kind, .left(60))
+        XCTAssertEqual(SyncEstimator.estimate(forIndex: SyncEstimator.index(forSeconds: 100)).kind, .left(120))
+        XCTAssertEqual(SyncEstimator.estimate(forIndex: SyncEstimator.index(forSeconds: 1_900)).kind, .left(2_400))
+        XCTAssertEqual(SyncEstimator.estimate(forIndex: SyncEstimator.index(forSeconds: 3_600)).kind, .left(3_600))
+        XCTAssertEqual(SyncEstimator.estimate(forIndex: SyncEstimator.index(forSeconds: 3_601)).kind, .overAnHour)
     }
 
-    /// Minutes shown, with "almost done" as 0 and "over an hour" as 1000.
-    private func minutes(_ e: SyncEstimator) -> Int {
-        switch e.estimate.kind {
-        case .minutes(let m): return m
-        case .almostDone: return 0
-        case .overAnHour: return 1000
-        default: return -1
-        }
+    func testTimeLeftText() {
+        let expected: [Int: String] = [
+            60: "Less than a minute left", 90: "About 1½ min left", 120: "About 2 min left", 150: "About 2½ min left",
+            180: "About 3 min left", 240: "About 4 min left", 600: "About 10 min left", 900: "About 10–15 min left",
+            1_800: "About 25–30 min left", 2_400: "About 30–40 min left", 3_600: "About 50–60 min left",
+        ]
+        for (seconds, text) in expected { XCTAssertEqual(Copy.Home.timeLeft(seconds: seconds), text, "\(seconds) s") }
+        for step in SyncEstimator.steps { XCTAssertTrue(Copy.Home.timeLeft(seconds: step).hasSuffix(" left"), "\(step) s") }
     }
 }

@@ -11,7 +11,7 @@ struct SyncProgress: Equatable, Sendable {
     var detailsDone: Int
     var detailsTotal: Int
     var isSyncing: Bool
-    /// Work units across all phases, so the bar moves from the start.
+    /// Work units across all phases (recent workouts, workout list, daily history, hourly history, one per workout).
     var stepsDone = 0
     var stepsTotal = 0
     /// 1 = recent workouts, 2 = daily context, 3 = workout history, 4 = workout details (0 = not syncing).
@@ -24,6 +24,19 @@ struct SyncProgress: Equatable, Sendable {
     var historyDone = false
     /// Running totals for the big numbers on Home.
     var stats = SyncStatsSnapshot()
+    /// The recent workouts, the workout list and the index of every workout are read (the first of the four lines on Home).
+    var indexingDone = false
+    /// The hourly history is on the server.
+    var hourlyDone = false
+    /// Days and hours of history read so far, and how many days the history spans (0 until its start is known).
+    var daysRead = 0
+    var hoursRead = 0
+    var daysTotal = 0
+    /// How far the daily and hourly passes are, 0...1 (for the time left).
+    var dailyFraction = 0.0
+    var hourlyFraction = 0.0
+    /// The year the history starts in (nil until known).
+    var historySinceYear: Int?
     /// Finished flags for [recent workouts, daily context, workout history, workout details].
     var stepFlags: [Bool] { [recentDone, dailyDone, historyDone, historyComplete] }
     var stepTitle: String {
@@ -47,9 +60,6 @@ struct SyncProgress: Equatable, Sendable {
     }
     var fraction: Double { stepsTotal > 0 ? min(1, Double(stepsDone) / Double(stepsTotal)) : 0 }
     var historyComplete: Bool { stepsTotal > 0 && stepsDone >= stepsTotal }
-    /// What the progress bar shows. The number of workouts is only known once the workout list is read, so until
-    /// then the share is not real yet: it stays in the first quarter instead of jumping ahead.
-    var uploadFraction: Double { historyDone || historyComplete ? fraction : min(fraction, 0.24) }
 }
 
 /// Orchestrates reading Apple Health and uploading batches. Order is chosen so the AI becomes
@@ -119,6 +129,10 @@ actor SyncEngine {
     private var progressHandler: (@Sendable (SyncProgress) -> Void)?
     private var phase = 0
     private var lastReported: [Int]?
+    /// The daily pass has read the history up to here (this run only; the pass starts again from the beginning).
+    private var dailyThrough: Date?
+    /// The list of every workout was read in this run.
+    private var indexRead = false
     private var deadline: Date?
     /// Set when the workout type was checked with nothing new; reported in one status batch.
     private var statusPending: [String: Date] = [:]
@@ -172,23 +186,66 @@ actor SyncEngine {
     var progress: SyncProgress {
         let s = outbox.state
         let detailTotal = max(s.workoutTotal, s.detailsDone.count)
-        let done = (s.recentDone.contains(workoutId) ? 1 : 0) + (s.dailyFullAt != nil ? 1 : 0) + (s.caughtUp.contains(workoutId) ? 1 : 0) + s.detailsDone.count
+        let hourlyDone = scope.hourly.isEmpty || s.hourlyAt != nil
+        let recent = s.recentDone.contains(workoutId) ? 1 : 0
+        let daily = s.dailyFullAt != nil ? 1 : 0
+        let list = s.caughtUp.contains(workoutId) ? 1 : 0
+        let hourly = hourlyDone ? 1 : 0
+        let done = recent + daily + list + hourly + s.detailsDone.count
         var p = SyncProgress(detailsDone: s.detailsDone.count, detailsTotal: detailTotal, isSyncing: running,
-                             stepsDone: done, stepsTotal: 3 + detailTotal, phase: running ? phase : 0,
+                             stepsDone: done, stepsTotal: 4 + detailTotal, phase: running ? phase : 0,
                              recentReady: s.recentDone.contains(workoutId) && s.dailyFullAt != nil)
         p.recentDone = s.recentDone.contains(workoutId)
         p.dailyDone = s.dailyFullAt != nil
         p.historyDone = s.caughtUp.contains(workoutId)
+        p.hourlyDone = hourlyDone
+        p.indexingDone = p.recentDone && p.historyDone && (indexRead || s.workoutTotal > 0)
         p.stats = stats.snapshot()
+        addHistoryCounters(to: &p, state: s)
         return p
+    }
+
+    private static func days(from start: Date, to end: Date) -> Int {
+        max(0, Calendar.current.dateComponents([.day], from: start, to: end).day ?? 0)
+    }
+
+    /// Days and hours of history read, for the second and third line on Home. The hourly pass is resumable, so its position
+    /// comes from the saved state; the daily pass starts again from the beginning on every run, so its position is kept in memory.
+    private func addHistoryCounters(to p: inout SyncProgress, state s: Outbox.State) {
+        guard let from = s.historyFrom else { return }
+        let total = max(1, Self.days(from: from, to: now()))
+        let daily = p.dailyDone ? total : min(total, Self.days(from: from, to: dailyThrough ?? from))
+        let hourly = p.hourlyDone ? total : min(total, Self.days(from: from, to: s.hourlyThrough ?? from))
+        p.daysTotal = total
+        p.daysRead = daily
+        p.hoursRead = hourly * 24
+        p.dailyFraction = Double(daily) / Double(total)
+        p.hourlyFraction = Double(hourly) / Double(total)
+        p.historySinceYear = Calendar.current.component(.year, from: from)
+    }
+
+    /// Remembers where the history starts (the earliest date the daily and hourly passes found).
+    private func noteHistoryStart(_ start: Date) throws {
+        try outbox.update { s in
+            if let current = s.historyFrom, current <= start { return }
+            s.historyFrom = start
+        }
+        report(syncing: running)
+    }
+
+    /// A year of daily history was read.
+    private func dailyChunkRead(through end: Date) {
+        dailyThrough = end
+        report(syncing: running)
     }
 
     /// Notifies the UI only when something visible changes (whole percent, step, flags).
     private func report(syncing: Bool) {
         var p = progress
         p.isSyncing = syncing
-        let key = [Int(p.fraction * 100), p.phase, p.isSyncing ? 1 : 0, p.recentReady ? 1 : 0, p.historyComplete ? 1 : 0, p.detailsDone,
-                   p.recentDone ? 1 : 0, p.dailyDone ? 1 : 0, p.historyDone ? 1 : 0, p.stats.version]
+        let key: [Int] = [Int(p.fraction * 100), p.phase, p.isSyncing ? 1 : 0, p.recentReady ? 1 : 0, p.historyComplete ? 1 : 0, p.detailsDone,
+                   p.recentDone ? 1 : 0, p.dailyDone ? 1 : 0, p.historyDone ? 1 : 0, p.stats.version,
+                   p.indexingDone ? 1 : 0, p.hourlyDone ? 1 : 0, p.daysRead, p.hoursRead]
         guard key != lastReported else { return }
         lastReported = key
         progressHandler?(p)
@@ -209,6 +266,7 @@ actor SyncEngine {
         guard !running, !diagnosticPaused else { return .alreadyRunning }
         running = true
         self.deadline = deadline
+        dailyThrough = nil
         report(syncing: true)
         defer {
             running = false
@@ -270,6 +328,7 @@ actor SyncEngine {
             try await step {
                 let index = try await indexTask.value
                 try self.outbox.update { $0.workoutTotal = index.count }
+                self.indexRead = true
                 self.report(syncing: true)
                 try await self.timedPhase("details") { try await self.uploadDetails(index) }
             }
@@ -355,6 +414,7 @@ actor SyncEngine {
     private func refreshWorkoutIndex() async throws -> [WorkoutRef] {
         let index = try await source.workoutIndex()
         try outbox.update { $0.workoutTotal = index.count }
+        indexRead = true
         report(syncing: true)
         return index
     }
@@ -428,6 +488,7 @@ actor SyncEngine {
         }
         let cal = Calendar.current
         start = cal.startOfDay(for: start)
+        if full { try noteHistoryStart(start) }
         let categories = enabledCategories
         // One year per batch set keeps memory and batch sizes bounded.
         var chunkStart = start
@@ -451,6 +512,7 @@ actor SyncEngine {
                 firstReadFailure = firstReadFailure ?? error
                 pendingNotes.append("FAILED " + (source.dailyDiagnosticNote() ?? "daily read failed") + " err=\((error as NSError).domain)/\((error as NSError).code)")
                 chunkStart = chunkEnd
+                dailyChunkRead(through: chunkEnd)
                 continue
             }
             let readMs = Self.ms(since: started)
@@ -477,6 +539,7 @@ actor SyncEngine {
                 try await sendLines(batch.typeId, header: header, lines: lines, anchor: nil, completes: .dailyHash(key: key, hash: hash), readMs: readMs)
             }
             chunkStart = chunkEnd
+            dailyChunkRead(through: chunkEnd)
         }
         if let firstReadFailure { throw firstReadFailure }
         if full {
@@ -525,6 +588,7 @@ actor SyncEngine {
         }
         let cal = Calendar.current
         start = cal.startOfDay(for: start)
+        if outbox.state.hourlyThrough == nil { try noteHistoryStart(start) }
         var chunkStart = start
         while chunkStart < end {
             try checkTime()
@@ -545,6 +609,7 @@ actor SyncEngine {
                 try await send(id, header: header, records: records, anchor: nil, completes: .hourly(through: chunkEnd, at: last ? end : nil), readMs: readMs)
             }
             chunkStart = chunkEnd
+            report(syncing: running)
         }
     }
 

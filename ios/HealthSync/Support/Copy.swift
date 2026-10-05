@@ -31,7 +31,18 @@ enum Copy {
     enum Home {
         static let moreLabel = "More"
         static let estimating = "Estimating time left…"
-        static func minutesLeft(_ minutes: Int) -> String { "About \(minutes) min left" }
+        /// The time left as the top of a step (see `SyncEstimator.steps`): 30-second steps up to 3 minutes, then minutes, then ranges.
+        static func timeLeft(seconds: Int) -> String {
+            if seconds <= 60 { return "Less than a minute left" }
+            if seconds <= 180 {
+                let halves = (seconds + 29) / 30
+                return halves % 2 == 0 ? "About \(halves / 2) min left" : "About \(halves / 2)½ min left"
+            }
+            let minutes = seconds / 60
+            if seconds <= 600 { return "About \(minutes) min left" }
+            let width = seconds <= 1_800 ? 5 : 10
+            return "About \(minutes - width)–\(minutes) min left"
+        }
         static let almostDone = "Almost done"
         static let overAnHour = "More than an hour left"
         static let keepOpen = "Keep the app open."
@@ -44,6 +55,28 @@ enum Copy {
         static let noDataDetail = "Check Settings › Health › Data Access & Devices › KROK and turn on Workouts, Workout Routes and the other categories you want to share."
         static func connect(_ name: String) -> String { "Connect \(name)" }
         static let connected = "Connected"
+
+        /// The four lines under the big number while the first sync runs, and the sentence under them.
+        enum Line {
+            static let indexing = "Indexing"
+            static let everyDay = "Every day"
+            static let everyHour = "Every hour"
+            static let everyWorkout = "Every workout"
+            static let reading = "Reading…"
+            static let waiting = "Waiting"
+            static let gettingReady = "Getting your workouts ready…"
+            static let finishingUp = "Finishing up…"
+            static func workouts(_ n: Int) -> String { n == 1 ? "1 workout" : "\(n.formatted()) workouts" }
+            static func days(_ n: Int) -> String { n == 1 ? "1 day" : "\(n.formatted()) days" }
+            static func hours(_ n: Int) -> String { n == 1 ? "1 hour" : "\(n.formatted()) hours" }
+            static func progress(_ done: Int, of total: Int) -> String { "\(done.formatted()) / \(total.formatted())" }
+            static func indexingEvery(_ noun: String, since: String) -> String { "Indexing every \(noun)\(since)…" }
+            static func finishingEvery(_ noun: String, since: String) -> String { "Finishing every \(noun)\(since)" }
+            static func since(_ year: Int) -> String { " since \(year)" }
+            static let doneAccessibility = "done"
+            static let runningAccessibility = "in progress"
+            static let waitingAccessibility = "waiting"
+        }
     }
 
     enum Menu {
