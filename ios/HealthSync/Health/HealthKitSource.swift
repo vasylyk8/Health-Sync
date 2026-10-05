@@ -559,16 +559,41 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         // are small; correctness is more important than parallelizing this part of the historical sync.
         var perMetric = [[DailyCell]?](repeating: nil, count: metrics.count)
         var errors: [Int: Error] = [:]
-        for (i, metric) in metrics.enumerated() {
-            do {
-                perMetric[i] = try await SyncTiming.shared.measure("hk.daily") {
+        #if DEBUG
+        var collectedInParallel = false
+        if DailyMetricExperiment.width > 1 {
+            let outcomes = try await DailyMetricReads.collect(metrics, width: DailyMetricExperiment.width) { [self] metric in
+                try await SyncTiming.shared.measure("hk.daily") {
                     try await self.dailyCells(metric, start: start, to: to, calendar: cal)
                 }
-            } catch {
-                errors[i] = error
+            }
+            for (index, outcome) in outcomes.enumerated() {
+                switch outcome {
+                case .success(let cells): perMetric[index] = cells
+                case .failure(let error): errors[index] = error
+                }
+            }
+            collectedInParallel = true
+        }
+        #else
+        let collectedInParallel = false
+        #endif
+        if !collectedInParallel {
+            for (i, metric) in metrics.enumerated() {
+                do {
+                    perMetric[i] = try await SyncTiming.shared.measure("hk.daily") {
+                        try await self.dailyCells(metric, start: start, to: to, calendar: cal)
+                    }
+                } catch {
+                    errors[i] = error
+                }
             }
         }
+        #if DEBUG
+        let received = perMetric.filter { $0 != nil }.count + errors.count
+        #else
         let received = metrics.count
+        #endif
         let lost = metrics.indices.filter { perMetric[$0] == nil && errors[$0] == nil }
         // A query that failed for a passing reason (Apple Health busy or briefly locked) works a moment later: try those
         // again one at a time. If one still fails, the whole chunk fails, so it is retried on the next run instead of
