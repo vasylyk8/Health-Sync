@@ -36,6 +36,8 @@ struct DiagnosticCaseReport: Codable, Sendable {
     var snapshot: SyncProbeRecorder.Snapshot
     /// Machine-readable verdict class, input fingerprints (live cases) for source-stability attribution.
     var kind: String? = nil, inputDigest: String? = nil, rawDigest: String? = nil
+    /// True when every record is byte-identical to the reference; false with a tiny maximumDelta means floating-point noise inside the declared 1e-9 tolerance.
+    var exact: Bool? = nil
 }
 final class DiagnosticReportStore: @unchecked Sendable {
     let root: URL

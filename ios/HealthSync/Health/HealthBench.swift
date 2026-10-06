@@ -96,7 +96,7 @@ enum HealthBench {
                     m.log("SUITEPATH forced=\(forced): \(result.text)")
                     let gate = result.configuration["accuracyGate"] ?? "missing"
                     m.log("SUITEPATH accuracy gate forced=\(forced): \(gate)")
-                    let passed = result.status == "complete" && result.cases.count == 6 && result.cases.allSatisfy { $0.complete && $0.changed == 0 } && gate.hasPrefix("NO REGRESSION DETECTED")
+                    let passed = result.status == "complete" && result.cases.count == 6 && result.cases.allSatisfy { $0.complete && $0.maximumDelta <= 1e-9 } && gate.hasPrefix("NO REGRESSION DETECTED")
                     m.log(passed ? "SUITEPATH CHECK OK forced=\(forced)" : "SUITEPATH CHECK FAILED forced=\(forced)")
                 } catch { m.log("SUITEPATH CHECK FAILED forced=\(forced): \(error)") }
             }

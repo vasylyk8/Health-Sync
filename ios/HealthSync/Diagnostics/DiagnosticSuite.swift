@@ -167,7 +167,7 @@ enum DiagnosticSuite {
                 if !variant.fault.isEmpty { verdict += "; isolated fault-injection case, not a production timing" }
                 if snapshot.devices.contains(where: { $0.thermal >= 2 }) { verdict += "; heat affected" }
                 if snapshot.droppedTraceEvents > 0 { verdict += "; trace truncated (\(snapshot.droppedTraceEvents) events dropped, summaries complete)" }
-                report.cases.append(DiagnosticCaseReport(name: variant.id, transfer: variant.replay ? "local simulated (fixed-input replay)" : "local simulated (live Apple Health)", elapsed: wall, records: index.count, complete: complete, verdict: verdict, changed: comparison?.changedRecords ?? 0, maximumDelta: comparison?.maximumDelta ?? 0, fields: comparison?.changedFields ?? [:], snapshot: snapshot, kind: kind, inputDigest: liveInput, rawDigest: liveRaw))
+                report.cases.append(DiagnosticCaseReport(name: variant.id, transfer: variant.replay ? "local simulated (fixed-input replay)" : "local simulated (live Apple Health)", elapsed: wall, records: index.count, complete: complete, verdict: verdict, changed: comparison?.changedRecords ?? 0, maximumDelta: comparison?.maximumDelta ?? 0, fields: comparison?.changedFields ?? [:], snapshot: snapshot, kind: kind, inputDigest: liveInput, rawDigest: liveRaw, exact: comparison?.exact))
                 report.text += String(format: "\n%@: %.2fs elapsed · %d records · %@\n", variant.id, wall, index.count, verdict) + probe.summary() + "\nCounters: \(snapshot.counters)\n"
                 if let comparison { report.text += "Changed fields: \(comparison.changedFields) · max delta \(comparison.maximumDelta)\n" }
                 try reports.save(report); onUpdate(report)
@@ -321,6 +321,8 @@ enum DiagnosticSuite {
         lines.append("Live matched: \(cases.filter { $0.kind == "matched" && !$0.transfer.contains("replay") }.count) · source/read-set changed: \(count("sourceChanged")) · reader differences: \(count("readerDifference")) · engine differences: \(count("engineDifference"))")
         lines.append("Candidate readers differing: \(count("candidateDifference")) · recovery differences: \(count("recoveryDifference")) · known-regression readers that differed as expected: \(count("knownRegression"))")
         lines.append("Incomplete cases: \(count("incomplete")) · incomplete-data cost probes (not accuracy results): \(count("costProbe"))")
+        let noisy = cases.filter { $0.exact == false && $0.maximumDelta <= 1e-9 }
+        lines.append(noisy.isEmpty ? "Numeric exactness: every compared case was byte-identical to the reference" : "Numeric exactness: \(noisy.count) case(s) were not byte-identical but stayed inside the 1e-9 tolerance (largest delta \(noisy.map(\.maximumDelta).max() ?? 0)); the tolerance was not relaxed")
         lines.append("Isolated real transfer: \(realTransfer)")
         let verdict: String
         if !failures.isEmpty { verdict = "FAILED — " + failures.map { "\($0.1) \($0.0)" }.joined(separator: ", ") }

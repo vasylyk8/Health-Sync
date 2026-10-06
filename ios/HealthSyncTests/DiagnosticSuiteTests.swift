@@ -174,6 +174,12 @@ extension DiagnosticSuiteTests {
         XCTAssertTrue(gate([ref, caseReport("w-known-regression", kind: "knownRegression", changed: 7), caseReport("probe", kind: "costProbe"), end]).hasPrefix("NO REGRESSION DETECTED"))
         XCTAssertTrue(gate([ref]).hasPrefix("NO REGRESSION DETECTED"))
     }
+    func testGateReportsFloatingPointNoiseWithoutRelaxingTheTolerance() {
+        var noisy = caseReport("baseline-end", kind: "matched", changed: 3); noisy.exact = false; noisy.maximumDelta = 3.6e-12
+        let ok = DiagnosticSuite.accuracyGate(cases: [caseReport("baseline-start", kind: "reference"), noisy], knownAnswerFailures: 0, rawDiffer: 0, orderSensitive: 0, realTransfer: "off")
+        XCTAssertTrue(ok.verdict.hasPrefix("NO REGRESSION DETECTED"))
+        XCTAssertTrue(ok.lines.contains { $0.contains("not byte-identical") && $0.contains("1e-09") || $0.contains("not byte-identical") && $0.contains("1e-9") })
+    }
     func testCoverageStatusDistinguishesFailedReadsFromEmptyReads() {
         func row(_ metric: String, records: Int = 0) -> DiagnosticCoverage { DiagnosticCoverage(family: "daily", metric: metric, category: "core", enabled: true, status: "", records: records) }
         let recorder = SyncProbeRecorder()
