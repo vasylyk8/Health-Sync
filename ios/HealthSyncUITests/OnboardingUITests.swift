@@ -170,7 +170,8 @@ final class OnboardingUITests: XCTestCase {
     }
 
     func testOpenWebsiteOpensInAppBrowserOnTheStepsScreen() {
-        let app = launch(["-onboarded"])
+        // The fake backend would report Claude as set up after 6 s and close the sheet mid-test.
+        let app = launch(["-onboarded", "-noAutoSetUp"])
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))
         app.buttons["provider.claude"].tap()
         XCTAssertTrue(app.buttons["consentContinue"].waitForExistence(timeout: 30))
