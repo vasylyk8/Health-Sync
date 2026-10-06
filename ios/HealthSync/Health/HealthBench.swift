@@ -89,7 +89,7 @@ enum HealthBench {
         if suite {
             await SharedReadBenchmark.seedHistoryDetails(store, m, scope: scope)
             for forced in [false, true] {
-                var options = DiagnosticSuite.Options(); options.delay = 0.1
+                var options = DiagnosticSuite.Options(); options.delay = 0.1; options.cooldownLimit = 0
                 options.variants = [DiagnosticVariant(id: "baseline-start"), DiagnosticVariant(id: "serial", width: 1), DiagnosticVariant(id: "four", width: 4), DiagnosticVariant(id: "fixed-input-pipeline", replay: true), DiagnosticVariant(id: "fixed-input-small-batches", uploadWidth: 2, groups: 1, batchSize: 24, replay: true), DiagnosticVariant(id: "baseline-end")]
                 do {
                     let result = try await DiagnosticSuite.run(scope: scope, categories: ["core"], options: options, sourceFactory: { selected in let source = HealthKitSource(scope: selected); source.debugFailingStatistics = forced; return source }, onUpdate: { _ in })

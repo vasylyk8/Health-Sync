@@ -52,6 +52,8 @@ enum DiagnosticSuite {
         var deep = false, delay = 2.0, cutoff = Calendar.current.startOfDay(for: Date())
         var resume: DiagnosticRunReport?, variants: [DiagnosticVariant]?
         var keepCaptures = false
+        /// Longest wait, in seconds, for the phone to cool below "serious" before each live case; a hot phone slows every later case.
+        var cooldownLimit = 480.0
     }
     static func run(scope: SyncScope, categories: Set<String>, options: Options,
                     sourceFactory: @escaping @Sendable (SyncScope) -> any HealthSource,
@@ -100,6 +102,14 @@ enum DiagnosticSuite {
             for variant in plan where !report.cases.contains(where: { $0.name == variant.id }) {
                 try Task.checkCancellation()
                 guard ProcessInfo.processInfo.thermalState != .critical else { throw DiagnosticFailure.thermalPause }
+                if !variant.replay {
+                    let cooled = try await cooldown(limit: options.cooldownLimit, report: report, onUpdate: onUpdate)
+                    if cooled.waited >= 1 {
+                        report.configuration["cooldownSeconds"] = String(Int((Double(report.configuration["cooldownSeconds"] ?? "0") ?? 0) + cooled.waited))
+                        report.text += String(format: "\nCooldown before %@: waited %.0fs, thermal state %d to %d%@. Cooldown time is not part of any case's elapsed time.\n", variant.id, cooled.waited, cooled.from, cooled.to, cooled.to >= 2 ? "; still hot, so the case will be flagged" : "")
+                        try reports.save(report)
+                    }
+                }
                 let runRoot = root.appendingPathComponent(variant.id)
                 if FileManager.default.fileExists(atPath: runRoot.path) { try FileManager.default.removeItem(at: runRoot) }
                 let scratch = try DiagnosticScratch(root: runRoot.appendingPathComponent("inputs"))
@@ -285,6 +295,17 @@ enum DiagnosticSuite {
             case .lowStorage: return "Not enough free storage for private replay captures (about 2 GB needed). Free space and try again."
             }
         }
+    }
+    /// Waits up to `limit` seconds for the phone to drop below the "serious" thermal state before a live case, so the heat from one
+    /// full-history read does not slow the next. Returns how long it waited and the thermal states before and after.
+    static func cooldown(limit: Double, report: DiagnosticRunReport, onUpdate: @Sendable (DiagnosticRunReport) -> Void) async throws -> (waited: Double, from: Int, to: Int) {
+        let started = ProcessInfo.processInfo.systemUptime, from = ProcessInfo.processInfo.thermalState.rawValue
+        while ProcessInfo.processInfo.thermalState.rawValue >= 2, ProcessInfo.processInfo.systemUptime - started < limit {
+            try Task.checkCancellation()
+            var live = report; live.text += "\nCooling down before the next case: thermal state \(ProcessInfo.processInfo.thermalState.rawValue), waiting up to \(Int(limit))s…"; onUpdate(live)
+            try await Task.sleep(for: .seconds(5))
+        }
+        return (ProcessInfo.processInfo.systemUptime - started, from, ProcessInfo.processInfo.thermalState.rawValue)
     }
     static let minimumFreeBytes: Int64 = 2_000_000_000
     static func freeBytes(_ url: URL) -> Int64? {

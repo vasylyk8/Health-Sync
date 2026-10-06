@@ -279,3 +279,12 @@ extension DiagnosticSuiteTests {
         XCTAssertTrue(gate.lines.contains { $0.contains("0 record(s) differ beyond it") })
     }
 }
+
+
+extension DiagnosticSuiteTests {
+    func testCooldownWithNoLimitNeverWaitsAndReportsThermalStates() async throws {
+        let result = try await DiagnosticSuite.cooldown(limit: 0, report: DiagnosticRunReport(), onUpdate: { _ in })
+        XCTAssertLessThan(result.waited, 1)
+        XCTAssertTrue((0...3).contains(result.from)); XCTAssertTrue((0...3).contains(result.to))
+    }
+}
