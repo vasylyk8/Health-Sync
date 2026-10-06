@@ -8,6 +8,13 @@ struct HistoryRecordComparison: Sendable {
     var changedRecords: Int
     var changedFields: [String: Int] = [:]
     var examples: [String] = []
+    /// `changedRecords` counts every record that is not byte-identical. These split it: floating-point noise inside the tolerance,
+    /// differences beyond it (dated in `changedDays`), and differences on the still-changing current day (reported, never a verdict).
+    var noiseRecords = 0
+    var beyondTolerance = 0
+    var currentDayChanged = 0
+    var currentDayMaximumDelta = 0.0
+    var changedDays: [String: Int] = [:]
     var detailSummary: String {
         let fields = changedFields.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
             .prefix(12).map { "\($0.key)=\($0.value)" }.joined(separator: ", ")

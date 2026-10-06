@@ -175,7 +175,7 @@ extension DiagnosticSuiteTests {
         XCTAssertTrue(gate([ref]).hasPrefix("NO REGRESSION DETECTED"))
     }
     func testGateReportsFloatingPointNoiseWithoutRelaxingTheTolerance() {
-        var noisy = caseReport("baseline-end", kind: "matched", changed: 3); noisy.exact = false; noisy.maximumDelta = 3.6e-12
+        var noisy = caseReport("baseline-end", kind: "matched", changed: 3); noisy.exact = false; noisy.maximumDelta = 3.6e-12; noisy.noiseRecords = 3
         let ok = DiagnosticSuite.accuracyGate(cases: [caseReport("baseline-start", kind: "reference"), noisy], knownAnswerFailures: 0, rawDiffer: 0, orderSensitive: 0, realTransfer: "off")
         XCTAssertTrue(ok.verdict.hasPrefix("NO REGRESSION DETECTED"))
         XCTAssertTrue(ok.lines.contains { $0.contains("not byte-identical") && $0.contains("1e-09") || $0.contains("not byte-identical") && $0.contains("1e-9") })
@@ -266,5 +266,16 @@ extension DiagnosticSuiteTests {
         XCTAssertEqual(byId[running.id]?.status, "paused")
         XCTAssertTrue(byId[running.id]?.text.contains("Interrupted") == true)
         XCTAssertEqual(byId[done.id]?.status, "complete")
+    }
+}
+
+
+extension DiagnosticSuiteTests {
+    func testGateSeparatesCutoffDayDriftFromRealDifferences() {
+        var drifted = caseReport("baseline-end", kind: "matched", changed: 3263); drifted.exact = false; drifted.noiseRecords = 3260; drifted.currentDayChanged = 3
+        let gate = DiagnosticSuite.accuracyGate(cases: [caseReport("baseline-start", kind: "reference"), drifted], knownAnswerFailures: 0, rawDiffer: 0, orderSensitive: 0, realTransfer: "off")
+        XCTAssertTrue(gate.verdict.hasPrefix("NO REGRESSION DETECTED"))
+        XCTAssertTrue(gate.lines.contains { $0.hasPrefix("Cutoff-day drift: 3 record") })
+        XCTAssertTrue(gate.lines.contains { $0.contains("0 record(s) differ beyond it") })
     }
 }
