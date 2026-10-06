@@ -18,6 +18,7 @@ struct ConnectView: View {
                     content.frame(minHeight: geo.size.height)
                 }
                 .scrollBounceBehavior(.always, axes: .vertical)
+                .scrollIndicators(.hidden)
                 .refreshable { await model.pullToRefresh() }
             }
         }
