@@ -140,15 +140,17 @@ final class OnboardingUITests: XCTestCase {
         let open = app.buttons["openWebsite"]
         XCTAssertTrue(open.waitForExistence(timeout: 30), "the Open button is shown", file: file, line: line)
         open.tap()
-        let browser = app.otherElements["SFSafariViewController"]
-        let done = app.buttons["Done"]
-        XCTAssertTrue(browser.waitForExistence(timeout: 20) || done.waitForExistence(timeout: 5),
-                      "the page opens in an in-app browser", file: file, line: line)
+        // SFSafariViewController runs in its own process: its Done button is in that app's tree, not KROK's.
+        let service = XCUIApplication(bundleIdentifier: "com.apple.SafariViewService")
+        let done = service.buttons["Done"]
+        let hostDone = app.buttons["Done"]
+        let shown = done.waitForExistence(timeout: 20) || hostDone.waitForExistence(timeout: 5)
+        XCTAssertTrue(shown, "the page opens in an in-app browser. KROK: \(app.debugDescription.prefix(1500)) SERVICE: \(service.debugDescription.prefix(1500))", file: file, line: line)
         XCTAssertEqual(app.state, .runningForeground, "KROK stays in front", file: file, line: line)
         XCTAssertNotEqual(XCUIApplication(bundleIdentifier: "com.apple.mobilesafari").state, .runningForeground,
                           "the link does not leave the app", file: file, line: line)
         snapshot("06-In-App-Browser")
-        if done.exists { done.tap() }
+        if done.exists { done.tap() } else if hostDone.exists { hostDone.tap() }
         XCTAssertTrue(open.waitForExistence(timeout: 10), "closing the browser returns to the setup sheet", file: file, line: line)
     }
 
