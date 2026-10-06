@@ -1,0 +1,71 @@
+# Fills the iOS simulator's HealthKit with synthetic workouts and times reading them back.
+# Run by hand (workflow_dispatch). Simulator speeds are not iPhone speeds; use it to compare strategies.
+name: diagnostic-suite-bench
+on:
+  push:
+    branches: ['feat/comprehensive-sync-diagnostics']
+    paths: ['ios/**', 'shared/**', '.github/workflows/diagnostic-suite-bench.yml']
+  workflow_dispatch:
+    inputs:
+      count:
+        description: Number of synthetic workouts
+        default: '300'
+permissions:
+  contents: read
+concurrency:
+  group: diagnostic-suite-bench-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, Release]
+    runs-on: macos-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: ios
+    env:
+      BUNDLE_ID: app.healthsync.dev
+      APPLE_TEAM_ID: ''
+      PUBLIC_BASE_URL: https://krok-1d60a.web.app
+      SIM_DEVICE: iPhone 17 Pro
+      TEST_RUNNER_BENCH_COUNT: ${{ inputs.count || '300' }}
+      TEST_RUNNER_BENCH_DIAGNOSTIC_SUITE: '1'
+      TEST_RUNNER_BENCH_MINUTES: '90'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          brew install xcodegen
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+      - name: Generate project
+        run: xcodegen generate --spec project.yml
+      - name: Benchmark
+        run: |
+          # Stream the app's own log lines into this job log as they happen (the test's output only
+          # appears when it ends, and a cancelled run shows nothing else).
+          (
+            for i in $(seq 1 120); do
+              UDID=$(xcrun simctl list devices booted -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next((x['udid'] for v in d.values() for x in v), ''))")
+              [ -n "$UDID" ] && break
+              sleep 5
+            done
+            echo "streaming simulator log from $UDID"
+            xcrun simctl spawn "$UDID" log stream --level info --style compact --predicate 'subsystem == "app.healthsync"' 2>&1 | grep --line-buffered -E "BENCH|details|elapsed" | sed -u 's/^/SIMLOG /'
+          ) &
+          xcodebuild test -project HealthSync.xcodeproj -scheme HealthSync \
+            -destination "platform=iOS Simulator,name=$SIM_DEVICE" \
+            -only-testing:HealthSyncUITests/HealthBenchUITests \
+            -configuration ${{ matrix.config }} ENABLE_TESTABILITY=YES SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) DEBUG' \
+            -resultBundlePath bench.xcresult \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= 2>&1 | tee bench.log | grep -E "BENCH|error:|Test Case|\*\* TEST"
+          exit ${PIPESTATUS[0]}
+      - name: Keep the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-suite-bench-log-${{ matrix.config }}
+          path: ios/bench.log

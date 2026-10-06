@@ -265,3 +265,54 @@ final class QAUITests: XCTestCase {
         shot("qa-home-status")
     }
 }
+
+extension QAUITests {
+    func testDiagnosticSuiteControlsAndSharingScreen() {
+        let app = launch(["-onboarded"])
+        XCTAssertTrue(app.buttons["moreMenu"].waitForExistence(timeout: 10)); app.buttons["moreMenu"].tap()
+        let entry = app.buttons["Sync diagnostics"].firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 5)); entry.tap()
+        XCTAssertTrue(app.buttons["diagnostics.start"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["diagnostics.record"].exists)
+        shot("diagnostics-controls"); audit(app, "diagnostics-controls")
+    }
+}
+
+extension QAUITests {
+    private func openDiagnostics(_ extra: [String] = []) -> XCUIApplication {
+        let app = launch(["-onboarded", "-seedDiagnosticReports"] + extra)
+        XCTAssertTrue(app.buttons["moreMenu"].waitForExistence(timeout: 10)); app.buttons["moreMenu"].tap()
+        let entry = app.buttons["Sync diagnostics"].firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 5)); entry.tap()
+        // At the largest text sizes the start button is below the fold of a lazy list, so identify the screen by its title.
+        XCTAssertTrue(app.navigationBars["Sync diagnostics"].waitForExistence(timeout: 5))
+        return app
+    }
+    private func savedReport(_ app: XCUIApplication, _ title: String) -> XCUIElement {
+        let match = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
+        if !match.waitForExistence(timeout: 3) { app.swipeUp() }
+        return match
+    }
+    func testDiagnosticSavedCompleteAndPausedReportScreens() {
+        let app = openDiagnostics()
+        let complete = savedReport(app, "Full initial-sync diagnosis")
+        XCTAssertTrue(complete.waitForExistence(timeout: 5), "saved complete report is listed")
+        complete.tap()
+        XCTAssertTrue(app.staticTexts["diagnostics.accuracy"].waitForExistence(timeout: 5), "accuracy summary is shown")
+        shot("diagnostics-saved-complete"); audit(app, "diagnostics-saved-complete")
+        app.buttons["Done"].firstMatch.tap()
+        let paused = savedReport(app, "Deep investigation")
+        XCTAssertTrue(paused.waitForExistence(timeout: 5), "saved paused report is listed")
+        paused.tap()
+        let resume = app.buttons["Resume remaining cases"]
+        if !resume.waitForExistence(timeout: 3) { app.swipeUp() }
+        XCTAssertTrue(resume.waitForExistence(timeout: 5), "a paused report can be resumed")
+        shot("diagnostics-saved-paused"); audit(app, "diagnostics-saved-paused")
+    }
+    func testDiagnosticScreensAtLargestTextSize() {
+        let app = openDiagnostics(Self.xxxl)
+        shot("diagnostics-controls-xxxl"); audit(app, "diagnostics-controls-xxxl")
+        let complete = savedReport(app, "Full initial-sync diagnosis")
+        if complete.waitForExistence(timeout: 5) { complete.tap(); shot("diagnostics-saved-xxxl"); audit(app, "diagnostics-saved-xxxl") }
+    }
+}

@@ -8,6 +8,12 @@ final class AppModel: ObservableObject {
     /// welcome → account (Apple sign-in, while the first sync already runs) → home.
     enum Phase { case welcome, account, home }
 
+    @Published var showDiagnostics = false
+    @Published var suiteRunning = false
+    @Published var suiteReport: DiagnosticRunReport?
+    @Published var suiteReports: [DiagnosticRunReport] = []
+    private var suiteTask: Task<Void, Never>?
+    private var captureNextSync = false
     @Published var phase: Phase
     @Published var status: ServerStatus = .empty
     @Published var progress = SyncProgress(detailsDone: 0, detailsTotal: 0, isSyncing: false) {
@@ -424,6 +430,25 @@ final class AppModel: ObservableObject {
 
     func syncNow() async {
         guard !benchmarkRunning else { return }
+        guard captureNextSync else { await performSyncNow(); return }
+        captureNextSync = false
+        let passive = SyncProbeRecorder(), sampling = Task { @MainActor in
+            while !Task.isCancelled { try? Task.checkCancellation(); passive.sampleDevice(); do { try await Task.sleep(for: .seconds(2)) } catch { break } }
+        }
+        let result = await SyncProbe.$recorder.withValue(passive) { await performSyncNow() }
+        sampling.cancel(); await sampling.value
+        let finished = result == "complete"
+        var report = DiagnosticRunReport(); report.preset = "Actual normal sync"; report.status = finished ? "complete" : result == "paused" ? "paused" : "incomplete"
+        report.configuration["engineOutcome"] = result
+        report.text = "Actual normal sync (real uploads), including account/configuration checks and engine retries. Engine outcome: \(result). Timings only; no diagnostic accuracy comparison.\n" + passive.summary()
+        report.cases = [DiagnosticCaseReport(name: "normal-sync", transfer: "production real", elapsed: passive.snapshot().elapsed, records: 0, complete: finished, verdict: "Timing only; engine outcome: \(result)", snapshot: passive.snapshot(), kind: finished ? "normalSync" : "incomplete")]
+        try? DiagnosticReportStore().save(report); reloadDiagnosticReports()
+    }
+
+    /// Returns how the sync ended so a recording can say so ("complete" only when the engine finished).
+    @discardableResult
+    private func performSyncNow() async -> String {
+        guard !benchmarkRunning else { return "skipped (a diagnostic was running)" }
         let syncStarted = ProcessInfo.processInfo.systemUptime
         do {
             try await ensureCurrentAccount()
@@ -447,8 +472,13 @@ final class AppModel: ObservableObject {
             let duration = Int(max(0, (ProcessInfo.processInfo.systemUptime - syncStarted) * 1_000))
             reportProductEvent("sync_finished", outcome: "success", durationMs: min(duration, 3_600_000))
             scheduleBackgroundSyncIfNeeded()
+            switch outcome {
+            case .finished: return "complete"
+            case .outOfTime: return "incomplete (ran out of time; it continues on the next sync)"
+            case .alreadyRunning: return "incomplete (the engine stayed busy; this sync did not run)"
+            }
         } catch is CancellationError {
-            return
+            return "paused"
         } catch {
             scheduleBackgroundSyncIfNeeded()
             telemetry.nonFatal("sync", code: (error as NSError).code)
@@ -458,6 +488,7 @@ final class AppModel: ObservableObject {
                 : "Sync paused. Pull down to try again."
             let duration = Int(max(0, (ProcessInfo.processInfo.systemUptime - syncStarted) * 1_000))
             reportProductEvent("sync_finished", outcome: offline ? "offline" : "error", durationMs: min(duration, 3_600_000))
+            return "incomplete (\(offline ? "offline" : "error \((error as NSError).domain) \((error as NSError).code)"))"
         }
     }
 
@@ -759,4 +790,48 @@ final class AppModel: ObservableObject {
     }
 
     private func friendly(_ error: Error) -> String { Self.message(for: error) }
+}
+
+
+
+extension AppModel {
+    func reloadDiagnosticReports() { let store = DiagnosticReportStore(); store.prune(); suiteReports = store.reports() }
+    func deleteDiagnosticReport(_ report: DiagnosticRunReport) {
+        let store = DiagnosticReportStore()
+        for file in store.files(report.id) { try? FileManager.default.removeItem(at: file) }
+        try? FileManager.default.removeItem(at: store.root.appendingPathComponent(report.id + "-private"))
+        if suiteReport?.id == report.id { suiteReport = nil }; reloadDiagnosticReports()
+    }
+    func stopDiagnosticSuite() { suiteTask?.cancel() }
+    func recordNextSync() {
+        let previous = syncTask; previous?.cancel()
+        syncTask = Task { await previous?.value; guard !Task.isCancelled else { return }; captureNextSync = true; await syncNow() }
+    }
+    func runDiagnosticSuite(deep: Bool, real: Bool, retain: Bool, resume: DiagnosticRunReport? = nil, variants: [DiagnosticVariant]? = nil) {
+        guard !benchmarkRunning, Theme.isInternalBuild else { return }
+        benchmarkRunning = true; suiteRunning = true; showDiagnostics = true; suiteReport = resume
+        UIApplication.shared.isIdleTimerDisabled = true
+        let scope = self.scope, categories = self.enabledCategories
+        suiteTask = Task {
+            syncTask?.cancel(); await syncTask?.value; syncTask = nil
+            do {
+                try await engine.pauseForDiagnostic()
+                var options = DiagnosticSuite.Options(); options.deep = deep; options.resume = resume; options.keepCaptures = retain; options.variants = variants
+                let upload: (any Uploader)?
+                if real || resume?.configuration["realTransfer"] == "requested" || resume?.configuration["realTransfer"] == "running" {
+                    guard let firebase = backend as? FirebaseBackend, let expected = defaults.string(forKey: Self.syncedUidKey) else { throw BackendError.notSignedIn }
+                    upload = FirebaseDiagnosticUploader(backend: firebase, expectedUID: expected)
+                } else { upload = nil }
+                let completed = try await DiagnosticSuite.run(scope: scope, categories: categories, options: options, sourceFactory: { HealthKitSource(scope: $0) }, realUploader: upload) { report in
+                    Task { @MainActor in if self.suiteRunning { self.suiteReport = report } }
+                }
+                self.suiteReport = completed
+            } catch {
+                if let current = suiteReport?.id, let saved = DiagnosticReportStore().reports().first(where: { $0.id == current }) { suiteReport = saved }
+                if suiteReport == nil { var r = DiagnosticRunReport(); r.text = "Could not start: " + ((error as? DiagnosticSuite.DiagnosticFailure)?.description ?? "\((error as NSError).domain) \((error as NSError).code)"); r.status = "paused"; suiteReport = r } }
+            await engine.resumeAfterDiagnostic()
+            suiteRunning = false; benchmarkRunning = false; suiteTask = nil
+            UIApplication.shared.isIdleTimerDisabled = false; reloadDiagnosticReports()
+        }
+    }
 }
