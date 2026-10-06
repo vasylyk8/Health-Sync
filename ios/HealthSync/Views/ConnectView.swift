@@ -18,6 +18,9 @@ struct ConnectView: View {
                     content.frame(minHeight: geo.size.height)
                 }
                 .scrollBounceBehavior(.always, axes: .vertical)
+                .scrollIndicators(.hidden)
+                // Scrolling the finish-time picker must not drag the page into a refresh.
+                .scrollDisabled(editingGoal)
                 .refreshable { await model.pullToRefresh() }
             }
         }

@@ -10,7 +10,12 @@ final class FakeBackend: Backend, @unchecked Sendable {
     private(set) var uploads: [String] = []
     var lastVisibleAt: Double?
     private var appleLinked: Bool
-    init(appleLinked: Bool = false) { self.appleLinked = appleLinked }
+    /// `-noAutoSetUp` keeps a provider "not set up" so a test can stay on the setup sheet as long as it needs.
+    private let autoSetUp: Bool
+    init(appleLinked: Bool = false, autoSetUp: Bool = true) {
+        self.appleLinked = appleLinked
+        self.autoSetUp = autoSetUp
+    }
     func hasAppleAccount() async -> Bool { lock.withLock { appleLinked } }
     /// Accepts the UI-test stand-in for Apple's sheet without linking: UI tests that follow onboarding keep the private-link
     /// setup (consent) path; the linked/OAuth path is covered by launching with `-appleLinked`.
@@ -22,9 +27,11 @@ final class FakeBackend: Backend, @unchecked Sendable {
     func createLink(provider: String) async throws -> String {
         let url = "https://health-sync.example/mcp/\(provider)-\(UUID().uuidString.prefix(8))"
         lock.withLock { links[provider] = url }
-        Task {
-            try? await Task.sleep(for: .seconds(6))
-            self.lock.withLock { self.setUp[provider] = true }
+        if autoSetUp {
+            Task {
+                try? await Task.sleep(for: .seconds(6))
+                self.lock.withLock { self.setUp[provider] = true }
+            }
         }
         return url
     }

@@ -16,7 +16,7 @@ struct HealthSyncApp: App {
         let source: HealthSource
         let telemetry: Telemetry
         if uiTesting || args.contains("-healthBench") || !FirebaseBackend.configure() {
-            backend = FakeBackend(appleLinked: uiTesting && args.contains("-appleLinked"))
+            backend = FakeBackend(appleLinked: uiTesting && args.contains("-appleLinked"), autoSetUp: !(uiTesting && args.contains("-noAutoSetUp")))
             source = FakeHealthSource()
             telemetry = NoTelemetry()
         } else {
