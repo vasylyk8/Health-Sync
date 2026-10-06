@@ -53,3 +53,4 @@ extension SyncProgress {
         return remaining == 1 ? Copy.Home.Line.finishingEvery(noun, since: since) : Copy.Home.Line.indexingEvery(noun, since: since)
     }
 }
+

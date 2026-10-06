@@ -25,6 +25,9 @@ struct HealthSyncApp: App {
             telemetry = FirebaseTelemetry()
         }
         let defaults = uiTesting ? UserDefaults(suiteName: "uitest-\(UUID().uuidString)")! : .standard
+        #if DEBUG
+        if uiTesting && args.contains("-seedDiagnosticReports") { DiagnosticReportStore.seedSamples() }
+        #endif
         if uiTesting && args.contains("-onboarded") { defaults.set(true, forKey: AppModel.healthConnectedKey) }
         if uiTesting && args.contains("-accountPending") {
             defaults.set(true, forKey: AppModel.healthConnectedKey)
@@ -80,7 +83,7 @@ struct HealthSyncApp: App {
             #endif
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { model.stopSyncComparison(reason: "KROK left the foreground or the phone locked") }
+            if phase != .active { model.stopDiagnosticSuite(); model.stopSyncComparison(reason: "KROK left the foreground or the phone locked") }
             if phase == .active, !benchMode { model.start() }
             if phase == .background { model.flushStats() }
         }

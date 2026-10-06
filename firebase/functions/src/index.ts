@@ -1,3 +1,4 @@
+import { probeBatch, validateProbe, DiagnosticProbeError } from './diagnostics/probe.js';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -235,3 +236,15 @@ export const rollupProductAnalytics = onSchedule({ schedule: 'every 60 minutes',
   const result = await rebuildAnalyticsRollups(deps().db);
   log.info('analytics rollup', { job: 'rollupProductAnalytics', count: result.days, records: result.access + result.events });
 });
+
+
+/** Authenticated request-local upload/ingestion/readback. Never writes production user data. */
+export const diagnosticProbe = onCall({ enforceAppCheck: ENFORCE_APP_CHECK, memory: '2GiB', cpu: 1, concurrency: 2, maxInstances: 3, timeoutSeconds: 300 }, wrap(async req => {
+  const uid = uidOf(req);
+  try { validateProbe(uid, req.data); } catch { throw new HttpsError('invalid-argument', 'Invalid diagnostic request or account mismatch.'); }
+  if (!(await deps().tokens.hit(`diagnostic_${uid}`, 240, 3_600_000))) throw new HttpsError('resource-exhausted', 'Diagnostic request limit reached.');
+  const user = await deps().meta.getUser(uid);
+  if (!user || user.deleting) throw new HttpsError('failed-precondition', 'Account unavailable.');
+  try { return await probeBatch(uid, req.data, user); }
+  catch (error) { if (error instanceof DiagnosticProbeError) throw new HttpsError('failed-precondition', error.message); throw new HttpsError('internal', 'Diagnostic ingestion/readback failed.'); }
+}));

@@ -25,6 +25,7 @@ struct ConnectView: View {
             }
         }
         .background(Theme.background.ignoresSafeArea())
+        .sheet(isPresented: $model.showDiagnostics, onDismiss: { if !model.suiteRunning { model.start() } }) { DiagnosticsView().environmentObject(model) }
         .sheet(item: $selected) { provider in
             SetupSheet(provider: provider)
         }
@@ -63,6 +64,7 @@ struct ConnectView: View {
                     Button { Task { await model.signInWithAppleFromMenu() } } label: { Label(Copy.Menu.signIn, systemImage: "person.crop.circle") }
                 }
                 if Theme.isInternalBuild {
+                    Button { model.showDiagnostics = true } label: { Label("Sync diagnostics", systemImage: "waveform.path.ecg") }
                     Button { model.runSpeedTest() } label: { Label(Copy.Menu.speedTest, systemImage: "speedometer") }
                     Button { confirmComparison = true } label: { Label("Compare initial sync", systemImage: "arrow.left.arrow.right") }
                 }
@@ -237,3 +239,4 @@ struct ProviderPill: View {
         .accessibilityIdentifier("provider.\(provider.id)")
     }
 }
+

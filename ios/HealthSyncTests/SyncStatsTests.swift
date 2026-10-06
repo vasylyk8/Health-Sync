@@ -472,3 +472,4 @@ final class SyncEstimatorTests: XCTestCase {
         for step in SyncEstimator.steps { XCTAssertTrue(Copy.Home.timeLeft(seconds: step).hasSuffix(" left"), "\(step) s") }
     }
 }
+
