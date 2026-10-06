@@ -5,10 +5,11 @@ struct DiagnosticVariant: Codable, Sendable, Identifiable {
     var id: String, width = 2, queryLimit = 0, detailWidth = 24, uploadWidth = 6, groups = 3, batchSize = 48, chunkMonths = 12
     var strategy = "baseline", replay = false, serial = false
     var family = "all", includeRoutes = true, routeWidth = 8, shareRouteGate = true
+    var historyCapacity = 0, cacheRows = 0
     static func plan(deep: Bool) -> [Self] {
         var a = [Self(id: "baseline-start"), Self(id: "serial-daily", width: 1), Self(id: "four-daily", width: 4), Self(id: "fixed-input-pipeline", replay: true), Self(id: "fixed-input-small-batches", uploadWidth: 2, groups: 1, batchSize: 24, replay: true)]
         if deep {
-            a += [Self(id: "eight-daily", width: 8), Self(id: "eight-queries", queryLimit: 8), Self(id: "sixteen-queries", queryLimit: 16), Self(id: "sixty-four-queries", queryLimit: 64), Self(id: "twelve-workouts", detailWidth: 12), Self(id: "forty-eight-workouts", detailWidth: 48), Self(id: "serial-phases", serial: true), Self(id: "selective-fallback", strategy: "selectiveFallback"), Self(id: "shared-statistics", strategy: "sharedStatistics"), Self(id: "wider-windows-known-regression", strategy: "widerStatistics"), Self(id: "combined-known-regression", strategy: "combined"), Self(id: "six-month-windows", chunkMonths: 6), Self(id: "fixed-input-large-batches", batchSize: 96, replay: true), Self(id: "daily-alone-cost-probe", family: "daily"), Self(id: "hourly-alone-cost-probe", family: "hourly"), Self(id: "workouts-alone-cost-probe", family: "workouts"), Self(id: "without-hourly-cost-probe", family: "noHourly"), Self(id: "without-routes-cost-probe", includeRoutes: false), Self(id: "separate-route-lane", shareRouteGate: false)]
+            a += [Self(id: "eight-daily", width: 8), Self(id: "eight-queries", queryLimit: 8), Self(id: "sixteen-queries", queryLimit: 16), Self(id: "sixty-four-queries", queryLimit: 64), Self(id: "twelve-workouts", detailWidth: 12), Self(id: "forty-eight-workouts", detailWidth: 48), Self(id: "details-after-history", serial: true), Self(id: "reserved-history-capacity", queryLimit: 24, historyCapacity: 8), Self(id: "small-cache", cacheRows: 50_000), Self(id: "large-cache", cacheRows: 800_000), Self(id: "selective-fallback", strategy: "selectiveFallback"), Self(id: "shared-statistics", strategy: "sharedStatistics"), Self(id: "wider-windows-known-regression", strategy: "widerStatistics"), Self(id: "combined-known-regression", strategy: "combined"), Self(id: "six-month-windows", chunkMonths: 6), Self(id: "fixed-input-large-batches", batchSize: 96, replay: true), Self(id: "daily-alone-cost-probe", family: "daily"), Self(id: "hourly-alone-cost-probe", family: "hourly"), Self(id: "workouts-alone-cost-probe", family: "workouts"), Self(id: "without-hourly-cost-probe", family: "noHourly"), Self(id: "without-routes-cost-probe", includeRoutes: false), Self(id: "separate-route-lane", shareRouteGate: false)]
         }
         a.append(Self(id: "baseline-end")); return a
     }
@@ -70,17 +71,18 @@ enum DiagnosticSuite {
                 let engine = SyncEngine(source: source, uploader: sink, outbox: box, scope: selectedScope, config: config, now: { savedCutoff }, categories: { categories })
                 let saved = report
                 await engine.onProgress { p in var live = saved; live.text += "\nCase \(saved.cases.count + 1)/\(plan.count): \(variant.id) · \(p.detailsDone)/\(p.detailsTotal) workouts\n" + probe.summary(); onUpdate(live) }
+                probe.count("configuration.dailyWidth", variant.width)
                 let sampling = Task { @MainActor in
                     while !Task.isCancelled { probe.sampleDevice(); do { try await Task.sleep(for: .seconds(2)) } catch { break } }
                 }
                 let start = ProcessInfo.processInfo.systemUptime
                 let outcome: SyncEngine.Outcome
                 do {
-                    outcome = try await SyncProbe.$recorder.withValue(probe) {
-                        try await SyncProbe.$rawCapture.withValue(variant.replay ? nil : raw) {
+                    outcome = try await SyncProbe.$runSalt.withValue(saved.id) { try await SyncProbe.$recorder.withValue(probe) {
+                        try await SyncProbe.$rawCapture.withValue(variant.id == "baseline-start" ? raw : nil) {
                             try await PhoneSyncComparisonContext.$width.withValue(variant.width) {
                                 try await PhoneSyncComparisonContext.$queryLimit.withValue(variant.queryLimit > 0 ? variant.queryLimit : nil) {
-                                    try await PhoneSyncComparisonContext.$includeRoutes.withValue(variant.includeRoutes) { try await PhoneSyncComparisonContext.$cutoff.withValue(saved.cutoff) {
+                                    try await PhoneSyncComparisonContext.$historyCapacity.withValue(variant.historyCapacity > 0 ? variant.historyCapacity : nil) { try await PhoneSyncComparisonContext.$cacheRows.withValue(variant.cacheRows > 0 ? variant.cacheRows : nil) { try await PhoneSyncComparisonContext.$includeRoutes.withValue(variant.includeRoutes) { try await PhoneSyncComparisonContext.$cutoff.withValue(saved.cutoff) {
                                         try await InitialSyncExperiments.$strategy.withValue(InitialSyncExperiments.Strategy(rawValue: variant.strategy)) {
                                             try await InitialSyncExperiments.$historyStart.withValue(try await source.earliestDailyDate()) {
                                                 try await InitialSyncExperiments.$historyEnd.withValue(saved.cutoff) {
@@ -88,12 +90,12 @@ enum DiagnosticSuite {
                                                 }
                                             }
                                         }
-                                    } }
+                                    } } } }
                                 }
                             }
                         }
                     }
-                } catch { sampling.cancel(); await sampling.value; throw error }
+                } } catch { sampling.cancel(); await sampling.value; throw error }
                 let wall = ProcessInfo.processInfo.systemUptime - start
                 sampling.cancel(); await sampling.value
                 let index = try DiagnosticRecordIndex(sink: sink)
@@ -117,6 +119,7 @@ enum DiagnosticSuite {
                         let a = try raw.replay(f, unified: false), b = try raw.replay(f, unified: true)
                         let same = rawEqual(a, b)
                         report.text += "Raw aggregate replay \(HealthTypes.shortName(f.type)): \(same ? "MATCH" : "DIFFER") · \(f.count) readings\n"
+                        try reports.save(report)
                         if options.deep && f.count <= 10_000 {
                             let reverse = try raw.replay(f, unified: false, reverse: true)
                             if !rawEqual(a, reverse) { report.text += "ORDER-SENSITIVE aggregate: \(HealthTypes.shortName(f.type))\n" }
@@ -130,6 +133,7 @@ enum DiagnosticSuite {
                         try Task.checkCancellation(); let data = try Data(contentsOf: file)
                         try await realUploader.upload(batchId: UUID().uuidString.lowercased(), gz: data, sha256: DiagnosticScratch.digest(data), typeId: type)
                     }
+                    if let transfer = realUploader as? any DiagnosticTransferReporting { report.text += transfer.transferSummary() + "\n" }
                     report.text += "Isolated real transfer/readback: \(String(format: "%.2f", ProcessInfo.processInfo.systemUptime - t))s. This transfer runs after preparation, not an end-to-end pipelined upload.\n"
                 }
                 try reports.save(report); onUpdate(report)
@@ -138,7 +142,10 @@ enum DiagnosticSuite {
             if options.deep {
                 report.text += "\nRepresentative HealthKit probes (separate from full-history timings):\n"
                 let latest = report
-                await sourceFactory(scope).benchmark { text in var live = latest; live.text += text; onUpdate(live) }
+                let collected = DiagnosticTextBuffer()
+                await sourceFactory(scope).benchmark { text in collected.set(text); var live = latest; live.text += text; onUpdate(live) }
+                try Task.checkCancellation()
+                report.text += collected.value + "\n"
                 report.text += "Representative probes complete; their timings are not full-sync completion times.\n"
             }
             report.status = "complete"
@@ -169,4 +176,10 @@ enum DiagnosticSuite {
         for i in rows.indices where rows[i].enabled { rows[i].status = rows[i].records > 0 ? "readable data" : "no readable data or not represented in returned records" }
     }
     enum DiagnosticFailure: Error { case thermalPause, timeZoneChanged }
+}
+
+private final class DiagnosticTextBuffer: @unchecked Sendable {
+    private let lock = NSLock(); private var text = ""
+    func set(_ value: String) { lock.withLock { text = value } }
+    var value: String { lock.withLock { text } }
 }

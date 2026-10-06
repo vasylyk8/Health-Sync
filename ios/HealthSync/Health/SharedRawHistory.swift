@@ -9,7 +9,7 @@ enum SharedRawHistory {
 
     static func withFreshCache<T>(endingAt cutoff: Date? = nil, _ body: () async throws -> T) async rethrows -> T {
         let shared = InitialSyncExperiments.strategy?.unified == true
-        let session = RawHistoryCache(rowLimit: shared ? 400_000 : 100_000, entryLimit: shared ? 128 : 32)
+        let session = RawHistoryCache(rowLimit: PhoneSyncComparisonContext.cacheRows ?? (shared ? 400_000 : 100_000), entryLimit: shared ? 128 : 32)
         let stats = InitialSyncExperiments.statistics ?? DailyStatisticsCache()
         return try await withTaskCancellationHandler {
             do {

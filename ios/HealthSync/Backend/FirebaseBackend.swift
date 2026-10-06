@@ -160,7 +160,7 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
         let attempts = UploadAttempts()
         let retried = attempts.begin(batchId)
         do {
-            _ = try await ref.putDataAsync(gz, metadata: meta)
+            _ = try await SyncProbe.measure("network.storageUpload") { try await ref.putDataAsync(gz, metadata: meta) }
             attempts.finish(batchId)
         } catch let error as NSError where error.domain == StorageErrorDomain && error.code == StorageErrorCode.unauthorized.rawValue {
             // Storage rules only allow creating an object once, so "unauthorized" is either a retry of an
@@ -180,7 +180,7 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
 
     private func call(_ name: String, _ payload: [String: Any]) async throws -> Any? {
         _ = try await signIn()
-        return try await functions.httpsCallable(name).call(payload).data
+        return try await SyncProbe.measure("network.callable." + name) { try await functions.httpsCallable(name).call(payload).data }
     }
 }
 
@@ -195,17 +195,36 @@ private final class AppCheckFactory: NSObject, AppCheckProviderFactory {
 }
 
 
-struct FirebaseDiagnosticUploader: Uploader, Sendable {
+final class FirebaseDiagnosticUploader: DiagnosticTransferReporting, @unchecked Sendable {
     let backend: FirebaseBackend
     let expectedUID: String
+    private let lock = NSLock()
+    private var totals: [String: Double] = [:]
+    init(backend: FirebaseBackend, expectedUID: String) { self.backend = backend; self.expectedUID = expectedUID }
     func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {
-        try await backend.diagnosticUpload(gz: gz, sha256: sha256, expectedUID: expectedUID)
+        let receipt = try await backend.diagnosticUpload(gz: gz, sha256: sha256, expectedUID: expectedUID)
+        lock.withLock { for (key, value) in receipt { totals[key, default: 0] += value }; totals["requests", default: 0] += 1 }
     }
+    func transferSummary() -> String { lock.withLock { "Isolated HTTPS/ingestion/readback: " + totals.sorted { $0.key < $1.key }.map { "\($0.key)=\(String(format: "%.3f", $0.value))" }.joined(separator: " · ") + "\nConnection/server durations can overlap and must not be summed as elapsed time. Storage SDK internals are not exposed by this HTTPS probe." } }
 }
 extension FirebaseBackend {
-    func diagnosticUpload(gz: Data, sha256: String, expectedUID: String) async throws {
-        guard Auth.auth().currentUser?.uid == expectedUID, gz.count <= 5 * 1024 * 1024 else { throw BackendError.notSignedIn }
-        let reply = try await SyncProbe.measure("network.isolatedProbe") { try await call("diagnosticProbe", ["expectedUid": expectedUID, "gz": gz.base64EncodedString(), "sha256": sha256]) }
-        guard Auth.auth().currentUser?.uid == expectedUID, let receipt = reply as? [String: Any], receipt["accountVerified"] as? Bool == true, receipt["sha256"] as? String == sha256, receipt["duplicateVerified"] as? Bool == true, let delta = receipt["maxDelta"] as? Double, delta <= 1e-9 else { throw BackendError.badResponse }
+    func diagnosticUpload(gz: Data, sha256: String, expectedUID: String) async throws -> [String: Double] {
+        guard let user = Auth.auth().currentUser, user.uid == expectedUID, gz.count <= 5 * 1024 * 1024, let project = FirebaseApp.app()?.options.projectID else { throw BackendError.notSignedIn }
+        let token = try await SyncProbe.measure("network.authToken") { try await user.getIDToken() }
+        guard Auth.auth().currentUser?.uid == expectedUID else { throw BackendError.notSignedIn }
+        let url = URL(string: "https://\(Self.region)-\(project).cloudfunctions.net/diagnosticProbe")!
+        var request = URLRequest(url: url); request.httpMethod = "POST"; request.timeoutInterval = 300
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type"); request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
+        if let appToken = try? await AppCheck.appCheck().token(forcingRefresh: false) { request.setValue(appToken.token, forHTTPHeaderField: "X-Firebase-AppCheck") }
+        let body = try JSONSerialization.data(withJSONObject: ["data": ["expectedUid": expectedUID, "gz": gz.base64EncodedString(), "sha256": sha256]])
+        let metrics = DiagnosticHTTPMetrics()
+        let configuration = URLSessionConfiguration.ephemeral; configuration.timeoutIntervalForRequest = 300
+        let session = URLSession(configuration: configuration, delegate: metrics, delegateQueue: nil); defer { session.finishTasksAndInvalidate() }
+        let (bytes, response) = try await SyncProbe.measure("network.isolatedHTTPS") { try await session.upload(for: request, from: body) }
+        guard (response as? HTTPURLResponse)?.statusCode == 200, let result = try JSONSerialization.jsonObject(with: bytes) as? [String: Any], let receipt = (result["result"] ?? result["data"]) as? [String: Any], Auth.auth().currentUser?.uid == expectedUID,
+            receipt["accountVerified"] as? Bool == true, receipt["sha256"] as? String == sha256, receipt["duplicateVerified"] as? Bool == true, let delta = receipt["maxDelta"] as? Double, delta <= 1e-9 else { throw BackendError.badResponse }
+        var timings = metrics.snapshot
+        for key in ["bytes", "records", "readbackRows", "parseMs", "ingestMs", "duplicateMs", "readbackMs", "totalMs"] { if let number = receipt[key] as? NSNumber { timings["server." + key] = number.doubleValue } }
+        return timings
     }
 }

@@ -23,6 +23,14 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     private let quantitiesById: [String: WorkoutQuantity]
     /// Apple documents no limit on parallel queries, so the number in flight is tuned while syncing (`ReadTuner`).
     private let queryGate = ReadGate(limit: 24)
+    private let diagnosticHistoryGate = ReadGate(limit: 8)
+    private func activeQueryGate() -> ReadGate {
+        if let capacity = PhoneSyncComparisonContext.historyCapacity,
+           SyncProbe.metric.hasPrefix("daily.") || SyncProbe.metric.hasPrefix("hourly.") {
+            diagnosticHistoryGate.setLimit(capacity); return diagnosticHistoryGate
+        }
+        return queryGate
+    }
     /// Separate lane for GPS route points, off for now: the speed test compares it with the shared
     /// query gate on real data (row E) before the sync uses it.
     private let routeGate = ReadGate(limit: 8)
@@ -349,6 +357,12 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         }
         defer { cacheLock.withLock { workoutCache[id] = nil } }
 
+        let years = max(0, (PhoneSyncComparisonContext.cutoff ?? Date()).timeIntervalSince(w.startDate) / (365.25 * 86400))
+        let cohort = years < 1 ? "under1y" : years < 3 ? "1to3y" : years < 6 ? "3to6y" : "6yplus"
+        let tag = SyncProbe.recorder == nil ? "" : String(DiagnosticScratch.digest(Data((SyncProbe.runSalt + id).utf8)).prefix(10))
+        let workoutWindow = "\(cohort)|type=\(w.workoutActivityType.rawValue)|local=\(tag)"
+        let workoutProbe = SyncProbe.recorder?.begin("workout.total", metric: "workout", window: workoutWindow)
+        defer { SyncProbe.end(workoutProbe) }
         // Types Apple recorded for this workout. Heart rate is always tried, because workouts imported
         // from other apps carry no Apple statistics but often have heart rate samples.
         var wanted = Set(w.allStatistics.keys.map(\.identifier))
@@ -366,7 +380,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             for (i, q) in specs.enumerated() {
                 group.addTask {
                     let points = try await timing.measure("hk.quantity") {
-                        try await SyncProbe.$metric.withValue("workout." + q.name) { try await self.quantityPoints(q, workout: w, allowTimeWindow: q.name == "HeartRate" || Self.workoutWindowFallbackTypes.contains(q.id)) }
+                        try await SyncProbe.$window.withValue(workoutWindow) { try await SyncProbe.$metric.withValue("workout." + q.name) { try await self.quantityPoints(q, workout: w, allowTimeWindow: q.name == "HeartRate" || Self.workoutWindowFallbackTypes.contains(q.id)) } }
                     }
                     return .series(i, points)
                 }
@@ -441,11 +455,12 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     /// Every individual reading of a series sample (e.g. heart rate every few seconds).
     private func expandSeries(_ sample: HKQuantitySample, _ q: WorkoutQuantity) async throws -> [SeriesPoint] {
         let predicate = HKQuery.predicateForObject(with: sample.uuid)
+        let selectedGate = activeQueryGate()
         let gateProbe = SyncProbe.begin("query.gateWait")
-        await queryGate.acquire()
+        await selectedGate.acquire()
         SyncProbe.end(gateProbe)
         let queryProbe = SyncProbe.begin("quantity.seriesCallbacks"); defer { SyncProbe.end(queryProbe) }
-        defer { queryGate.release() }
+        defer { selectedGate.release() }
         return try await withCheckedThrowingContinuation { cont in
             var acc: [SeriesPoint] = []
             let query = HKQuantitySeriesSampleQuery(quantityType: q.type, predicate: predicate) { _, quantity, interval, _, done, error in
@@ -787,11 +802,12 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         if debugFailingStatistics { throw HKError(.errorInvalidArgument) }
         if debugEmptyStatistics { return [] }
         #endif
+        let selectedGate = activeQueryGate()
         let gateProbe = SyncProbe.begin("query.gateWait")
-        await queryGate.acquire()
+        await selectedGate.acquire()
         SyncProbe.end(gateProbe)
         let queryProbe = SyncProbe.begin("query.callbackLatency"); defer { SyncProbe.end(queryProbe) }
-        defer { queryGate.release() }
+        defer { selectedGate.release() }
         if InitialSyncExperiments.strategy != nil { SyncTiming.shared.count("experiment.statisticsQueries") }
         let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
             let q = HKStatisticsCollectionQuery(quantityType: type, quantitySamplePredicate: predicate, options: options, anchorDate: from, intervalComponents: DateComponents(day: 1))
@@ -826,11 +842,12 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         if debugFailingStatistics { throw HKError(.errorInvalidArgument) }
         if debugEmptyStatistics { return DailyStatisticsSnapshot(values: [:]) }
         #endif
+        let selectedGate = activeQueryGate()
         let gateProbe = SyncProbe.begin("query.gateWait")
-        await queryGate.acquire()
+        await selectedGate.acquire()
         SyncProbe.end(gateProbe)
         let queryProbe = SyncProbe.begin("query.callbackLatency"); defer { SyncProbe.end(queryProbe) }
-        defer { queryGate.release() }
+        defer { selectedGate.release() }
         SyncTiming.shared.count("experiment.statisticsQueries")
         let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
             let q = HKStatisticsCollectionQuery(quantityType: type, quantitySamplePredicate: predicate,
@@ -903,12 +920,21 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             let samples = try await SyncProbe.measure("raw.query") { try await fetch(type, predicate: window, sort: nil) }
             let convertProbe = SyncProbe.begin("raw.convertAndAccumulate"); defer { SyncProbe.end(convertProbe, count: samples.count) }
             if InitialSyncExperiments.strategy != nil { SyncTiming.shared.count("experiment.rawSamples", samples.count) }
+            var conversion = 0.0, capture = 0.0, accumulation = 0.0
+            let measured = SyncProbe.recorder != nil
             for case let sample as HKQuantitySample in samples where sample.startDate < next && (first || sample.startDate >= cursor) {
+                let before = measured ? ProcessInfo.processInfo.systemUptime : 0
                 if let reading = Self.reading(sample, unit: unit, scale: scale) {
-                    if let rawWriter { try SyncProbe.measureSync("capture.raw") { try rawWriter.append(reading, id: sample.uuid.uuidString) } }
+                    let converted = measured ? ProcessInfo.processInfo.systemUptime : 0
+                    if let rawWriter { try rawWriter.append(reading, id: sample.uuid.uuidString) }
+                    let captured = measured ? ProcessInfo.processInfo.systemUptime : 0
                     body(reading)
+                    if measured { conversion += converted - before; capture += captured - converted; accumulation += ProcessInfo.processInfo.systemUptime - captured }
                 }
             }
+            SyncProbe.recorder?.duration("raw.conversion", seconds: conversion, items: samples.count)
+            SyncProbe.recorder?.duration("capture.rawEncoding", seconds: capture, items: samples.count)
+            SyncProbe.recorder?.duration("raw.accumulation", seconds: accumulation, items: samples.count)
             cursor = next
             first = false
         }
@@ -1132,11 +1158,12 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         if debugFailingStatistics { throw HKError(.errorInvalidArgument) }
         if debugEmptyStatistics { return [] }
         #endif
+        let selectedGate = activeQueryGate()
         let gateProbe = SyncProbe.begin("query.gateWait")
-        await queryGate.acquire()
+        await selectedGate.acquire()
         SyncProbe.end(gateProbe)
         let queryProbe = SyncProbe.begin("query.callbackLatency"); defer { SyncProbe.end(queryProbe) }
-        defer { queryGate.release() }
+        defer { selectedGate.release() }
         let collection: HKStatisticsCollection = try await withCheckedThrowingContinuation { cont in
             let q = HKStatisticsCollectionQuery(quantityType: metric.type, quantitySamplePredicate: predicate, options: options, anchorDate: from, intervalComponents: DateComponents(hour: 1))
             q.initialResultsHandler = { _, collection, error in
@@ -1393,11 +1420,12 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     // MARK: Helpers
 
     private func fetch(_ type: HKSampleType, predicate: NSPredicate?, sort: NSSortDescriptor?, limit: Int = HKObjectQueryNoLimit) async throws -> [HKSample] {
+        let selectedGate = activeQueryGate()
         let gateProbe = SyncProbe.begin("query.gateWait")
-        await queryGate.acquire()
+        await selectedGate.acquire()
         SyncProbe.end(gateProbe)
         let queryProbe = SyncProbe.begin("query.sample." + type.identifier); defer { SyncProbe.end(queryProbe) }
-        defer { queryGate.release() }
+        defer { selectedGate.release() }
         return try await withCheckedThrowingContinuation { cont in
             let q = HKSampleQuery(sampleType: type, predicate: predicate, limit: limit, sortDescriptors: sort.map { [$0] }) { _, results, error in
                 if let error { cont.resume(throwing: error) } else { cont.resume(returning: results ?? []) }

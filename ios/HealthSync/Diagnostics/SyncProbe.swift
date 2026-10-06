@@ -7,6 +7,7 @@ enum SyncProbe {
     @TaskLocal static var recorder: SyncProbeRecorder?
     @TaskLocal static var metric = "sync"
     @TaskLocal static var window = ""
+    @TaskLocal static var runSalt = UUID().uuidString
     @TaskLocal static var rawCapture: RawReplayStore?
     static func begin(_ name: String) -> SyncProbeRecorder.Token? { recorder?.begin(name, metric: metric, window: window) }
     static func end(_ token: SyncProbeRecorder.Token?, error: Bool = false, count: Int = 0) { if let token { recorder?.end(token, error: error, count: count) } }
@@ -68,6 +69,11 @@ final class SyncProbeRecorder: @unchecked Sendable {
         let result = withUnsafeMutablePointer(to: &info) { p in p.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count) } }
         let d = DeviceSample(at: ProcessInfo.processInfo.systemUptime - origin, thermal: ProcessInfo.processInfo.thermalState.rawValue, lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled, cpuSeconds: cpu, residentBytes: result == KERN_SUCCESS ? info.resident_size : 0, battery: UIDevice.current.batteryLevel, charging: UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full, foreground: UIApplication.shared.applicationState == .active, protectedData: UIApplication.shared.isProtectedDataAvailable)
         lock.withLock { devices.append(d) }
+    }
+    /// Aggregated loop timings: no fabricated timeline events and no per-sample locking.
+    func duration(_ name: String, seconds: Double, items: Int) {
+        let key = [SyncProbe.metric, SyncProbe.window, name].joined(separator: "|")
+        lock.withLock { var s = stats[key] ?? Stat(); s.count += 1; s.items += items; s.total += max(0, seconds); s.maximum = max(s.maximum, seconds); if s.samples.count < 512 { s.samples.append(seconds) }; stats[key] = s }
     }
     func count(_ name: String, _ value: Int = 1) { lock.withLock { counters[name, default: 0] += value } }
     func set(_ name: String, _ value: Int) { lock.withLock { counters[name] = value } }

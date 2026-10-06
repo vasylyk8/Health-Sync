@@ -80,11 +80,26 @@ enum HealthBench {
         m.log("authorized")
         let shared = args.contains("-benchShared")
         let daily = args.contains("-benchDailyConcurrency")
-        let phone = args.contains("-benchPhoneComparison")
+        let suite = args.contains("-benchDiagnosticSuite")
+        let phone = args.contains("-benchPhoneComparison") || suite
         let heavy = args.firstIndex(of: "-benchHeavy").flatMap { Int(args[$0 + 1]) } ?? 60
         let light = max(0, count - heavy)
         await HealthLab.seed(store, heavy: heavy, light: light, spacingDays: (daily || phone) ? 16 : (shared ? 9 : 1.3), heavyStride: (daily || phone) ? 12 : (shared ? 6 : 1), m)
         await seedBackground(store, count: 100_000, m)
+        if suite {
+            await SharedReadBenchmark.seedHistoryDetails(store, m, scope: scope)
+            for forced in [false, true] {
+                var options = DiagnosticSuite.Options(); options.delay = 0.1
+                options.variants = [DiagnosticVariant(id: "baseline-start"), DiagnosticVariant(id: "serial", width: 1), DiagnosticVariant(id: "four", width: 4), DiagnosticVariant(id: "fixed-input-pipeline", replay: true), DiagnosticVariant(id: "fixed-input-small-batches", uploadWidth: 2, groups: 1, batchSize: 24, replay: true), DiagnosticVariant(id: "baseline-end")]
+                do {
+                    let result = try await DiagnosticSuite.run(scope: scope, categories: ["core"], options: options, sourceFactory: { selected in let source = HealthKitSource(scope: selected); source.debugFailingStatistics = forced; return source }, onUpdate: { _ in })
+                    m.log("SUITEPATH forced=\(forced): \(result.text)")
+                    let passed = result.status == "complete" && result.cases.count == 6 && result.cases.allSatisfy { $0.complete && $0.changed == 0 }
+                    m.log(passed ? "SUITEPATH CHECK OK forced=\(forced)" : "SUITEPATH CHECK FAILED forced=\(forced)")
+                } catch { m.log("SUITEPATH CHECK FAILED forced=\(forced): \(error)") }
+            }
+            m.log("BENCH DONE"); return
+        }
         if phone {
             await SharedReadBenchmark.seedHistoryDetails(store, m, scope: scope)
             for forced in [false, true] {

@@ -7,7 +7,7 @@ final class DiagnosticScratch: @unchecked Sendable {
     private let lock = NSLock()
     private var bytes = 0
     let limit: Int
-    init(root: URL, limit: Int = 1_000_000_000) throws {
+    init(root: URL, limit: Int = 4_000_000_000) throws {
         self.root = root; self.limit = limit
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let existing = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.fileSizeKey])) ?? []
@@ -31,17 +31,24 @@ final class SourceReplayStore: @unchecked Sendable {
     let scratch: DiagnosticScratch
     private let lock = NSLock()
     private var fingerprints: [String: String] = [:]
-    init(scratch: DiagnosticScratch) { self.scratch = scratch }
+    init(scratch: DiagnosticScratch) {
+        self.scratch = scratch
+        if let data = try? Data(contentsOf: scratch.root.appendingPathComponent("source-manifest.json")), let saved = try? JSONDecoder().decode([String: String].self, from: data) { fingerprints = saved }
+    }
     func capture(_ key: String, reply: Reply) throws {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(reply), name = DiagnosticScratch.digest(Data(key.utf8))
         let compressed = Gzip.compress(data)
         try scratch.write(compressed, name: name + ".source.gz")
-        lock.withLock { fingerprints[name] = DiagnosticScratch.digest(data) }
+        try lock.withLock {
+            fingerprints[name] = DiagnosticScratch.digest(data)
+            try JSONEncoder().encode(fingerprints).write(to: scratch.root.appendingPathComponent("source-manifest.json"), options: [.atomic, .completeFileProtection])
+        }
     }
     func read(_ key: String) throws -> Reply {
         let name = DiagnosticScratch.digest(Data(key.utf8))
         guard let data = Gzip.decompress(try Data(contentsOf: scratch.root.appendingPathComponent(name + ".source.gz"))) else { throw DiagnosticScratch.Failure.missingReplay }
+        guard lock.withLock({ fingerprints[name] }) == DiagnosticScratch.digest(data) else { throw DiagnosticScratch.Failure.corruptCapture }
         return try JSONDecoder().decode(Reply.self, from: data)
     }
     var digest: String { lock.withLock { DiagnosticScratch.digest(Data(fingerprints.sorted { $0.key < $1.key }.map { $0.key + ":" + $0.value }.joined(separator: "\n").utf8)) } }
@@ -72,7 +79,7 @@ final class DiagnosticSource: HealthSource, @unchecked Sendable {
         let r = try await call(key) { let p = try await base.anchoredPage(type, anchor: anchor, limit: limit); return .init(records: p.records, anchor: p.newAnchor, count: p.objectCount) }
         return AnchoredPage(records: r.records, newAnchor: r.anchor, objectCount: r.count)
     }
-    func dailyContext(from: Date, to: Date) async throws -> [Record] { try await base.dailyContext(from: from, to: to) }
+    func dailyContext(from: Date, to: Date) async throws -> [Record] { try await call("daily-records|\(from.msValue)|\(to.msValue)") { .init(records: try await base.dailyContext(from: from, to: to)) }.records }
     func dailyContextBatches(from: Date, to: Date, categories: Set<String>) async throws -> [DailyBatch] {
         try await call("daily|\(from.msValue)|\(to.msValue)|\(categories.sorted().joined(separator: ","))") {
             .init(groups: try await base.dailyContextBatches(from: from, to: to, categories: categories).map { .init(type: $0.typeId, category: $0.category, records: $0.records, note: $0.note, incomplete: $0.incomplete) })
@@ -92,13 +99,13 @@ final class RawReplayStore: @unchecked Sendable {
     final class Writer {
         let store: RawReplayStore, handle: FileHandle
         var fixture: Fixture, buffer = Data(), hash = SHA256()
+        let encoder = JSONEncoder()
         init(store: RawReplayStore, fixture: Fixture) throws {
-            self.store = store; self.fixture = fixture
+            self.store = store; self.fixture = fixture; encoder.outputFormatting = [.sortedKeys]
             let url = store.scratch.root.appendingPathComponent(fixture.name)
             FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.protectionKey: FileProtectionType.complete]); handle = try FileHandle(forWritingTo: url)
         }
         func append(_ reading: RawReading, id: String) throws {
-            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
             var row = try encoder.encode(Row(id: id, reading: reading)); row.append(10); hash.update(data: row); buffer.append(row); fixture.count += 1
             if buffer.count > 65_536 { try flush() }
         }
@@ -126,16 +133,17 @@ final class RawReplayStore: @unchecked Sendable {
             try Task.checkCancellation(); let r = try decoder.decode(Row.self, from: line).reading
             day.add(r); if !(unified && f.style == .cumulative) { hour.add(r) }
         }
-        var buffer = Data(), reversed: [Data] = []
+        var buffer = Data(), reversed: [Data] = [], hash = SHA256()
         if reverse && f.count > 100_000 { throw DiagnosticScratch.Failure.storageLimit }
         while let block = try file.read(upToCount: 65_536), !block.isEmpty {
-            buffer.append(block)
+            hash.update(data: block); buffer.append(block)
             while let newline = buffer.firstIndex(of: 10) {
                 let line = Data(buffer[..<newline]); buffer.removeSubrange(...newline)
                 if reverse { reversed.append(line) } else { try add(line) }
             }
         }
         if !buffer.isEmpty { if reverse { reversed.append(buffer) } else { try add(buffer) } }
+        guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == f.fingerprint else { throw DiagnosticScratch.Failure.corruptCapture }
         if reverse { for line in reversed.reversed() { try add(line) } }
         if unified && f.style == .cumulative { return day.cumulativeDailyHourly(includeHourly: true) }
         let daily = Dictionary(uniqueKeysWithValues: [DailyAgg.sum, .avg, .min, .max, .last].map { ($0.rawValue, day.daily($0)) })
