@@ -58,6 +58,15 @@ final class DiagnosticReportStore: @unchecked Sendable {
         let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
         return ((try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []).filter { $0.pathExtension == "json" }.compactMap { try? d.decode(DiagnosticRunReport.self, from: Data(contentsOf: $0)) }.sorted { $0.date > $1.date }
     }
+    /// A report still marked running while no suite is active means KROK stopped mid-run (crash, force-quit, restart).
+    /// Mark it paused so it can be resumed from its saved cases and replay captures.
+    func recoverInterrupted() {
+        for var report in reports() where report.status == "running" {
+            report.status = "paused"
+            report.text += "\nInterrupted: KROK stopped before this run finished (crash, force-quit or restart). Completed cases and replay captures are saved; Resume continues from the next step.\n"
+            try? save(report)
+        }
+    }
     /// Keeps the newest reports (and every paused one, which can still be resumed); older reports and their private captures go.
     func prune(keep: Int = 20) {
         let all = reports()

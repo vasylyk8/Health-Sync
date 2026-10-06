@@ -228,3 +228,43 @@ extension DiagnosticSuiteTests {
         catch { XCTAssertTrue(error is DiagnosticSuite.DiagnosticFailure) }
     }
 }
+
+
+extension DiagnosticSuiteTests {
+    func testTraceCapNeverDropsPhaseEventsSoTheTimelineSurvivesLongRuns() {
+        let r = SyncProbeRecorder()
+        for _ in 0..<(SyncProbeRecorder.traceCap + 500) { r.end(r.begin("hk.quantity", metric: "m", window: "w")) }
+        r.end(r.begin("phase.daily", metric: "sync", window: ""))
+        let snapshot = r.snapshot()
+        XCTAssertGreaterThan(snapshot.droppedTraceEvents, 0)
+        XCTAssertTrue(snapshot.events.contains { $0.name == "phase.daily" })
+        XCTAssertLessThanOrEqual(snapshot.events.count, SyncProbeRecorder.traceCap + 1)
+    }
+    func testCompactedStatsKeepSlowestWorkoutsAndFoldTheRestByCohort() {
+        let r = SyncProbeRecorder()
+        for i in 0..<400 {
+            let t = r.begin("detail.read", metric: "workout.HeartRate", window: "1to3y|type=37|local=\(i)")
+            r.end(t, count: 1)
+        }
+        let full = r.snapshot(), compact = r.snapshot(compact: true)
+        XCTAssertEqual(full.stats.keys.filter { $0.contains("|local=") }.count, 400)
+        XCTAssertEqual(compact.stats.keys.filter { $0.contains("|local=") }.count, 300)
+        let folded = compact.stats["workout.HeartRate|1to3y|type=37|detail.read"]
+        XCTAssertEqual(folded?.count, 100)
+        XCTAssertEqual(folded?.items, 100)
+        XCTAssertEqual(compact.stats.values.reduce(0) { $0 + $1.count }, 400)
+    }
+    func testInterruptedRunningReportBecomesResumable() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DiagnosticReportStore(root: root)
+        var running = DiagnosticRunReport(); running.status = "running"; running.preset = "Full initial-sync diagnosis"
+        var done = DiagnosticRunReport(); done.status = "complete"
+        try store.save(running); try store.save(done)
+        store.recoverInterrupted()
+        let byId = Dictionary(uniqueKeysWithValues: store.reports().map { ($0.id, $0) })
+        XCTAssertEqual(byId[running.id]?.status, "paused")
+        XCTAssertTrue(byId[running.id]?.text.contains("Interrupted") == true)
+        XCTAssertEqual(byId[done.id]?.status, "complete")
+    }
+}
