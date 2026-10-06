@@ -180,7 +180,7 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
 
     private func call(_ name: String, _ payload: [String: Any]) async throws -> Any? {
         _ = try await signIn()
-        return try await SyncProbe.measure("network.callable." + name) { try await functions.httpsCallable(name).call(payload).data }
+        return try await SyncProbe.measure("network.callable." + name) { () async throws -> Any? in try await functions.httpsCallable(name).call(payload).data }
     }
 }
 
