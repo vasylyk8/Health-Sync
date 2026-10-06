@@ -5,7 +5,7 @@ name: daily-check
 on:
   push:
     branches: ['feat/comprehensive-sync-diagnostics', main, 'ops/phone-to-server-check', 'fix/daily-release-build', 'fix/daily-result-retention', 'claude/relaxed-volta-g9ip9f', 'fix/health-completeness-regressions', 'perf/shared-reads-release', 'perf/daily-metric-concurrency', 'perf/phone-sync-comparison']
-    paths: ['.github/workflows/daily-check.yml', 'ios/HealthSync/Health/**', 'ios/HealthSync/Sync/**', 'firebase/functions/src/ingest/**', 'ios/HealthSyncUITests/DailyCheckUITests.swift', 'firebase/functions/test/unit/phone-batches.test.ts', 'firebase/functions/test/helpers/synthetic.ts']
+    paths: ['.github/workflows/daily-check.yml', 'ios/HealthSync/Health/**', 'ios/HealthSync/Sync/**', 'ios/HealthSync/Diagnostics/**', 'ios/HealthSync/Backend/**', 'firebase/functions/src/ingest/**', 'firebase/functions/src/diagnostics/**', 'ios/HealthSyncUITests/DailyCheckUITests.swift', 'firebase/functions/test/unit/phone-batches.test.ts', 'firebase/functions/test/helpers/synthetic.ts']
   workflow_dispatch:
 permissions:
   contents: read

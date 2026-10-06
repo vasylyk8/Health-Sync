@@ -94,11 +94,13 @@ final class DiagnosticSource: HealthSource, @unchecked Sendable {
 
 /// Raw conversion output before aggregation, retaining row order for order-sensitivity tests.
 final class RawReplayStore: @unchecked Sendable {
-    struct Fixture: Codable, Sendable { var name: String, type: String, from: Date, to: Date, style: SampleAggregator.Style, count: Int, fingerprint: String }
+    /// `unordered` is an order-independent (wrapping-sum) fingerprint of the readings, so two reads that deliver the same
+    /// Apple Health rows in a different order compare equal while a changed, added or missing row does not.
+    struct Fixture: Codable, Sendable { var name: String, type: String, from: Date, to: Date, style: SampleAggregator.Style, count: Int, fingerprint: String, unordered: String? = nil }
     struct Row: Codable { let id: String; let reading: RawReading }
     final class Writer {
         let store: RawReplayStore, handle: FileHandle
-        var fixture: Fixture, buffer = Data(), hash = SHA256()
+        var fixture: Fixture, buffer = Data(), hash = SHA256(), lanes: [UInt64] = [0, 0, 0, 0]
         let encoder = JSONEncoder()
         init(store: RawReplayStore, fixture: Fixture) throws {
             self.store = store; self.fixture = fixture; encoder.outputFormatting = [.sortedKeys]
@@ -107,11 +109,12 @@ final class RawReplayStore: @unchecked Sendable {
         }
         func append(_ reading: RawReading, id: String) throws {
             var row = try encoder.encode(Row(id: id, reading: reading)); row.append(10); hash.update(data: row); buffer.append(row); fixture.count += 1
+            SHA256.hash(data: row).withUnsafeBytes { bytes in for lane in 0..<4 { lanes[lane] &+= bytes.loadUnaligned(fromByteOffset: lane * 8, as: UInt64.self) } }
             if buffer.count > 65_536 { try flush() }
         }
         private func flush() throws { guard !buffer.isEmpty else { return }; try store.scratch.reserve(buffer.count); try handle.write(contentsOf: buffer); buffer.removeAll(keepingCapacity: true) }
         deinit { try? handle.close() }
-        func finish() throws { try flush(); try handle.close(); fixture.fingerprint = hash.finalize().map { String(format: "%02x", $0) }.joined(); try store.add(fixture) }
+        func finish() throws { try flush(); try handle.close(); fixture.fingerprint = hash.finalize().map { String(format: "%02x", $0) }.joined(); fixture.unordered = lanes.map { String($0) }.joined(separator: ","); try store.add(fixture) }
     }
     let scratch: DiagnosticScratch
     private let lock = NSLock(); private var fixtures: [Fixture] = []
@@ -124,6 +127,23 @@ final class RawReplayStore: @unchecked Sendable {
     }
     private func add(_ f: Fixture) throws { try lock.withLock { fixtures.append(f); try JSONEncoder().encode(fixtures).write(to: scratch.root.appendingPathComponent("raw-manifest.json"), options: [.atomic, .completeFileProtection]) } }
     var inventory: [Fixture] { lock.withLock { fixtures } }
+    /// One digest of everything read, per type summed over all windows: independent of read order, window chunking order and
+    /// concurrency. Nil when nothing was captured (every metric came from native statistics).
+    func unorderedDigest() -> String? {
+        let all = inventory
+        guard !all.isEmpty else { return nil }
+        var byType: [String: (count: Int, lanes: [UInt64])] = [:]
+        for f in all {
+            let parts = (f.unordered ?? "").split(separator: ",").compactMap { UInt64($0) }
+            guard parts.count == 4 else { return nil }
+            var entry = byType[f.type] ?? (count: 0, lanes: [0, 0, 0, 0])
+            entry.count += f.count
+            for lane in 0..<4 { entry.lanes[lane] &+= parts[lane] }
+            byType[f.type] = entry
+        }
+        let text = byType.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value.count):\($0.value.lanes.map { String($0) }.joined(separator: ","))" }.joined(separator: "\n")
+        return DiagnosticScratch.digest(Data(text.utf8))
+    }
     func replay(_ f: Fixture, unified: Bool, reverse: Bool = false) throws -> RawHistorySummary {
         var day = SampleAggregator(calendar: .current, from: f.from, to: f.to, style: f.style, granularity: .day)
         var hour = SampleAggregator(calendar: .current, from: f.from, to: f.to, style: f.style, granularity: .hour)

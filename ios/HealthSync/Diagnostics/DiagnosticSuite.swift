@@ -14,6 +14,37 @@ struct DiagnosticVariant: Codable, Sendable, Identifiable {
         }
         a.append(Self(id: "baseline-end")); return a
     }
+
+    static let families: Set<String> = ["all", "daily", "hourly", "workouts", "noHourly"]
+    static let faults: Set<String> = ["", "error", "empty", "partial", "network"]
+    static let maximumCases = 60
+
+    /// Every numeric, enumerated and path-bearing field is bounded; a typo is rejected, never silently run as the baseline.
+    var isValid: Bool {
+        id.range(of: "^[A-Za-z0-9_-]{1,80}$", options: .regularExpression) != nil
+            && (1...8).contains(width) && (0...64).contains(queryLimit) && (1...64).contains(detailWidth)
+            && (1...12).contains(uploadWidth) && (1...12).contains(groups) && (1...192).contains(batchSize) && (1...24).contains(chunkMonths)
+            && (1...16).contains(routeWidth) && (0...32).contains(historyCapacity) && (0...2_000_000).contains(cacheRows)
+            && Self.families.contains(family) && Self.faults.contains(fault)
+            && (strategy == "baseline" || InitialSyncExperiments.Strategy(rawValue: strategy) != nil)
+    }
+    /// The first case is the live reference every other case is compared with, so it must be an ordinary complete read.
+    var isCompleteLiveReference: Bool {
+        id == "baseline-start" && !replay && fault.isEmpty && family == "all" && includeRoutes && strategy == "baseline" && captureRaw && instrument
+    }
+    /// A case whose live read matches the reference's reader behaviour, so its source replies and raw readings are comparable.
+    func readsLikeReference(_ reference: Self) -> Bool {
+        !replay && fault.isEmpty && family == "all" && includeRoutes && strategy == "baseline" && cacheRows == 0 && chunkMonths == reference.chunkMonths
+    }
+    /// Cases that are expected to change output by design (known-regression readers) or are incomplete-data cost probes.
+    var isCostProbe: Bool { family != "all" || !includeRoutes }
+    var expectsDifference: Bool { id.contains("known-regression") }
+
+    static func validate(_ plan: [Self]) -> Bool {
+        guard !plan.isEmpty, plan.count <= maximumCases, let first = plan.first, first.isCompleteLiveReference, Set(plan.map(\.id)).count == plan.count, plan.allSatisfy(\.isValid) else { return false }
+        // A replay case reads the reference's captured replies, so a different window layout or scope would miss every key.
+        return plan.allSatisfy { !$0.replay || ($0.chunkMonths == first.chunkMonths && $0.family == "all" && $0.includeRoutes) }
+    }
 }
 
 enum DiagnosticSuite {
@@ -31,22 +62,30 @@ enum DiagnosticSuite {
         guard report.zone == TimeZone.current.identifier else { throw DiagnosticFailure.timeZoneChanged }
         let savedPlan = report.configuration["variantConfiguration"].flatMap { try? JSONDecoder().decode([DiagnosticVariant].self, from: Data($0.utf8)) }
         let plan = options.variants ?? savedPlan ?? DiagnosticVariant.plan(deep: options.deep)
-        guard !plan.isEmpty, plan.first?.id == "baseline-start", Set(plan.map(\.id)).count == plan.count,
-              plan.allSatisfy({ $0.id.range(of: "^[A-Za-z0-9_-]{1,80}$", options: .regularExpression) != nil && (1...8).contains($0.width) && (0...64).contains($0.queryLimit) && (1...64).contains($0.detailWidth) && (1...12).contains($0.uploadWidth) && (1...12).contains($0.groups) && (1...192).contains($0.batchSize) && (1...24).contains($0.chunkMonths) }) else { throw DiagnosticFailure.invalidConfiguration }
+        guard DiagnosticVariant.validate(plan) else { throw DiagnosticFailure.invalidConfiguration }
         if options.resume != nil && report.configuration["categories"] != categories.sorted().joined(separator: ",") { throw DiagnosticFailure.scopeChanged }
+        if let free = freeBytes(reports.root), free < minimumFreeBytes { throw DiagnosticFailure.lowStorage }
         if options.resume == nil {
             report.preset = options.deep ? "Deep investigation" : "Full initial-sync diagnosis"; report.cutoff = options.cutoff
             report.coverage = DiagnosticCoverage.inventory(scope, categories: categories)
-            report.configuration = ["uploadModel": "\(options.delay)s per batch", "categories": categories.sorted().joined(separator: ","), "variants": plan.map(\.id).joined(separator: ","), "keepCaptures": String(options.keepCaptures)]
+            report.configuration = ["uploadModel": "\(options.delay)s per batch", "categories": categories.sorted().joined(separator: ","), "variants": plan.map(\.id).joined(separator: ","), "keepCaptures": String(options.keepCaptures), "realTransfer": realUploader == nil ? "off" : "requested"]
             report.configuration["variantConfiguration"] = String(data: try JSONEncoder().encode(plan), encoding: .utf8)
             report.text = "\(report.preset)\n\(plan.count) full-history cases, fixed cutoff \(SleepNights.dayKey(report.cutoff, calendar: .current)). Every enabled metric is included.\nLocal uploads modeled at \(options.delay)s per batch. Phases overlap. Fresh app caches; Apple cache cannot be reset. Live cases include private capture/instrumentation overhead; replay excludes Apple Health latency.\n"
         }
-        if options.resume == nil { report.text += try DiagnosticFixtures.run().joined(separator: "\n") + "\n" }
+        if options.resume == nil {
+            let known = DiagnosticFixtures.run()
+            report.configuration["knownAnswerFailures"] = String(known.filter { $0.hasPrefix("FAIL") }.count)
+            report.text += known.joined(separator: "\n") + "\nNot exercised by this phone suite (covered only by unit/server tests, never inserted into Apple Health):\n" + DiagnosticFixtures.notExercised.map { "- " + $0 }.joined(separator: "\n") + "\n"
+        }
         let root = reports.root.appendingPathComponent(report.id + "-private")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let baselineRoot = root.appendingPathComponent("baseline-start")
         var reference: DiagnosticRecordIndex?
-        if report.cases.contains(where: { $0.name == "baseline-start" }) { reference = try DiagnosticRecordIndex(sink: DiagnosticBatchSink(root: baselineRoot.appendingPathComponent("batches"), delay: 0)) }
+        var baselineSink: DiagnosticBatchSink?
+        if report.cases.contains(where: { $0.name == "baseline-start" }) {
+            let sink = try DiagnosticBatchSink(root: baselineRoot.appendingPathComponent("batches"), delay: 0)
+            baselineSink = sink; reference = try DiagnosticRecordIndex(sink: sink)
+        }
         report.status = "running"
         onUpdate(report)
         defer { if report.status == "complete" && !options.keepCaptures { try? FileManager.default.removeItem(at: root) } }
@@ -54,6 +93,9 @@ enum DiagnosticSuite {
             if reference != nil {
                 let captured = RawReplayStore(scratch: try DiagnosticScratch(root: baselineRoot.appendingPathComponent("inputs")))
                 try rawChecks(captured, report: &report, deep: options.deep, reports: reports, onUpdate: onUpdate)
+            }
+            if let realUploader, let sink = baselineSink, report.configuration["realTransfer"] != "done" {
+                try await realTransfer(sink: sink, uploader: realUploader, report: &report, reports: reports, onUpdate: onUpdate)
             }
             for variant in plan where !report.cases.contains(where: { $0.name == variant.id }) {
                 try Task.checkCancellation()
@@ -116,31 +158,27 @@ enum DiagnosticSuite {
                 let index = try DiagnosticRecordIndex(sink: sink)
                 let comparison = try reference.map { try index.compare(to: $0) }
                 let complete = outcome == .finished && box.pending().isEmpty && box.state.detailsDone.count == box.state.workoutTotal && (selectedScope.dailyMetrics.isEmpty || box.state.dailyFullAt == saved.cutoff) && (selectedScope.hourly.isEmpty || box.state.hourlyAt == saved.cutoff)
-                var verdict = !complete ? "INCOMPLETE" : comparison?.equivalent == false ? (variant.replay ? "REPLAY REGRESSION" : "LIVE OUTPUT DIFFERENCE — source/reader investigation required") : "OUTPUT MATCHED in this run; personal accuracy not independently certified"
-                if !variant.fault.isEmpty { verdict += "; isolated fault-injection case, not a production timing" }
-                if variant.family != "all" || !variant.includeRoutes { verdict = "INCOMPLETE-DATA COST PROBE — not a full-sync optimization" }
                 let snapshot = probe.snapshot()
+                let referenceCase = report.cases.first(where: { $0.name == "baseline-start" })
+                let liveInput = variant.replay ? nil : sourceStore.digest
+                let liveRaw = variant.replay || !variant.captureRaw ? nil : raw.unorderedDigest()
+                let kind = classify(variant: variant, reference: plan[0], complete: complete, comparison: comparison, referenceCase: referenceCase, liveInput: liveInput, liveRaw: liveRaw)
+                var verdict = verdictText(kind)
+                if !variant.fault.isEmpty { verdict += "; isolated fault-injection case, not a production timing" }
                 if snapshot.devices.contains(where: { $0.thermal >= 2 }) { verdict += "; heat affected" }
-                report.cases.append(DiagnosticCaseReport(name: variant.id, transfer: "local simulated", elapsed: wall, records: index.count, complete: complete, verdict: verdict, changed: comparison?.changedRecords ?? 0, maximumDelta: comparison?.maximumDelta ?? 0, fields: comparison?.changedFields ?? [:], snapshot: snapshot))
+                if snapshot.droppedTraceEvents > 0 { verdict += "; trace truncated (\(snapshot.droppedTraceEvents) events dropped, summaries complete)" }
+                report.cases.append(DiagnosticCaseReport(name: variant.id, transfer: variant.replay ? "local simulated (fixed-input replay)" : "local simulated (live Apple Health)", elapsed: wall, records: index.count, complete: complete, verdict: verdict, changed: comparison?.changedRecords ?? 0, maximumDelta: comparison?.maximumDelta ?? 0, fields: comparison?.changedFields ?? [:], snapshot: snapshot, kind: kind, inputDigest: liveInput, rawDigest: liveRaw))
                 report.text += String(format: "\n%@: %.2fs elapsed · %d records · %@\n", variant.id, wall, index.count, verdict) + probe.summary() + "\nCounters: \(snapshot.counters)\n"
                 if let comparison { report.text += "Changed fields: \(comparison.changedFields) · max delta \(comparison.maximumDelta)\n" }
                 try reports.save(report); onUpdate(report)
                 if variant.id == "baseline-start" {
-                    reference = index
-                    updateCoverage(&report.coverage, sink: sink)
+                    reference = index; baselineSink = sink
+                    updateCoverage(&report.coverage, sink: sink, snapshot: snapshot)
                     try rawChecks(raw, report: &report, deep: options.deep, reports: reports, onUpdate: onUpdate)
+                    try reports.save(report); onUpdate(report)
+                    // A selected real probe sends the already-prepared private batches, never the production outbox.
+                    if let realUploader { try await realTransfer(sink: sink, uploader: realUploader, report: &report, reports: reports, onUpdate: onUpdate) }
                 }
-                // A selected real probe uses already-prepared private batches, never the production outbox.
-                if variant.id == "baseline-start", let realUploader {
-                    let t = ProcessInfo.processInfo.systemUptime
-                    for (type, file) in sink.batches {
-                        try Task.checkCancellation(); let data = try Data(contentsOf: file)
-                        try await realUploader.upload(batchId: UUID().uuidString.lowercased(), gz: data, sha256: DiagnosticScratch.digest(data), typeId: type)
-                    }
-                    if let transfer = realUploader as? any DiagnosticTransferReporting { report.text += transfer.transferSummary() + "\n" }
-                    report.text += "Isolated real transfer/readback: \(String(format: "%.2f", ProcessInfo.processInfo.systemUptime - t))s. This transfer runs after preparation, not an end-to-end pipelined upload.\n"
-                }
-                try reports.save(report); onUpdate(report)
                 if variant.id != "baseline-start" { try FileManager.default.removeItem(at: runRoot) }
             }
             if options.deep {
@@ -153,7 +191,11 @@ enum DiagnosticSuite {
                 report.text += "Representative probes complete; their timings are not full-sync completion times.\n"
             }
             report.status = "complete"
-            report.text += "\nCoverage: \(report.coverage.filter(\.enabled).count) enabled entries. See JSON for each metric.\nComplete. Faster candidates require repeated stable live runs; lower query counts alone do not qualify.\n"
+            if realUploader == nil, ["requested", "running"].contains(report.configuration["realTransfer"] ?? "") { report.configuration["realTransfer"] = "incomplete" }
+            let gate = accuracyGate(cases: report.cases, knownAnswerFailures: Int(report.configuration["knownAnswerFailures"] ?? "0") ?? 0, rawDiffer: Int(report.configuration["rawReplayDiffer"] ?? "0") ?? 0, orderSensitive: Int(report.configuration["rawReplayOrderSensitive"] ?? "0") ?? 0, realTransfer: report.configuration["realTransfer"] ?? "off")
+            report.configuration["accuracyGate"] = gate.verdict
+            report.text += "\n" + gate.lines.joined(separator: "\n") + "\n"
+            report.text += "\nCoverage: \(report.coverage.filter(\.enabled).count) enabled entries. See JSON for each metric.\nSuite finished. Finishing is not an accuracy pass: see the summary above. Faster candidates require repeated stable live runs; lower query counts alone do not qualify.\n"
             try reports.save(report); onUpdate(report); return report
         } catch {
             report.status = "paused"
@@ -167,8 +209,13 @@ enum DiagnosticSuite {
             try Task.checkCancellation()
             var live = report; live.text += "\nChecking raw replay: \(HealthTypes.shortName(f.type)) · \(f.count) readings"; onUpdate(live)
             let a = try raw.replay(f, unified: false), b = try raw.replay(f, unified: true)
-            report.text += "Raw aggregate replay \(HealthTypes.shortName(f.type)): \(rawEqual(a, b) ? "MATCH" : "DIFFER") · \(f.count) readings\n"
-            if deep && f.count <= 10_000 && !rawEqual(a, try raw.replay(f, unified: false, reverse: true)) { report.text += "ORDER-SENSITIVE aggregate: \(HealthTypes.shortName(f.type))\n" }
+            let agree = rawEqual(a, b)
+            report.text += "Raw aggregate replay \(HealthTypes.shortName(f.type)): \(agree ? "MATCH" : "DIFFER") · \(f.count) readings\n"
+            if !agree { report.configuration["rawReplayDiffer", default: "0"] = String((Int(report.configuration["rawReplayDiffer"] ?? "0") ?? 0) + 1) }
+            if deep && f.count <= 10_000 {
+                let reversed = try raw.replay(f, unified: false, reverse: true)
+                if !rawEqual(a, reversed) { report.text += "ORDER-SENSITIVE aggregate: \(HealthTypes.shortName(f.type))\n"; report.configuration["rawReplayOrderSensitive", default: "0"] = String((Int(report.configuration["rawReplayOrderSensitive"] ?? "0") ?? 0) + 1) }
+            }
             report.configuration["rawReplayCompleted"] = String(i + 1); try reports.save(report)
         }
     }
@@ -179,7 +226,7 @@ enum DiagnosticSuite {
         return true
     }
     private static func equalOptional(_ a: Double?, _ b: Double?) -> Bool { switch (a, b) { case (nil, nil): return true; case let (a?, b?): return abs(a - b) <= 1e-9; default: return false } }
-    private static func updateCoverage(_ rows: inout [DiagnosticCoverage], sink: DiagnosticBatchSink) {
+    private static func updateCoverage(_ rows: inout [DiagnosticCoverage], sink: DiagnosticBatchSink, snapshot: SyncProbeRecorder.Snapshot) {
         for (_, file) in sink.batches {
             guard let data = try? Data(contentsOf: file), let bytes = Gzip.decompress(data) else { continue }
             for line in bytes.split(separator: 10).dropFirst() {
@@ -194,9 +241,130 @@ enum DiagnosticSuite {
                 if let ty = (obj["ty"] ?? obj["st"]) as? String { for i in rows.indices where rows[i].metric == ty { rows[i].records += 1 } }
             }
         }
-        for i in rows.indices where rows[i].enabled { rows[i].status = rows[i].records > 0 ? "readable data" : "no readable data or not represented in returned records" }
+        for i in rows.indices where rows[i].enabled { rows[i].status = coverageStatus(rows[i], snapshot: snapshot) }
     }
-    enum DiagnosticFailure: Error { case thermalPause, timeZoneChanged, invalidConfiguration, scopeChanged }
+    /// A read that failed or was retried is not "no data", and an empty read never proves absence or denial.
+    static func coverageStatus(_ row: DiagnosticCoverage, snapshot: SyncProbeRecorder.Snapshot) -> String {
+        let prefix: String
+        switch row.family {
+        case "daily": prefix = "daily." + row.metric + "|"
+        case "hourly": prefix = "hourly." + row.metric + "|"
+        case "workout quantity": prefix = "workout." + row.metric + "|"
+        default: prefix = ""
+        }
+        let related = prefix.isEmpty ? [] : snapshot.stats.filter { $0.key.hasPrefix(prefix) }.map(\.value)
+        let errors = related.reduce(0) { $0 + $1.errors }, calls = related.reduce(0) { $0 + $1.count }
+        if row.records > 0 { return errors > 0 ? "readable data; \(errors) failed or retried read(s) recorded" : "readable data" }
+        if errors > 0 { return "read failed or was retried \(errors) time(s); not evidence of absent data" }
+        if calls > 0 { return "read completed but returned no records (absent data or no read permission; HealthKit does not say which)" }
+        return prefix.isEmpty ? "no records in the returned stream; no per-metric read timing exists for this entry" : "no records returned and no read recorded for this metric in the reference run"
+    }
+    enum DiagnosticFailure: Error, CustomStringConvertible {
+        case thermalPause, timeZoneChanged, invalidConfiguration, scopeChanged, lowStorage
+        var description: String {
+            switch self {
+            case .thermalPause: return "The phone is too hot. Let it cool, then resume."
+            case .timeZoneChanged: return "The time zone changed since this report started. Start a new diagnosis."
+            case .invalidConfiguration: return "The experiment configuration is not valid (the first case must be an ordinary live baseline-start; check numbers, names, family, fault and strategy)."
+            case .scopeChanged: return "The enabled data categories changed since this report started. Start a new diagnosis."
+            case .lowStorage: return "Not enough free storage for private replay captures (about 2 GB needed). Free space and try again."
+            }
+        }
+    }
+    static let minimumFreeBytes: Int64 = 2_000_000_000
+    static func freeBytes(_ url: URL) -> Int64? {
+        (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage
+    }
+
+    static func classify(variant: DiagnosticVariant, reference: DiagnosticVariant, complete: Bool, comparison: HistoryRecordComparison?, referenceCase: DiagnosticCaseReport?, liveInput: String?, liveRaw: String?) -> String {
+        if !complete { return "incomplete" }
+        if variant.isCostProbe { return "costProbe" }
+        if variant.id == reference.id { return "reference" }
+        guard comparison?.equivalent == false else { return "matched" }
+        if variant.replay { return "replayRegression" }
+        if variant.expectsDifference { return "knownRegression" }
+        if !variant.fault.isEmpty { return "recoveryDifference" }
+        guard variant.readsLikeReference(reference), let referenceCase else { return "candidateDifference" }
+        if let liveInput, liveInput == referenceCase.inputDigest { return "engineDifference" }
+        if let liveRaw, let rawReference = referenceCase.rawDigest, liveRaw == rawReference { return "readerDifference" }
+        return "sourceChanged"
+    }
+    static func verdictText(_ kind: String) -> String {
+        switch kind {
+        case "incomplete": return "INCOMPLETE — the case did not finish all required work"
+        case "costProbe": return "INCOMPLETE-DATA COST PROBE — not a full-sync optimization"
+        case "reference": return "REFERENCE CAPTURED — first live read; later cases are compared with it, not certified"
+        case "matched": return "OUTPUT MATCHED the reference record by record in this run (regression evidence only; Apple's private aggregation is not independently certified)"
+        case "replayRegression": return "REPLAY REGRESSION — identical captured inputs produced different records"
+        case "knownRegression": return "KNOWN-REGRESSION READER differs from the reference as expected — do not enable"
+        case "recoveryDifference": return "RECOVERY DIFFERENCE — the injected statistics fault changed records versus the reference"
+        case "engineDifference": return "ENGINE/ENCODING DIFFERENCE — identical source replies produced different records"
+        case "readerDifference": return "READER DIFFERENCE — identical raw readings produced different source replies"
+        case "sourceChanged": return "SOURCE OR READ-SET CHANGED — Apple Health responses differed from the reference run; not attributable to this configuration"
+        case "candidateDifference": return "CANDIDATE OUTPUT DIFFERENCE — this reader changes records versus the reference"
+        default: return kind
+        }
+    }
+
+    struct AccuracyGate: Sendable { let verdict: String; let lines: [String] }
+    static func accuracyGate(cases: [DiagnosticCaseReport], knownAnswerFailures: Int, rawDiffer: Int, orderSensitive: Int, realTransfer: String) -> AccuracyGate {
+        func count(_ kind: String) -> Int { cases.filter { $0.kind == kind }.count }
+        let replays = cases.filter { $0.transfer.contains("replay") }
+        let end = cases.first { $0.name == "baseline-end" }
+        let stability = end.map { $0.kind == "matched" ? "stable" : $0.kind == "incomplete" ? "not measured (baseline-end incomplete)" : "UNSTABLE (\($0.changed) records changed)" } ?? "not measured (no baseline-end)"
+        let failures = [("known-answer fixture", knownAnswerFailures), ("replay regression", count("replayRegression")), ("engine/encoding difference", count("engineDifference")), ("reader difference", count("readerDifference")), ("raw aggregate path disagreement", rawDiffer)].filter { $0.1 > 0 }
+        var lines = ["ACCURACY SUMMARY — record-by-record comparison with baseline-start (regression evidence, not independent certification)"]
+        lines.append("Known-answer fixtures: \(knownAnswerFailures == 0 ? "all passed" : "\(knownAnswerFailures) FAILED")")
+        lines.append("Repeat live baseline: \(stability)")
+        lines.append("Fixed-input replay: \(replays.filter { $0.kind == "matched" }.count) matched, \(count("replayRegression")) regressions")
+        lines.append("Raw aggregate replay: \(rawDiffer) path disagreements, \(orderSensitive) order-sensitive aggregates")
+        lines.append("Live matched: \(cases.filter { $0.kind == "matched" && !$0.transfer.contains("replay") }.count) · source/read-set changed: \(count("sourceChanged")) · reader differences: \(count("readerDifference")) · engine differences: \(count("engineDifference"))")
+        lines.append("Candidate readers differing: \(count("candidateDifference")) · recovery differences: \(count("recoveryDifference")) · known-regression readers that differed as expected: \(count("knownRegression"))")
+        lines.append("Incomplete cases: \(count("incomplete")) · incomplete-data cost probes (not accuracy results): \(count("costProbe"))")
+        lines.append("Isolated real transfer: \(realTransfer)")
+        let verdict: String
+        if !failures.isEmpty { verdict = "FAILED — " + failures.map { "\($0.1) \($0.0)" }.joined(separator: ", ") }
+        else if count("incomplete") > 0 { verdict = "INCOMPLETE — \(count("incomplete")) case(s) did not finish, so no accuracy conclusion for them" }
+        else if count("sourceChanged") > 0 || stability.hasPrefix("UNSTABLE") { verdict = "INCONCLUSIVE — Apple Health responses changed between live runs, so live differences cannot be attributed to a configuration" }
+        else if count("candidateDifference") + count("recoveryDifference") > 0 { verdict = "CANDIDATE DIFFERENCES — at least one reader or recovery path changed records; do not adopt it" }
+        else { verdict = "NO REGRESSION DETECTED in the tested cases (agreement with this phone's own reference reader only)" }
+        lines.append("OVERALL: " + verdict)
+        return AccuracyGate(verdict: verdict, lines: lines)
+    }
+
+    /// Sends the prepared private batches one by one to the isolated sandbox. Progress is checkpointed per batch so a
+    /// paused report resumes the remaining batches; a transfer that was never completed is reported as such.
+    static func realTransfer(sink: DiagnosticBatchSink, uploader: any Uploader, report: inout DiagnosticRunReport, reports: DiagnosticReportStore, onUpdate: @Sendable (DiagnosticRunReport) -> Void) async throws {
+        let batches = sink.batches
+        var done = Int(report.configuration["realTransferBatches"] ?? "0") ?? 0
+        var seconds = Double(report.configuration["realTransferSeconds"] ?? "0") ?? 0
+        report.configuration["realTransfer"] = "running"
+        let started = ProcessInfo.processInfo.systemUptime
+        do {
+            while done < batches.count {
+                try Task.checkCancellation()
+                let type = batches[done].0, file = batches[done].1
+                let data = try Data(contentsOf: file)
+                if data.count > 5 * 1024 * 1024 {
+                    // The sandbox endpoint accepts at most 5 MB per batch; say so instead of failing the whole transfer.
+                    report.configuration["realTransferSkipped"] = String((Int(report.configuration["realTransferSkipped"] ?? "0") ?? 0) + 1)
+                    done += 1; report.configuration["realTransferBatches"] = String(done); continue
+                }
+                try await uploader.upload(batchId: UUID().uuidString.lowercased(), gz: data, sha256: DiagnosticScratch.digest(data), typeId: type)
+                done += 1; report.configuration["realTransferBatches"] = String(done)
+                if done % 10 == 0 { var live = report; live.text += "\nIsolated real transfer: \(done)/\(batches.count) batches"; onUpdate(live); try reports.save(report) }
+            }
+        } catch {
+            report.configuration["realTransferSeconds"] = String(seconds + ProcessInfo.processInfo.systemUptime - started); throw error
+        }
+        seconds += ProcessInfo.processInfo.systemUptime - started
+        report.configuration["realTransferSeconds"] = String(seconds)
+        report.configuration["realTransfer"] = "done"
+        if let transfer = uploader as? any DiagnosticTransferReporting { report.text += "\n" + transfer.transferSummary() + "\n" }
+        if let skipped = report.configuration["realTransferSkipped"] { report.text += "Skipped \(skipped) batch(es) larger than the sandbox's 5 MB limit; they were not read back.\n" }
+        report.text += String(format: "Isolated real transfer/readback: %d batches in %.2fs of transfer time across this report's sessions. Each batch is ingested and read back separately in a request-local sandbox, serially after preparation; this is not an end-to-end pipelined initial upload and not cross-batch MCP certification.\n", batches.count, seconds)
+        try reports.save(report); onUpdate(report)
+    }
 }
 
 private final class DiagnosticTextBuffer: @unchecked Sendable {

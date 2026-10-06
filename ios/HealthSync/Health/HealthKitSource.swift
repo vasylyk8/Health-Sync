@@ -1686,6 +1686,7 @@ extension HealthKitSource {
             var types = 0, samples = 0, series = 0, seriesPoints = 0, fallbackUsed = 0, routes = 0, routePoints = 0
             var perType: [String: Double] = [:]
             for w in ws {
+                if Task.isCancelled { emit("Stopped"); return }
                 for q in specs(for: w) {
                     types += 1
                     var found: [HKQuantitySample] = []
@@ -1745,6 +1746,7 @@ extension HealthKitSource {
             var sizes = [Int](repeating: 0, count: 5)
             var done = 0
             for w in ws.prefix(24) {
+                if Task.isCancelled { emit("Stopped"); return }
                 let id = w.uuid.uuidString
                 guard let parts = try? await workoutParts(id: id) else { continue }
                 done += 1
@@ -1809,6 +1811,7 @@ extension HealthKitSource {
             let group = Array(ws.prefix(24))
             var pairs = 0, sameLoose = 0, sameStrict = 0, missingLoose = 0, extraLoose = 0, missingStrict = 0, extraStrict = 0, assocTotal = 0
             for w in group {
+                if Task.isCancelled { emit("Stopped"); return }
                 for q in specs(for: w) {
                     guard let a = try? await quantitySamples(q.type, predicate: HKQuery.predicateForObjects(from: w)),
                           let loose = try? await quantitySamples(q.type, predicate: windowPredicate(w, strict: false)),

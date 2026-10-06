@@ -55,6 +55,9 @@ struct DiagnosticsView: View {
         .interactiveDismissDisabled(model.suiteRunning)
     }
     @ViewBuilder private func reportContent(_ report: DiagnosticRunReport) -> some View {
+        if let gate = report.configuration["accuracyGate"] {
+            Text("Accuracy: " + gate).font(.subheadline.bold()).accessibilityIdentifier("diagnostics.accuracy")
+        }
         if let last = report.cases.last {
             let phases = last.snapshot.events.filter { $0.name.hasPrefix("phase.") }
             if !phases.isEmpty {

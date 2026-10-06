@@ -94,7 +94,9 @@ enum HealthBench {
                 do {
                     let result = try await DiagnosticSuite.run(scope: scope, categories: ["core"], options: options, sourceFactory: { selected in let source = HealthKitSource(scope: selected); source.debugFailingStatistics = forced; return source }, onUpdate: { _ in })
                     m.log("SUITEPATH forced=\(forced): \(result.text)")
-                    let passed = result.status == "complete" && result.cases.count == 6 && result.cases.allSatisfy { $0.complete && $0.changed == 0 }
+                    let gate = result.configuration["accuracyGate"] ?? "missing"
+                    m.log("SUITEPATH accuracy gate forced=\(forced): \(gate)")
+                    let passed = result.status == "complete" && result.cases.count == 6 && result.cases.allSatisfy { $0.complete && $0.changed == 0 } && gate.hasPrefix("NO REGRESSION DETECTED")
                     m.log(passed ? "SUITEPATH CHECK OK forced=\(forced)" : "SUITEPATH CHECK FAILED forced=\(forced)")
                 } catch { m.log("SUITEPATH CHECK FAILED forced=\(forced): \(error)") }
             }

@@ -34,6 +34,8 @@ struct DiagnosticCaseReport: Codable, Sendable {
     var name: String, transfer: String, elapsed: Double, records: Int, complete: Bool, verdict: String
     var changed = 0, maximumDelta = 0.0, fields: [String: Int] = [:]
     var snapshot: SyncProbeRecorder.Snapshot
+    /// Machine-readable verdict class, input fingerprints (live cases) for source-stability attribution.
+    var kind: String? = nil, inputDigest: String? = nil, rawDigest: String? = nil
 }
 final class DiagnosticReportStore: @unchecked Sendable {
     let root: URL
