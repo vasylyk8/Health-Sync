@@ -158,7 +158,7 @@ enum DiagnosticSuite {
                 let index = try DiagnosticRecordIndex(sink: sink)
                 let comparison = try reference.map { try index.compare(to: $0) }
                 let complete = outcome == .finished && box.pending().isEmpty && box.state.detailsDone.count == box.state.workoutTotal && (selectedScope.dailyMetrics.isEmpty || box.state.dailyFullAt == saved.cutoff) && (selectedScope.hourly.isEmpty || box.state.hourlyAt == saved.cutoff)
-                let snapshot = probe.snapshot()
+                let snapshot = probe.snapshot(compact: true)
                 let referenceCase = report.cases.first(where: { $0.name == "baseline-start" })
                 let liveInput = variant.replay ? nil : sourceStore.digest
                 let liveRaw = variant.replay || !variant.captureRaw ? nil : raw.unorderedDigest()
@@ -205,18 +205,25 @@ enum DiagnosticSuite {
     }
     private static func rawChecks(_ raw: RawReplayStore, report: inout DiagnosticRunReport, deep: Bool, reports: DiagnosticReportStore, onUpdate: @Sendable (DiagnosticRunReport) -> Void) throws {
         let completed = Int(report.configuration["rawReplayCompleted"] ?? "0") ?? 0
-        for (i, f) in raw.inventory.enumerated() where i >= completed {
+        let all = raw.inventory
+        for i in all.indices where i >= completed {
             try Task.checkCancellation()
-            var live = report; live.text += "\nChecking raw replay: \(HealthTypes.shortName(f.type)) · \(f.count) readings"; onUpdate(live)
-            let a = try raw.replay(f, unified: false), b = try raw.replay(f, unified: true)
-            let agree = rawEqual(a, b)
-            report.text += "Raw aggregate replay \(HealthTypes.shortName(f.type)): \(agree ? "MATCH" : "DIFFER") · \(f.count) readings\n"
-            if !agree { report.configuration["rawReplayDiffer", default: "0"] = String((Int(report.configuration["rawReplayDiffer"] ?? "0") ?? 0) + 1) }
-            if deep && f.count <= 10_000 {
-                let reversed = try raw.replay(f, unified: false, reverse: true)
-                if !rawEqual(a, reversed) { report.text += "ORDER-SENSITIVE aggregate: \(HealthTypes.shortName(f.type))\n"; report.configuration["rawReplayOrderSensitive", default: "0"] = String((Int(report.configuration["rawReplayOrderSensitive"] ?? "0") ?? 0) + 1) }
+            let f = all[i]
+            // One pool per fixture: this loop never suspends, so Foundation's temporary objects would otherwise pile up until it ends.
+            try autoreleasepool {
+                if i % 5 == 0 { var live = report; live.text += "\nChecking raw replay \(i + 1)/\(all.count): \(HealthTypes.shortName(f.type)) · \(f.count) readings"; onUpdate(live) }
+                let a = try raw.replay(f, unified: false), b = try raw.replay(f, unified: true)
+                let agree = rawEqual(a, b)
+                report.text += "Raw aggregate replay \(HealthTypes.shortName(f.type)): \(agree ? "MATCH" : "DIFFER") · \(f.count) readings\n"
+                if !agree { report.configuration["rawReplayDiffer", default: "0"] = String((Int(report.configuration["rawReplayDiffer"] ?? "0") ?? 0) + 1) }
+                if deep && f.count <= 10_000 {
+                    let reversed = try raw.replay(f, unified: false, reverse: true)
+                    if !rawEqual(a, reversed) { report.text += "ORDER-SENSITIVE aggregate: \(HealthTypes.shortName(f.type))\n"; report.configuration["rawReplayOrderSensitive", default: "0"] = String((Int(report.configuration["rawReplayOrderSensitive"] ?? "0") ?? 0) + 1) }
+                }
+                report.configuration["rawReplayCompleted"] = String(i + 1)
+                // Re-encoding the whole report for every fixture is wasteful; a crash costs at most a few seconds of re-checking.
+                if (i + 1) % 20 == 0 || i + 1 == all.count { try reports.save(report) }
             }
-            report.configuration["rawReplayCompleted"] = String(i + 1); try reports.save(report)
         }
     }
     static func rawEqual(_ a: RawHistorySummary, _ b: RawHistorySummary) -> Bool {

@@ -47,6 +47,7 @@ final class SyncProbeRecorder: @unchecked Sendable {
     private var dropped = 0
     private var counters: [String: Int] = [:]
     let trace: Bool
+    static let traceCap = 20_000
     init(trace: Bool = true) { self.trace = trace }
     func begin(_ name: String, metric: String, window: String) -> Token {
         let t = Token(id: UUID(), name: name, metric: metric, window: window, start: ProcessInfo.processInfo.systemUptime - origin)
@@ -60,7 +61,8 @@ final class SyncProbeRecorder: @unchecked Sendable {
             var s = stats[key] ?? Stat(); s.count += 1; s.errors += error ? 1 : 0; s.items += count; s.total += duration; s.maximum = max(s.maximum, duration)
             if s.samples.count < 512 { s.samples.append(duration) } else { let index = Int.random(in: 0..<s.count); if index < 512 { s.samples[index] = duration } }
             stats[key] = s
-            if trace { if events.count < 50_000 { events.append(Event(name: t.name, metric: t.metric, window: t.window, start: t.start, end: end, error: error, count: count)) } else { dropped += 1 } }
+            // The few phase.* events carry the timeline and completion-tail analysis, so the cap must never drop them.
+            if trace { if events.count < Self.traceCap || t.name.hasPrefix("phase.") { events.append(Event(name: t.name, metric: t.metric, window: t.window, start: t.start, end: end, error: error, count: count)) } else { dropped += 1 } }
         }
     }
     @MainActor func sampleDevice() {
@@ -79,8 +81,26 @@ final class SyncProbeRecorder: @unchecked Sendable {
     }
     func count(_ name: String, _ value: Int = 1) { lock.withLock { counters[name, default: 0] += value } }
     func set(_ name: String, _ value: Int) { lock.withLock { counters[name] = value } }
-    func snapshot() -> Snapshot {
-        lock.withLock { let elapsed = ProcessInfo.processInfo.systemUptime - origin; return Snapshot(schema: 1, elapsed: elapsed, stats: stats, events: events, devices: devices, counters: counters, droppedTraceEvents: dropped, oldestActiveSeconds: active.values.map { elapsed - $0.start }.max() ?? 0, active: active.count) }
+    /// `compact` is for the stored report: per-workout operation statistics are kept only for the slowest few hundred, and the
+    /// rest are folded into their cohort (same metric, age and type) so a 3,000-workout history does not make a 50 MB report.
+    func snapshot(compact: Bool = false) -> Snapshot {
+        lock.withLock { let elapsed = ProcessInfo.processInfo.systemUptime - origin; return Snapshot(schema: 1, elapsed: elapsed, stats: compact ? Self.compacted(stats) : stats, events: events, devices: devices, counters: counters, droppedTraceEvents: dropped, oldestActiveSeconds: active.values.map { elapsed - $0.start }.max() ?? 0, active: active.count) }
+    }
+    static func compacted(_ stats: [String: Stat], keepLocal: Int = 300) -> [String: Stat] {
+        let local = stats.filter { $0.key.contains("|local=") }
+        guard local.count > keepLocal else { return stats }
+        var out = stats.filter { !$0.key.contains("|local=") }
+        let keep = Set(local.sorted { $0.value.total > $1.value.total }.prefix(keepLocal).map(\.key))
+        for (key, stat) in local {
+            if keep.contains(key) { out[key] = stat; continue }
+            let folded = key.split(separator: "|", omittingEmptySubsequences: false).filter { !$0.hasPrefix("local=") }.joined(separator: "|")
+            var merged = out[folded] ?? Stat()
+            merged.count += stat.count; merged.errors += stat.errors; merged.items += stat.items; merged.total += stat.total
+            merged.maximum = max(merged.maximum, stat.maximum)
+            if merged.samples.count < 512 { merged.samples.append(contentsOf: stat.samples.prefix(512 - merged.samples.count)) }
+            out[folded] = merged
+        }
+        return out
     }
     static func unionDuration(_ events: [Event]) -> Double {
         var end = -Double.infinity, total = 0.0

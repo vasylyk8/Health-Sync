@@ -441,7 +441,7 @@ final class AppModel: ObservableObject {
         var report = DiagnosticRunReport(); report.preset = "Actual normal sync"; report.status = finished ? "complete" : result == "paused" ? "paused" : "incomplete"
         report.configuration["engineOutcome"] = result
         report.text = "Actual normal sync (real uploads), including account/configuration checks and engine retries. Engine outcome: \(result). Timings only; no diagnostic accuracy comparison.\n" + passive.summary()
-        report.cases = [DiagnosticCaseReport(name: "normal-sync", transfer: "production real", elapsed: passive.snapshot().elapsed, records: 0, complete: finished, verdict: "Timing only; engine outcome: \(result)", snapshot: passive.snapshot(), kind: finished ? "normalSync" : "incomplete")]
+        report.cases = [DiagnosticCaseReport(name: "normal-sync", transfer: "production real", elapsed: passive.snapshot().elapsed, records: 0, complete: finished, verdict: "Timing only; engine outcome: \(result)", snapshot: passive.snapshot(compact: true), kind: finished ? "normalSync" : "incomplete")]
         try? DiagnosticReportStore().save(report); reloadDiagnosticReports()
     }
 
@@ -795,7 +795,7 @@ final class AppModel: ObservableObject {
 
 
 extension AppModel {
-    func reloadDiagnosticReports() { let store = DiagnosticReportStore(); store.prune(); suiteReports = store.reports() }
+    func reloadDiagnosticReports() { let store = DiagnosticReportStore(); if !suiteRunning { store.recoverInterrupted() }; store.prune(); suiteReports = store.reports() }
     func deleteDiagnosticReport(_ report: DiagnosticRunReport) {
         let store = DiagnosticReportStore()
         for file in store.files(report.id) { try? FileManager.default.removeItem(at: file) }
