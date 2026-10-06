@@ -1,10 +1,12 @@
-# Signs the iOS app and uploads it to TestFlight. Manual, or on main after merges.
+# Signs the iOS app and uploads it to TestFlight. Manual, or on main after ios-ci has passed for that commit.
+# A red ios-ci on main means no automatic upload. A manual run is the deliberate override.
 name: testflight
 on:
   workflow_dispatch:
-  push:
+  workflow_run:
+    workflows: [ios-ci]
+    types: [completed]
     branches: [main]
-    paths: ['ios/**', 'shared/**']
 permissions:
   contents: read
   id-token: write
@@ -13,6 +15,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   upload:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push') }}
     runs-on: macos-latest
     timeout-minutes: 90
     env:
@@ -29,6 +32,8 @@ jobs:
         run: echo "::notice::Apple/Google secrets not set yet (docs/SETUP.md). Skipping."
       - if: env.HAS_SECRETS == 'true'
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - if: env.HAS_SECRETS == 'true'
         uses: google-github-actions/auth@v2
         with:

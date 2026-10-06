@@ -2,9 +2,6 @@
 # Run by hand (workflow_dispatch). Simulator speeds are not iPhone speeds; use it to compare strategies.
 name: shared-read-bench
 on:
-  push:
-    branches: ['perf/shared-reads-release']
-    paths: ['.github/workflows/shared-read-bench.yml', 'ios/HealthSync/Health/**', 'ios/HealthSyncUITests/HealthBenchUITests.swift', 'ios/HealthSync/Sync/**', 'ios/HealthSync/Support/SyncTiming.swift']
   workflow_dispatch:
     inputs:
       count:

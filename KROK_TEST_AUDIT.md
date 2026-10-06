@@ -42,7 +42,7 @@ Strengths worth keeping:
 
 1. **Deploy and TestFlight do not wait for CI.** `deploy.yml` and `testflight.yml` trigger on `push` to `main` independently of `server-ci` and `ios-ci`. `deploy.sh` runs no tests before `firebase deploy`. The only protection is the post-deploy `smoke.sh`, which is after production changed. Either run the tests inside the deploy workflow or put a `workflow_run`/required-check gate in front. I can't tell whether branch protection requires the checks to pass before merge. **Please confirm.**
 2. **`main` has been red on iOS and merged anyway.** ios-ci on `main` failed on #101 (run 456) and #102 (run 465). Both merged. #101's `test` job failed in "Build and test", and `release-collector` passed. The TestFlight workflow would have uploaded from that commit. Same pattern on PR branches: `ios-ci` and `qa-ios` red on the diagnostics PR #104 at every recent head. `ios-ci` is flaky or broken enough that people stopped treating red as a stop.
-3. **`reviewer-provision` failed on both of the last two `main` deploys (runs 50, 51).** Failing step: "Validate synthetic production dataset and reviewer access". This is the check that the App Review / directory reviewer account works. Failure reason unknown to me. Treat it as a real submission blocker until read.
+3. **`reviewer-provision` failed on both of the last two `main` deploys (runs 50, 51).** Failing step: "Validate synthetic production dataset and reviewer access" (`FAIL: tool inventory`). *Cause found after the first draft:* `verify-reviewer.mjs` asserted exactly 16 tools, but an OAuth connection now sees 18 (17 health tools plus `get_account`) since the race tools landed on Oct 3-4. A stale assertion, not a production fault. Fixed (see section 5). Steps after the inventory check never ran, so they are still unverified.
 4. **Weekly `evals` first run failed.** 19/22 passed. Failing case: ChatGPT answered 500 + 500 steps for a question expecting 1000. That looks like an over-strict grader (it should accept the sum), not a server bug, but the grader is the check and it's failing. Also `npm install` with `latest` for both SDKs took ~5 min and is unpinned and unlocked: the eval can break on any upstream release.
 
 ### P1. Coverage gaps in what matters for a health-data product
@@ -50,7 +50,7 @@ Strengths worth keeping:
 5. **Zero unit coverage on `index.ts`, `store/firestore.ts`, `auth/tokens.ts`, `auth/oauth-store.ts`; 17% on `account.ts`.** This is the auth, token, account-deletion and Firestore layer. The emulator suite touches some of it, but nothing measures how much. Add coverage to the integration run so this is visible.
 6. **No test asserts App Check behavior.** `ENFORCE_APP_CHECK` defaults to `false` and `deploy.sh` also defaults it to `false`. The app ships the App Attest entitlement, so the intent looks like enforcement. Either enforce it and test it, or document why not. **Question for you:** is App Check meant to be off at launch?
 7. **Firestore and Storage rules have 4 tests total.** Rules are the last line of defense for health data. Add negative tests for each collection (cross-user read/write, unauthenticated, field-level writes, listing).
-8. **Account deletion and "switching a group off deletes its data" are privacy promises with thin tests** (`account.test.ts` is 38 lines). Add an end-to-end deletion test against the emulator that asserts every collection and bucket prefix is empty afterward.
+8. **Account deletion.** *Correction to the first draft:* I called this thinly tested because `account.test.ts` is short. That was wrong: the emulator suite already covers tokens, OAuth credentials and grants, access log, product events, blobs, the user subtree and the auth user, and confirms other users' data survives. The remaining gap was a catch-all that fails if a *new* collection is added without a purge. Added (section 5). Two collections (`orphanBatches`, `rateLimits`) keep user-id-keyed tombstones for up to 30 days via TTL, by design.
 9. **No static analysis beyond ESLint-recommended and tsc.** No type-aware lint (`no-floating-promises`, `no-misused-promises`), which matters for an async Firestore/Express server. No SwiftLint/SwiftFormat. No secret scanning, CodeQL, dependabot/renovate, `shellcheck` (16 shell scripts), `ruff` (11 Python scripts that handle ASC and Firebase credentials), or `actionlint`. None of these are present in the repo.
 10. **The 6 skipped unit tests** are all `phone-batches.test.ts`, skipped unless `PHONE_BATCH_DIR` is set. By design they run in `daily-check` only. That check does not run on PRs to `main` unless the paths match, and it is hard-coded to a list of branches. A change to `server/ingest` on an unlisted branch skips the contract test silently.
 11. **iOS coverage is collected (`gatherCoverageData`) but never read or thresholded.**
@@ -115,8 +115,45 @@ Strengths worth keeping:
 
 ## 4. Open questions for you
 
-1. Is branch protection on `main` with required checks enabled? (Decides how severe P0-1 and P0-2 are.)
+1. ~~Is branch protection on `main` enabled?~~ **No**: the GitHub API reports `main` as `protected: false`. Turn it on (section 6).
 2. Should App Check be enforced at launch? (P1-6.)
-3. What did `reviewer-provision` fail on? I could not read the error. If you share the run log, I can say whether it's real.
+3. ~~What did `reviewer-provision` fail on?~~ Answered: stale tool count (section 5).
 4. Is `brotli-*.whl` used by anything outside this repo (e.g. a Cloud Functions Python step)?
 5. Is the weekly eval meant to be a hard gate (blocks release) or an advisory signal?
+
+---
+
+## 5. Changes made (branch `claude/awesome-hopper-yisoso`, not yet merged)
+
+| Change | Files |
+|---|---|
+| **Deploy waits for server tests.** `deploy.yml` calls `server-ci` first; a manual run has a `skip_ci` box for emergencies. | `deploy.yml`, `server-ci.yml` |
+| **TestFlight waits for `ios-ci` on that commit.** Triggered by `workflow_run` of a successful `ios-ci` push on `main`; the manual button is the override. The old `push` trigger is gone. | `testflight.yml` |
+| **No more double runs.** `server-ci`, `ios-ci`, `daily-check` run on pull requests and pushes to `main` only. Older runs on the same PR are cancelled. | `server-ci.yml`, `ios-ci.yml`, `daily-check.yml` |
+| **Smaller macOS bill.** `daily-check` runs 2 jobs (Debug, Release at width 2, the shipping width) on PRs and `main`; the full 6 only on manual dispatch. Four bench workflows are dispatch-only, as their own header comments already said. | `daily-check.yml`, `healthkit-bench.yml`, `phone-comparison-bench.yml`, `shared-read-bench.yml`, `diagnostic-suite-bench.yml` |
+| **Timeouts** added to `server-ci` (20 min), `deploy` (60), `evals` (20), `bootstrap` (60), `apple-auth-preflight` (10). | those files |
+| **Secret scan** (pinned, checksum-verified gitleaks 8.28.0) on PRs and `main`. Run locally over the full history first: no leaks found. | `secret-scan.yml` |
+| **Dependabot**, weekly and grouped: `firebase/functions` npm and GitHub Actions. | `.github/dependabot.yml` |
+| **Coverage floors** in `server-ci` (`@vitest/coverage-v8`): overall 83% lines / 75% branches, 90%+ on `query`, `readiness`, `ingest`. Set just under today's numbers, so it blocks regressions rather than demanding new tests. | `vitest.config.ts`, `package.json`, `package-lock.json`, `.gitignore` |
+| **Rules tests** 4 -> 13 tests: list and collection-group queries, updates and deletes, every server-owned path, unknown collections, anonymous callers; Storage size, empty, schema, checksum shape, upper-case id, delete, list, nesting. | `test/integration/rules.test.ts` |
+| **Catch-all deletion test**: scans every Firestore collection and subcollection after a purge for the user's id (passes today, so nothing leaks). | `test/integration/firestore.test.ts` |
+| **`reviewer-provision` fix**: expected tool count 16 -> 18. | `scripts/verify-reviewer.mjs` |
+
+**Checked here:** lint, typecheck, build clean; 407 unit tests pass with the coverage floors (and a deliberately high floor fails as it should); 37 emulator tests pass (was 28); `actionlint` clean on every workflow; `gitleaks` clean.
+
+**Not checkable here (needs a real run on GitHub):**
+- The deploy gate and the TestFlight `workflow_run` gate only take effect once merged to `main`, because both workflows run from the default branch.
+- `daily-check` and `ios-ci` need macOS. The matrix expression is syntax-checked, not executed.
+- Playwright was not run; `verify-reviewer.mjs` was syntax-checked only (it needs production credentials).
+- **Storage overwrite protection is unverified.** `storage.rules` says uploads are never overwritten, but the emulator accepts a second upload to the same path, so no test can confirm it. Cloud Storage should treat `allow create` as new-object-only; confirm once against a real project. Impact if wrong is small (a user replacing their own unprocessed batch).
+
+**Behavior changes to know about:**
+- Pushing a branch with no open PR no longer starts CI. Open a PR, or use "Run workflow".
+- A change that only touches `.github/workflows/ios-ci.yml` also triggers a TestFlight upload after it passes (previously the path filter excluded it).
+- `deploy.yml` still allows the `claude/youthful-planck-k7ff0m` branch; I left that alone because the branch still exists and may be in use.
+
+## 6. Still needs you (repo settings I can't change)
+
+1. **Turn on branch protection for `main`** with required checks `server-ci / test`, `ios-ci / test`, `ios-ci / release-collector`, `secret-scan / gitleaks`. Without it, the gates above only protect deploys, not merges. (Caveat: path-filtered workflows don't report on PRs that don't touch their paths, which makes required checks hang. Either remove the path filters on those two or use a ruleset that tolerates missing checks.)
+2. Enable **secret scanning and push protection** and **Dependabot alerts** under Settings > Code security.
+3. Decide on **App Check** enforcement (open question 2).

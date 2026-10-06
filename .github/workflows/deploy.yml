@@ -1,11 +1,17 @@
 # Deploys the server. Runs on main and the named development branch only: other feature branches share this backend with TestFlight testers and must not deploy.
 # Skips cleanly (with a notice) until the Google Cloud secrets from docs/SETUP.md exist.
+# Server tests (server-ci) must pass first. For an emergency, dispatch by hand with skip_ci ticked.
 name: deploy
 on:
   push:
     branches: [main, claude/youthful-planck-k7ff0m]
     paths: ['firebase/**', 'shared/**', 'scripts/**', '.github/workflows/deploy.yml']
   workflow_dispatch:
+    inputs:
+      skip_ci:
+        description: Deploy without running the server tests first (emergencies only)
+        type: boolean
+        default: false
 permissions:
   contents: read
   id-token: write
@@ -13,8 +19,14 @@ concurrency:
   group: deploy
   cancel-in-progress: false
 jobs:
+  test:
+    if: ${{ !inputs.skip_ci }}
+    uses: ./.github/workflows/server-ci.yml
   deploy:
+    needs: test
+    if: ${{ !cancelled() && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       HAS_GCP: ${{ secrets.GCP_WIF_PROVIDER != '' }}
       GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}

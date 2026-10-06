@@ -2,9 +2,6 @@
 # Run by hand (workflow_dispatch). Simulator speeds are not iPhone speeds; use it to compare strategies.
 name: healthkit-bench
 on:
-  push:
-    branches: ['claude/laughing-knuth-5lkgy7']
-    paths: ['.github/workflows/healthkit-bench.yml', 'ios/HealthSync/Health/HealthBench.swift', 'ios/HealthSyncUITests/HealthBenchUITests.swift']
   workflow_dispatch:
     inputs:
       count:

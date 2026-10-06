@@ -131,7 +131,8 @@ try {
   client = await mcp(extended);
   current = 'tool inventory';
   const tools = (await client.listTools()).tools;
-  assert.equal(tools.length, 16);
+  // 17 health tools (TOOL_NAMES in src/mcp/server.ts) plus get_account for an OAuth connection; test/unit/oauth-http.test.ts pins the names.
+  assert.equal(tools.length, 18);
   assert(!/get_glucose|get_health_events/.test(client.getInstructions() ?? ''));
   for (const name of ['get_glucose', 'get_health_events']) {
     assert(!tools.some((tool) => tool.name === name));

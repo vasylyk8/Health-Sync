@@ -2,9 +2,6 @@
 # Run by hand (workflow_dispatch). Simulator speeds are not iPhone speeds; use it to compare strategies.
 name: diagnostic-suite-bench
 on:
-  push:
-    branches: ['feat/comprehensive-sync-diagnostics']
-    paths: ['ios/**', 'shared/**', '.github/workflows/diagnostic-suite-bench.yml']
   workflow_dispatch:
     inputs:
       count:

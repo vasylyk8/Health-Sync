@@ -22,6 +22,7 @@ permissions:
 jobs:
   run:
     runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
     env:
       TASK: ${{ inputs.task }}
       HAS_WIF: ${{ secrets.GCP_WIF_PROVIDER != '' }}

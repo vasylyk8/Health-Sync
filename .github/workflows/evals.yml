@@ -11,6 +11,7 @@ permissions:
 jobs:
   evals:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       HAS_GCP: ${{ secrets.GCP_WIF_PROVIDER != '' }}
     steps:

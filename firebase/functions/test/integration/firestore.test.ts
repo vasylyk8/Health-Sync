@@ -300,3 +300,41 @@ describe('getStatus', () => {
     expect(await getStatus(db, 'u7')).toEqual({ registered: true, deleting: false, setUp: { claude: true, chatgpt: false }, lastVisibleAt: 5, historySyncedBackTo: 100, typesWithData: 2, categories: DEFAULT_CATEGORIES });
   });
 });
+
+describe('account deletion leaves nothing behind', () => {
+  // Short-lived tombstones that carry the user id in a document id and expire on their own (TTL, see firestore.indexes.json).
+  const EXPIRING = new Set(['orphanBatches', 'rateLimits']);
+
+  async function referencing(uid: string): Promise<string[]> {
+    const found: string[] = [];
+    const scan = async (col: FirebaseFirestore.CollectionReference): Promise<void> => {
+      for (const d of (await col.get()).docs) {
+        if (!EXPIRING.has(col.id) && (d.id.includes(uid) || JSON.stringify(d.data()).includes(uid))) found.push(d.ref.path);
+        for (const sub of await d.ref.listCollections()) await scan(sub);
+      }
+    };
+    for (const col of await db.listCollections()) await scan(col);
+    return found;
+  }
+
+  it('scans every collection, so a collection added later without a purge fails here', async () => {
+    const { oauth, credentials } = await oauthCredentials();
+    const uid = 'oauth-user';
+    await createConnectorLink(db, uid, 'chatgpt', 'https://x.web.app');
+    await meta.publish({ uid, type: 'HR', batchId: 'b1', generation: 1, mutate: (m) => add(m, 'p1') });
+    await meta.markBatch(uid, 'b2', 'rejected', 'bad line');
+    await setRaceGoal(db, uid, { raceId: 'chicago-marathon-2026', raceName: 'Chicago Marathon', raceDate: '2026-10-11', goalSeconds: 12_600 });
+    await db.collection('accessLog').add({ uid, tool: 't' });
+    await recordProductEvent(db, uid, { name: 'app_opened', appVersion: '1.0.0' });
+    await registerDevice(db, 'bystander', 'UTC');
+    await createConnectorLink(db, 'bystander', 'claude', 'https://x.web.app');
+    expect((await referencing(uid)).length).toBeGreaterThan(3); // the scan must actually see the data it is meant to check
+
+    await beginDeletion(db, uid);
+    await expect(oauth.verifyAccessToken(credentials.access_token)).rejects.toThrow(/disconnected/);
+    await purgeUserData({ db, incoming: new DirBlobs(), data: new DirBlobs(), deleteAuthUser: async () => undefined }, uid);
+
+    expect(await referencing(uid)).toEqual([]);
+    expect((await referencing('bystander')).length).toBeGreaterThan(0); // and it leaves other users alone
+  });
+});

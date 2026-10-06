@@ -1,9 +1,12 @@
 name: ios-ci
+# Pull requests and main only: a branch with an open PR used to run everything twice, on macOS (10x minutes).
 on:
   push:
+    branches: [main]
     paths: ['ios/**', 'shared/**', '.github/workflows/ios-ci.yml']
   pull_request:
     paths: ['ios/**', 'shared/**', '.github/workflows/ios-ci.yml']
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
