@@ -7,6 +7,7 @@ enum PhoneSyncComparisonContext {
     @TaskLocal static var width: Int?
     @TaskLocal static var cutoff: Date?
     @TaskLocal static var queryLimit: Int?
+    @TaskLocal static var includeRoutes = true
     static var samplePredicate: NSPredicate? {
         cutoff.map { HKQuery.predicateForSamples(withStart: nil, end: $0, options: .strictEndDate) }
     }

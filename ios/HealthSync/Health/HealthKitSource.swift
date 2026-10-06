@@ -366,13 +366,13 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             for (i, q) in specs.enumerated() {
                 group.addTask {
                     let points = try await timing.measure("hk.quantity") {
-                        try await self.quantityPoints(q, workout: w, allowTimeWindow: q.name == "HeartRate" || Self.workoutWindowFallbackTypes.contains(q.id))
+                        try await SyncProbe.$metric.withValue("workout." + q.name) { try await self.quantityPoints(q, workout: w, allowTimeWindow: q.name == "HeartRate" || Self.workoutWindowFallbackTypes.contains(q.id)) }
                     }
                     return .series(i, points)
                 }
             }
             group.addTask {
-                let points = try await timing.measure("hk.route") { try await self.routePoints(w) }
+                let points = PhoneSyncComparisonContext.includeRoutes ? try await timing.measure("hk.route") { try await self.routePoints(w) } : []
                 return .route(points)
             }
             var out: [Part] = []
@@ -444,7 +444,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
         let gateProbe = SyncProbe.begin("query.gateWait")
         await queryGate.acquire()
         SyncProbe.end(gateProbe)
-        let queryProbe = SyncProbe.begin("query.callbackLatency"); defer { SyncProbe.end(queryProbe) }
+        let queryProbe = SyncProbe.begin("quantity.seriesCallbacks"); defer { SyncProbe.end(queryProbe) }
         defer { queryGate.release() }
         return try await withCheckedThrowingContinuation { cont in
             var acc: [SeriesPoint] = []
@@ -479,7 +479,10 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     private func locations(of route: HKWorkoutRoute) async throws -> [CLLocation] {
         let gate = routesShareQueryGate ? queryGate : routeGate
+        let routeAdmission = SyncProbe.begin("route.gateWait")
         await gate.acquire()
+        SyncProbe.end(routeAdmission)
+        let routeRead = SyncProbe.begin("route.callbacks"); defer { SyncProbe.end(routeRead) }
         defer { gate.release() }
         return try await withCheckedThrowingContinuation { cont in
             var acc: [CLLocation] = []

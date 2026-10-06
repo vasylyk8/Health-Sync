@@ -190,10 +190,12 @@ final class SyncTiming: @unchecked Sendable {
 
     /// A value that is replaced, not added to (for example the current number of parallel readers).
     func set(_ name: String, _ value: Int) {
+        SyncProbe.recorder?.set(name, value)
         lock.withLock { counters[name] = value }
     }
 
     func count(_ name: String, _ n: Int = 1) {
+        SyncProbe.recorder?.count(name, n)
         lock.withLock { counters[name, default: 0] += n }
     }
 

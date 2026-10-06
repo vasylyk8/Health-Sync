@@ -502,7 +502,7 @@ actor SyncEngine {
         var incomplete = false
         while chunkStart < end {
             try checkTime()
-            let chunkEnd = min(cal.date(byAdding: .month, value: max(1, config.diagnosticChunkMonths), to: chunkStart) ?? end, end)
+            let chunkEnd = min((config.diagnosticChunkMonths == 12 ? cal.date(byAdding: .year, value: 1, to: chunkStart) : cal.date(byAdding: .month, value: max(1, config.diagnosticChunkMonths), to: chunkStart)) ?? end, end)
             let started = Date()
             let batches: [DailyBatch]
             do {
@@ -595,7 +595,7 @@ actor SyncEngine {
         var chunkStart = start
         while chunkStart < end {
             try checkTime()
-            let chunkEnd = min(cal.date(byAdding: .month, value: max(1, config.diagnosticChunkMonths), to: chunkStart) ?? end, end)
+            let chunkEnd = min((config.diagnosticChunkMonths == 12 ? cal.date(byAdding: .year, value: 1, to: chunkStart) : cal.date(byAdding: .month, value: max(1, config.diagnosticChunkMonths), to: chunkStart)) ?? end, end)
             let started = Date()
             let records = try await SyncTiming.shared.measure("hk.hourlyChunk") { try await source.hourlySeries(from: chunkStart, to: chunkEnd) }
             let readMs = Self.ms(since: started)

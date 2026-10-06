@@ -804,10 +804,13 @@ extension AppModel {
                     guard let firebase = backend as? FirebaseBackend, let expected = defaults.string(forKey: Self.syncedUidKey) else { throw BackendError.notSignedIn }
                     upload = FirebaseDiagnosticUploader(backend: firebase, expectedUID: expected)
                 } else { upload = nil }
-                _ = try await DiagnosticSuite.run(scope: scope, categories: categories, options: options, sourceFactory: { HealthKitSource(scope: scope) }, realUploader: upload) { report in
+                let completed = try await DiagnosticSuite.run(scope: scope, categories: categories, options: options, sourceFactory: { HealthKitSource(scope: $0) }, realUploader: upload) { report in
                     Task { @MainActor in if self.suiteRunning { self.suiteReport = report } }
                 }
-            } catch { if suiteReport == nil { var r = DiagnosticRunReport(); r.text = "Could not start: \((error as NSError).domain) \((error as NSError).code)"; r.status = "paused"; suiteReport = r } }
+                self.suiteReport = completed
+            } catch {
+                if let current = suiteReport?.id, let saved = DiagnosticReportStore().reports().first(where: { $0.id == current }) { suiteReport = saved }
+                if suiteReport == nil { var r = DiagnosticRunReport(); r.text = "Could not start: \((error as NSError).domain) \((error as NSError).code)"; r.status = "paused"; suiteReport = r } }
             await engine.resumeAfterDiagnostic()
             suiteRunning = false; benchmarkRunning = false; suiteTask = nil
             UIApplication.shared.isIdleTimerDisabled = false; reloadDiagnosticReports()

@@ -10,6 +10,9 @@ final class DiagnosticScratch: @unchecked Sendable {
     init(root: URL, limit: Int = 1_000_000_000) throws {
         self.root = root; self.limit = limit
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let existing = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        bytes = existing.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+        guard bytes <= limit else { throw Failure.storageLimit }
         var url = root; var values = URLResourceValues(); values.isExcludedFromBackup = true; try url.setResourceValues(values)
     }
     func reserve(_ count: Int) throws { try lock.withLock { guard count >= 0, bytes + count <= limit else { throw Failure.storageLimit }; bytes += count } }
@@ -46,8 +49,8 @@ final class SourceReplayStore: @unchecked Sendable {
 
 final class DiagnosticSource: HealthSource, @unchecked Sendable {
     let base: any HealthSource, store: SourceReplayStore
-    let replay: Bool
-    init(base: any HealthSource, store: SourceReplayStore, replay: Bool) { self.base = base; self.store = store; self.replay = replay }
+    let replay: Bool, omitWorkouts: Bool
+    init(base: any HealthSource, store: SourceReplayStore, replay: Bool, omitWorkouts: Bool = false) { self.base = base; self.store = store; self.replay = replay; self.omitWorkouts = omitWorkouts }
     var isAvailable: Bool { base.isAvailable }
     func requestAuthorization(scope: SyncScope) async throws {}
     func observeWorkouts(onChange: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {}
@@ -59,7 +62,7 @@ final class DiagnosticSource: HealthSource, @unchecked Sendable {
         try SyncProbe.measureSync("capture.source") { try store.capture(key, reply: reply) }; return reply
     }
     func workouts(from: Date, to: Date) async throws -> [Record] { try await call("recent|\(from.msValue)|\(to.msValue)") { .init(records: try await base.workouts(from: from, to: to)) }.records }
-    func workoutIndex() async throws -> [WorkoutRef] { try await call("index") { .init(refs: try await base.workoutIndex().map { .init(id: $0.id, start: $0.start) }) }.refs.map { WorkoutRef(id: $0.id, start: $0.start) } }
+    func workoutIndex() async throws -> [WorkoutRef] { if omitWorkouts { return [] }; return try await call("index") { .init(refs: try await base.workoutIndex().map { .init(id: $0.id, start: $0.start) }) }.refs.map { WorkoutRef(id: $0.id, start: $0.start) } }
     func workoutDetail(id: String, gen: Int64) async throws -> [Record]? {
         let result = try await call("detail|\(id)|\(gen)") { let r = try await base.workoutDetail(id: id, gen: gen); return .init(records: r ?? [], absent: r == nil) }
         return result.absent ? nil : result.records
@@ -100,25 +103,40 @@ final class RawReplayStore: @unchecked Sendable {
             if buffer.count > 65_536 { try flush() }
         }
         private func flush() throws { guard !buffer.isEmpty else { return }; try store.scratch.reserve(buffer.count); try handle.write(contentsOf: buffer); buffer.removeAll(keepingCapacity: true) }
-        func finish() throws { try flush(); try handle.close(); fixture.fingerprint = hash.finalize().map { String(format: "%02x", $0) }.joined(); store.add(fixture) }
+        deinit { try? handle.close() }
+        func finish() throws { try flush(); try handle.close(); fixture.fingerprint = hash.finalize().map { String(format: "%02x", $0) }.joined(); try store.add(fixture) }
     }
     let scratch: DiagnosticScratch
     private let lock = NSLock(); private var fixtures: [Fixture] = []
-    init(scratch: DiagnosticScratch) { self.scratch = scratch }
+    init(scratch: DiagnosticScratch) {
+        self.scratch = scratch
+        if let data = try? Data(contentsOf: scratch.root.appendingPathComponent("raw-manifest.json")), let saved = try? JSONDecoder().decode([Fixture].self, from: data) { fixtures = saved }
+    }
     func writer(type: String, from: Date, to: Date, style: SampleAggregator.Style) throws -> Writer {
         try Writer(store: self, fixture: Fixture(name: UUID().uuidString + ".raw.ndjson", type: type, from: from, to: to, style: style, count: 0, fingerprint: ""))
     }
-    private func add(_ f: Fixture) { lock.withLock { fixtures.append(f) } }
+    private func add(_ f: Fixture) throws { try lock.withLock { fixtures.append(f); try JSONEncoder().encode(fixtures).write(to: scratch.root.appendingPathComponent("raw-manifest.json"), options: [.atomic, .completeFileProtection]) } }
     var inventory: [Fixture] { lock.withLock { fixtures } }
     func replay(_ f: Fixture, unified: Bool, reverse: Bool = false) throws -> RawHistorySummary {
         var day = SampleAggregator(calendar: .current, from: f.from, to: f.to, style: f.style, granularity: .day)
         var hour = SampleAggregator(calendar: .current, from: f.from, to: f.to, style: f.style, granularity: .hour)
-        let data = try Data(contentsOf: scratch.root.appendingPathComponent(f.name), options: .mappedIfSafe)
-        let rows = data.split(separator: 10)
-        for line in (reverse ? Array(rows.reversed()) : rows) {
-            try Task.checkCancellation(); let r = try JSONDecoder().decode(Row.self, from: Data(line)).reading
+        let file = try FileHandle(forReadingFrom: scratch.root.appendingPathComponent(f.name)); defer { try? file.close() }
+        let decoder = JSONDecoder()
+        func add(_ line: Data) throws {
+            try Task.checkCancellation(); let r = try decoder.decode(Row.self, from: line).reading
             day.add(r); if !(unified && f.style == .cumulative) { hour.add(r) }
         }
+        var buffer = Data(), reversed: [Data] = []
+        if reverse && f.count > 100_000 { throw DiagnosticScratch.Failure.storageLimit }
+        while let block = try file.read(upToCount: 65_536), !block.isEmpty {
+            buffer.append(block)
+            while let newline = buffer.firstIndex(of: 10) {
+                let line = Data(buffer[..<newline]); buffer.removeSubrange(...newline)
+                if reverse { reversed.append(line) } else { try add(line) }
+            }
+        }
+        if !buffer.isEmpty { if reverse { reversed.append(buffer) } else { try add(buffer) } }
+        if reverse { for line in reversed.reversed() { try add(line) } }
         if unified && f.style == .cumulative { return day.cumulativeDailyHourly(includeHourly: true) }
         let daily = Dictionary(uniqueKeysWithValues: [DailyAgg.sum, .avg, .min, .max, .last].map { ($0.rawValue, day.daily($0)) })
         return RawHistorySummary(daily: daily, hourly: hour.hourly(avg: true, min: true, max: true))

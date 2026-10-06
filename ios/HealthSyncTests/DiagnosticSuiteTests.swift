@@ -62,3 +62,17 @@ final class DiagnosticSuiteTests: XCTestCase {
         for file in store.files(r.id) { XCTAssertTrue(FileManager.default.fileExists(atPath: file.path)) }
     }
 }
+
+extension DiagnosticSuiteTests {
+    func testKnownAnswerLibraryIsReadOnlyAndCoversDSTSourcesAndMeans() throws {
+        XCTAssertGreaterThanOrEqual(try DiagnosticFixtures.run().count, 8)
+    }
+    func testWholeSuiteCapturesAndReplaysAnEmptyHistoryWithoutInventingData() async throws {
+        var options = DiagnosticSuite.Options(); options.delay = 0
+        options.variants = [DiagnosticVariant(id: "baseline-start"), DiagnosticVariant(id: "replay", replay: true), DiagnosticVariant(id: "baseline-end")]
+        let result = try await DiagnosticSuite.run(scope: .empty, categories: ["core"], options: options, sourceFactory: { _ in FakeHealthSource() }, onUpdate: { _ in })
+        XCTAssertEqual(result.status, "complete"); XCTAssertEqual(result.cases.count, 3)
+        XCTAssertTrue(result.cases.allSatisfy { $0.complete && $0.records == 0 })
+        let store = DiagnosticReportStore(); for file in store.files(result.id) { try? FileManager.default.removeItem(at: file) }
+    }
+}

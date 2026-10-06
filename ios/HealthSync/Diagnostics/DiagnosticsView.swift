@@ -1,8 +1,11 @@
 import SwiftUI
+import Charts
 
 struct DiagnosticsView: View {
     @EnvironmentObject var model: AppModel
-    @State private var deep = false, real = false, retain = false
+    @State private var deep = false
+    @State private var real = false
+    @State private var retain = false
     @State private var selected: DiagnosticRunReport?
     var body: some View {
         NavigationStack {
@@ -37,6 +40,15 @@ struct DiagnosticsView: View {
         .interactiveDismissDisabled(model.suiteRunning)
     }
     @ViewBuilder private func reportContent(_ report: DiagnosticRunReport) -> some View {
+        if let last = report.cases.last {
+            let phases = last.snapshot.events.filter { $0.name.hasPrefix("phase.") }
+            if !phases.isEmpty {
+                Chart(Array(phases.enumerated()), id: \.offset) { _, event in
+                    BarMark(xStart: .value("Start", event.start), xEnd: .value("End", event.end), y: .value("Phase", event.name))
+                }.frame(height: 220).accessibilityLabel("Overlapping phase timeline, elapsed seconds")
+                Text("Phase durations overlap. The timeline shows when each starts and finishes.").font(.footnote)
+            }
+        }
         Text(report.text).font(.caption.monospaced()).textSelection(.enabled).accessibilityIdentifier("diagnostics.report")
         if !model.suiteRunning {
             ShareLink("Share summary", item: report.text)

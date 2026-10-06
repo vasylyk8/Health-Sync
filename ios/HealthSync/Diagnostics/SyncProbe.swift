@@ -36,13 +36,14 @@ final class SyncProbeRecorder: @unchecked Sendable {
     }
     struct Snapshot: Codable, Sendable {
         let schema: Int; let elapsed: Double; let stats: [String: Stat]; let events: [Event]
-        let devices: [DeviceSample]; let droppedTraceEvents: Int; let oldestActiveSeconds: Double; let active: Int
+        let devices: [DeviceSample]; let counters: [String: Int]; let droppedTraceEvents: Int; let oldestActiveSeconds: Double; let active: Int
     }
     private let lock = NSLock()
     private let origin = ProcessInfo.processInfo.systemUptime
     private var stats: [String: Stat] = [:], events: [Event] = [], devices: [DeviceSample] = []
     private var active: [UUID: Token] = [:]
     private var dropped = 0
+    private var counters: [String: Int] = [:]
     let trace: Bool
     init(trace: Bool = true) { self.trace = trace }
     func begin(_ name: String, metric: String, window: String) -> Token {
@@ -68,8 +69,10 @@ final class SyncProbeRecorder: @unchecked Sendable {
         let d = DeviceSample(at: ProcessInfo.processInfo.systemUptime - origin, thermal: ProcessInfo.processInfo.thermalState.rawValue, lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled, cpuSeconds: cpu, residentBytes: result == KERN_SUCCESS ? info.resident_size : 0, battery: UIDevice.current.batteryLevel, charging: UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full, foreground: UIApplication.shared.applicationState == .active, protectedData: UIApplication.shared.isProtectedDataAvailable)
         lock.withLock { devices.append(d) }
     }
+    func count(_ name: String, _ value: Int = 1) { lock.withLock { counters[name, default: 0] += value } }
+    func set(_ name: String, _ value: Int) { lock.withLock { counters[name] = value } }
     func snapshot() -> Snapshot {
-        lock.withLock { let elapsed = ProcessInfo.processInfo.systemUptime - origin; return Snapshot(schema: 1, elapsed: elapsed, stats: stats, events: events, devices: devices, droppedTraceEvents: dropped, oldestActiveSeconds: active.values.map { elapsed - $0.start }.max() ?? 0, active: active.count) }
+        lock.withLock { let elapsed = ProcessInfo.processInfo.systemUptime - origin; return Snapshot(schema: 1, elapsed: elapsed, stats: stats, events: events, devices: devices, counters: counters, droppedTraceEvents: dropped, oldestActiveSeconds: active.values.map { elapsed - $0.start }.max() ?? 0, active: active.count) }
     }
     static func unionDuration(_ events: [Event]) -> Double {
         var end = -Double.infinity, total = 0.0
