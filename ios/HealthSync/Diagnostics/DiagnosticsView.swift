@@ -6,6 +6,9 @@ struct DiagnosticsView: View {
     @State private var deep = false
     @State private var real = false
     @State private var retain = false
+    @State private var custom = false
+    @State private var configuration = ""
+    @State private var configurationError = ""
     @State private var selected: DiagnosticRunReport?
     var body: some View {
         NavigationStack {
@@ -17,7 +20,19 @@ struct DiagnosticsView: View {
                         Toggle("Keep private replay on this phone", isOn: $retain)
                         Text("Every enabled metric, full history, record comparisons and saved reports. Keep KROK open and unlocked. Multiple full reads can take an hour or more. Apple’s cache cannot be reset.").font(.footnote)
                         Text("Real upload sends private test batches to an authenticated temporary server sandbox. It does not replace synced data. Replay stays on this phone.").font(.footnote)
-                        Button("Start full diagnosis") { model.runDiagnosticSuite(deep: deep, real: real, retain: retain) }.accessibilityIdentifier("diagnostics.start")
+                        Toggle("Custom experiment configuration", isOn: $custom)
+                        if custom {
+                            Text("Adjust the saved experiment matrix without another app build. Start with the baseline and keep a final baseline for comparison.").font(.footnote)
+                            TextEditor(text: $configuration).font(.caption.monospaced()).frame(minHeight: 180)
+                            Button("Load deep defaults") { let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; configuration = (try? String(data: encoder.encode(DiagnosticVariant.plan(deep: true)), encoding: .utf8)) ?? "" }
+                            if !configurationError.isEmpty { Text(configurationError).foregroundStyle(.red) }
+                        }
+                        Button("Start full diagnosis") {
+                            if custom {
+                                do { let variants = try JSONDecoder().decode([DiagnosticVariant].self, from: Data(configuration.utf8)); configurationError = ""; model.runDiagnosticSuite(deep: deep, real: real, retain: retain, variants: variants) }
+                                catch { configurationError = "The experiment JSON could not be read. Load defaults and edit their values." }
+                            } else { model.runDiagnosticSuite(deep: deep, real: real, retain: retain) }
+                        }.accessibilityIdentifier("diagnostics.start")
                         Button("Record next normal sync") { model.recordNextSync(); model.showDiagnostics = false }.accessibilityIdentifier("diagnostics.record")
                     }
                 } else {

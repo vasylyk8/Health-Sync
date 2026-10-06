@@ -797,16 +797,16 @@ extension AppModel {
         let previous = syncTask; previous?.cancel()
         syncTask = Task { await previous?.value; guard !Task.isCancelled else { return }; captureNextSync = true; await syncNow() }
     }
-    func runDiagnosticSuite(deep: Bool, real: Bool, retain: Bool, resume: DiagnosticRunReport? = nil) {
+    func runDiagnosticSuite(deep: Bool, real: Bool, retain: Bool, resume: DiagnosticRunReport? = nil, variants: [DiagnosticVariant]? = nil) {
         guard !benchmarkRunning, Theme.isInternalBuild else { return }
-        benchmarkRunning = true; suiteRunning = true; showDiagnostics = true
+        benchmarkRunning = true; suiteRunning = true; showDiagnostics = true; suiteReport = resume
         UIApplication.shared.isIdleTimerDisabled = true
         let scope = self.scope, categories = self.enabledCategories
         suiteTask = Task {
             syncTask?.cancel(); await syncTask?.value; syncTask = nil
             do {
                 try await engine.pauseForDiagnostic()
-                var options = DiagnosticSuite.Options(); options.deep = deep; options.resume = resume; options.keepCaptures = retain
+                var options = DiagnosticSuite.Options(); options.deep = deep; options.resume = resume; options.keepCaptures = retain; options.variants = variants
                 let upload: (any Uploader)?
                 if real {
                     guard let firebase = backend as? FirebaseBackend, let expected = defaults.string(forKey: Self.syncedUidKey) else { throw BackendError.notSignedIn }

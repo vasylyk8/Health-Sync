@@ -9,13 +9,15 @@ final class DiagnosticBatchSink: Uploader, @unchecked Sendable {
     private var files: [(String, URL)] = []
     private var bytes = 0, peak = 0, active = 0
     private var elapsed = 0.0
-    init(root: URL, delay: TimeInterval) throws {
-        self.root = root; self.delay = delay
+    private var failOnce: Bool
+    init(root: URL, delay: TimeInterval, failOnce: Bool = false) throws {
+        self.root = root; self.delay = delay; self.failOnce = failOnce
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         if let data = try? Data(contentsOf: root.appendingPathComponent("manifest.json")), let saved = try? JSONDecoder().decode([SavedBatch].self, from: data) { files = saved.map { ($0.type, root.appendingPathComponent($0.file)) } }
     }
     func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {
         try Task.checkCancellation()
+        if lock.withLock({ let fail = failOnce; failOnce = false; return fail }) { throw URLError(.networkConnectionLost) }
         let digest = SHA256.hash(data: gz).map { String(format: "%02x", $0) }.joined()
         guard digest == sha256 else { throw InvalidBatch() }
         let url = root.appendingPathComponent(UUID().uuidString).appendingPathExtension("gz")

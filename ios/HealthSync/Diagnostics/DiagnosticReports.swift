@@ -10,7 +10,14 @@ struct DiagnosticCoverage: Codable, Sendable {
         a += scope.workoutQuantities.map { Self(family: "workout quantity", metric: $0.name, category: "core", enabled: true, status: "not tested") }
         a += scope.events.map { Self(family: "event", metric: $0.name, category: $0.category, enabled: categories.contains($0.category), status: "not tested") }
         a += ["summaries", "routes", "series", "profile"].map { Self(family: "other", metric: $0, category: "core", enabled: true, status: "not tested") }
-        return a.map { var row = $0; if !row.enabled { row.status = "disabled" }; return row }
+        if let file = HealthTypes.loadCoverage() {
+            let supported = HealthTypes.scope(file)
+            for m in file.dailyMetrics where !supported.dailyMetrics.contains(where: { $0.key == m.key }) { a.append(Self(family: "daily", metric: m.key, category: m.category ?? "core", enabled: false, status: "unavailable type/unit on this OS")) }
+            for m in file.hourlyMetrics ?? [] where !supported.hourly.contains(where: { $0.name == m.name }) { a.append(Self(family: "hourly", metric: m.name, category: "core", enabled: false, status: "unavailable type/unit on this OS")) }
+            for m in file.workoutQuantityTypes where !supported.workoutQuantities.contains(where: { $0.id == m.id }) { a.append(Self(family: "workout quantity", metric: HealthTypes.shortName(m.id), category: "core", enabled: false, status: "unavailable type/unit on this OS")) }
+            for m in file.eventTypes ?? [] where !supported.events.contains(where: { $0.name == m.name }) { a.append(Self(family: "event", metric: m.name, category: m.category, enabled: false, status: "unavailable type/unit on this OS")) }
+        }
+        return a.map { var row = $0; if !row.enabled && row.status == "not tested" { row.status = "disabled" }; return row }
     }
 }
 struct DiagnosticRunReport: Codable, Sendable, Identifiable {

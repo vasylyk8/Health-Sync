@@ -783,6 +783,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
     private func dailyStatisticsOnce(_ type: HKQuantityType, unit: HKUnit, agg: DailyAgg, scale: Double, from: Date, to: Date,
                                      calendar: Calendar, predicate: NSPredicate, options: HKStatisticsOptions,
                                      explicitSources: Bool = false) async throws -> [(String, Double)] {
+        if SyncProbe.statisticsFault == "error" { throw HKError(.errorInvalidArgument) }
+        if SyncProbe.statisticsFault == "empty" { return [] }
         if InitialSyncExperiments.strategy?.shared == true, [.avg, .min, .max].contains(agg),
            let cache = SharedRawHistory.statistics ?? InitialSyncExperiments.statistics {
             let (a, b) = InitialSyncExperiments.statisticsWindow(from: from, to: to, calendar: calendar)
@@ -830,6 +832,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
             let v = quantity.doubleValue(for: unit) * scale
             if v.isFinite { out.append((SleepNights.dayKey(stats.startDate, calendar: calendar), v)) }
         }
+        if SyncProbe.statisticsFault == "partial" { return out.filter { Int($0.0.suffix(2)) != 8 } }
         #if DEBUG
         if debugPartialDailyStatistics { return out.filter { Int($0.0.suffix(2)) != 8 } }
         #endif
@@ -838,6 +841,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     private func dailyStatisticsSnapshot(_ type: HKQuantityType, unit: HKUnit, from: Date, to: Date,
                                          calendar: Calendar, predicate: NSPredicate) async throws -> DailyStatisticsSnapshot {
+        if SyncProbe.statisticsFault == "error" { throw HKError(.errorInvalidArgument) }
+        if SyncProbe.statisticsFault == "empty" { return DailyStatisticsSnapshot(values: [:]) }
         #if DEBUG
         if debugFailingStatistics { throw HKError(.errorInvalidArgument) }
         if debugEmptyStatistics { return DailyStatisticsSnapshot(values: [:]) }
@@ -865,6 +870,7 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
                 }
             }
         }
+        if SyncProbe.statisticsFault == "partial" { result = result.mapValues { $0.filter { Int($0.0.suffix(2)) != 8 } } }
         #if DEBUG
         if debugPartialDailyStatistics { result = result.mapValues { $0.filter { Int($0.0.suffix(2)) != 8 } } }
         #endif
@@ -1154,6 +1160,8 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
 
     private func hourlyBucketsOnce(_ metric: HourlyMetric, from: Date, to: Date, predicate: NSPredicate,
                                    options: HKStatisticsOptions) async throws -> [HourBucket] {
+        if SyncProbe.statisticsFault == "error" { throw HKError(.errorInvalidArgument) }
+        if SyncProbe.statisticsFault == "empty" { return [] }
         #if DEBUG
         if debugFailingStatistics { throw HKError(.errorInvalidArgument) }
         if debugEmptyStatistics { return [] }
@@ -1182,6 +1190,10 @@ final class HealthKitSource: HealthSource, @unchecked Sendable {
                 bucket = HourBucket(t: stats.startDate.msValue, v: value(stats.averageQuantity()), lo: value(stats.minimumQuantity()), hi: value(stats.maximumQuantity()))
             }
             if bucket.v != nil || bucket.lo != nil || bucket.hi != nil { out.append(bucket) }
+        }
+        if SyncProbe.statisticsFault == "partial" {
+            var days = Set<String>()
+            return out.filter { days.insert(SleepNights.dayKey(Date(timeIntervalSince1970: Double($0.t) / 1000), calendar: Calendar.current)).inserted }
         }
         #if DEBUG
         if debugPartialHourlyStatistics {
@@ -1648,6 +1660,7 @@ extension HealthKitSource {
         // encoding; C2 splits one workout at a time into its parts; C3 is what was found.
         var rates = [Double?](repeating: nil, count: buckets.count)
         for (b, ws) in picks.enumerated() where !ws.isEmpty {
+            if Task.isCancelled { emit("Stopped"); return }
             let cpu0 = Self.cpuSeconds()
             let box = BenchBox()
             let jobs: [@Sendable () async -> Void] = ws.map { w in {
@@ -1728,6 +1741,7 @@ extension HealthKitSource {
             return Gzip.compress(body).count
         }
         for (b, ws) in picks.enumerated() where !ws.isEmpty {
+            if Task.isCancelled { emit("Stopped"); return }
             var sizes = [Int](repeating: 0, count: 5)
             var done = 0
             for w in ws.prefix(24) {
@@ -1791,6 +1805,7 @@ extension HealthKitSource {
 
         // D. Time window + same app vs the workout association: exactly the same samples? Faster?
         for (b, ws) in picks.enumerated() where !ws.isEmpty {
+            if Task.isCancelled { emit("Stopped"); return }
             let group = Array(ws.prefix(24))
             var pairs = 0, sameLoose = 0, sameStrict = 0, missingLoose = 0, extraLoose = 0, missingStrict = 0, extraStrict = 0, assocTotal = 0
             for w in group {
@@ -1827,6 +1842,7 @@ extension HealthKitSource {
         let savedLimit = queryConcurrency
         var e: [String] = []
         for shared in [false, true, false, true] {
+            if Task.isCancelled { emit("Stopped"); return }
             routesShareQueryGate = shared
             let r = await wholeRead(fresh, width: 24)
             e.append("\(shared ? "off" : "on") \(n0(r))")
@@ -1835,6 +1851,7 @@ extension HealthKitSource {
         emit("E route lane (\(fresh.count) newest, 24 at once, workouts/min): " + e.joined(separator: ", "))
         var g: [String] = []
         for limit in [32, 8, 16, 64, 32] {
+            if Task.isCancelled { emit("Stopped"); return }
             setQueryConcurrency(limit)
             let r = await wholeRead(fresh, width: 24)
             g.append("\(limit) \(n0(r))")
@@ -1842,6 +1859,7 @@ extension HealthKitSource {
         setQueryConcurrency(32)
         var wd: [String] = []
         for width in [4, 24, 64, 24] {
+            if Task.isCancelled { emit("Stopped"); return }
             let r = await wholeRead(fresh, width: width)
             wd.append("\(width) \(n0(r))")
         }

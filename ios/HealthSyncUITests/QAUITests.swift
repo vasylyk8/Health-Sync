@@ -265,3 +265,15 @@ final class QAUITests: XCTestCase {
         shot("qa-home-status")
     }
 }
+
+extension QAUITests {
+    func testDiagnosticSuiteControlsAndSharingScreen() {
+        let app = launch(["-onboarded"])
+        XCTAssertTrue(app.buttons["moreMenu"].waitForExistence(timeout: 10)); app.buttons["moreMenu"].tap()
+        let entry = app.buttons["Sync diagnostics"].firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 5)); entry.tap()
+        XCTAssertTrue(app.buttons["diagnostics.start"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["diagnostics.record"].exists)
+        shot("diagnostics-controls"); audit(app, "diagnostics-controls")
+    }
+}

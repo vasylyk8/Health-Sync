@@ -323,6 +323,7 @@ struct SampleAggregator {
     /// One bucket per local hour that has readings: cumulative types fill `v` with the amount, discrete types the
     /// average (`v`), minimum (`lo`) and maximum (`hi`), each only when asked for.
     func hourly(avg: Bool, min: Bool, max: Bool) -> [HourBucket] {
+        let probe = SyncProbe.begin("aggregate.hourly"); defer { SyncProbe.end(probe) }
         if style == .cumulative {
             var hours: [Date: Double] = [:]
             for (slot, v) in mergedSlots() { hours[calendar.dateInterval(of: .hour, for: slot)?.start ?? slot, default: 0] += v }

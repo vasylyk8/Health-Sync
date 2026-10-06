@@ -8,6 +8,7 @@ enum SyncProbe {
     @TaskLocal static var metric = "sync"
     @TaskLocal static var window = ""
     @TaskLocal static var runSalt = UUID().uuidString
+    @TaskLocal static var statisticsFault = ""
     @TaskLocal static var rawCapture: RawReplayStore?
     static func begin(_ name: String) -> SyncProbeRecorder.Token? { recorder?.begin(name, metric: metric, window: window) }
     static func end(_ token: SyncProbeRecorder.Token?, error: Bool = false, count: Int = 0) { if let token { recorder?.end(token, error: error, count: count) } }

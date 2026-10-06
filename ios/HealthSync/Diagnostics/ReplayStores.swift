@@ -40,15 +40,15 @@ final class SourceReplayStore: @unchecked Sendable {
         let data = try encoder.encode(reply), name = DiagnosticScratch.digest(Data(key.utf8))
         let compressed = Gzip.compress(data)
         try scratch.write(compressed, name: name + ".source.gz")
-        try lock.withLock {
-            fingerprints[name] = DiagnosticScratch.digest(data)
-            try JSONEncoder().encode(fingerprints).write(to: scratch.root.appendingPathComponent("source-manifest.json"), options: [.atomic, .completeFileProtection])
-        }
+        let checksum = DiagnosticScratch.digest(data)
+        try scratch.write(Data(checksum.utf8), name: name + ".source.sha256")
+        lock.withLock { fingerprints[name] = checksum }
     }
     func read(_ key: String) throws -> Reply {
         let name = DiagnosticScratch.digest(Data(key.utf8))
         guard let data = Gzip.decompress(try Data(contentsOf: scratch.root.appendingPathComponent(name + ".source.gz"))) else { throw DiagnosticScratch.Failure.missingReplay }
-        guard lock.withLock({ fingerprints[name] }) == DiagnosticScratch.digest(data) else { throw DiagnosticScratch.Failure.corruptCapture }
+        let expected = lock.withLock { fingerprints[name] } ?? (try? String(contentsOf: scratch.root.appendingPathComponent(name + ".source.sha256"), encoding: .utf8))
+        guard expected == DiagnosticScratch.digest(data) else { throw DiagnosticScratch.Failure.corruptCapture }
         return try JSONDecoder().decode(Reply.self, from: data)
     }
     var digest: String { lock.withLock { DiagnosticScratch.digest(Data(fingerprints.sorted { $0.key < $1.key }.map { $0.key + ":" + $0.value }.joined(separator: "\n").utf8)) } }
