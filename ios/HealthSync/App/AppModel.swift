@@ -795,7 +795,7 @@ final class AppModel: ObservableObject {
 
 
 extension AppModel {
-    func reloadDiagnosticReports() { suiteReports = DiagnosticReportStore().reports() }
+    func reloadDiagnosticReports() { let store = DiagnosticReportStore(); store.prune(); suiteReports = store.reports() }
     func deleteDiagnosticReport(_ report: DiagnosticRunReport) {
         let store = DiagnosticReportStore()
         for file in store.files(report.id) { try? FileManager.default.removeItem(at: file) }

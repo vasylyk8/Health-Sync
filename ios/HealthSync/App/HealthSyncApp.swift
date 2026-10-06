@@ -25,6 +25,9 @@ struct HealthSyncApp: App {
             telemetry = FirebaseTelemetry()
         }
         let defaults = uiTesting ? UserDefaults(suiteName: "uitest-\(UUID().uuidString)")! : .standard
+        #if DEBUG
+        if uiTesting && args.contains("-seedDiagnosticReports") { DiagnosticReportStore.seedSamples() }
+        #endif
         if uiTesting && args.contains("-onboarded") { defaults.set(true, forKey: AppModel.healthConnectedKey) }
         if uiTesting && args.contains("-accountPending") {
             defaults.set(true, forKey: AppModel.healthConnectedKey)

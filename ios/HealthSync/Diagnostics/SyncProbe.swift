@@ -64,6 +64,7 @@ final class SyncProbeRecorder: @unchecked Sendable {
         }
     }
     @MainActor func sampleDevice() {
+        UIDevice.current.isBatteryMonitoringEnabled = true
         var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
         let cpu = Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
         var info = mach_task_basic_info(); var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
@@ -90,10 +91,12 @@ final class SyncProbeRecorder: @unchecked Sendable {
         let s = snapshot(), top = s.stats.sorted { $0.value.total > $1.value.total }.prefix(20)
         let phases = Dictionary(grouping: s.events.filter { $0.name.hasPrefix("phase.") }, by: \.name)
         let phaseText = phases.sorted { $0.key < $1.key }.map { key, events in String(format: "%@: %.2fs active, finished at %.2fs", key, Self.unionDuration(events), events.map(\.end).max() ?? 0) }.joined(separator: "\n")
+        let finishes = phases.map { ($0.key, $0.value.map(\.end).max() ?? 0) }.sorted { $0.1 > $1.1 }
+        let tailText = finishes.count > 1 ? String(format: "Completion tail: %@ finished last at %.2fs, %.2fs after %@ (%.2fs).", finishes[0].0, finishes[0].1, finishes[0].1 - finishes[1].1, finishes[1].0, finishes[1].1) + "\n" : ""
         let deviceText: String
         if let first = s.devices.first, let last = s.devices.last {
             deviceText = String(format: "Process CPU %.2fs · peak resident %.1f MB · thermal max %d · trace dropped %d", last.cpuSeconds - first.cpuSeconds, Double(s.devices.map(\.residentBytes).max() ?? 0) / 1_000_000, s.devices.map(\.thermal).max() ?? 0, s.droppedTraceEvents)
         } else { deviceText = "Device sampling unavailable" }
-        return phaseText + "\n" + deviceText + "\nElapsed \(String(format: "%.2f", s.elapsed))s · \(s.active) operations active · oldest \(Int(s.oldestActiveSeconds))s\n" + top.map { key, v in String(format: "%@: %d calls · %.2fs accumulated (overlaps) · p50 %.3fs · p95≈%.3fs · max %.3fs · %d items · %d errors", key, v.count, v.total, v.p50, v.p95, v.maximum, v.items, v.errors) }.joined(separator: "\n")
+        return phaseText + "\n" + tailText + deviceText + "\nElapsed \(String(format: "%.2f", s.elapsed))s · \(s.active) operations active · oldest \(Int(s.oldestActiveSeconds))s\n" + top.map { key, v in String(format: "%@: %d calls · %.2fs accumulated (overlaps) · p50 %.3fs · p95≈%.3fs · max %.3fs · %d items · %d errors", key, v.count, v.total, v.p50, v.p95, v.maximum, v.items, v.errors) }.joined(separator: "\n")
     }
 }

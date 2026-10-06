@@ -28,7 +28,7 @@ struct DiagnosticRunReport: Codable, Sendable, Identifiable {
     var zone = TimeZone.current.identifier
     var preset = "", cutoff = Date(), configuration: [String: String] = [:]
     var text = "", status = "running", cases: [DiagnosticCaseReport] = [], coverage: [DiagnosticCoverage] = []
-    var limitations = ["HealthKit cache cannot be reset; historical data can change.", "Replay timings exclude HealthKit/network latency.", "Reference agreement does not certify Apple's private aggregation.", "Empty reads do not distinguish absent data from denied read permission.", "Operation totals overlap; process CPU cannot be assigned to overlapping tasks."]
+    var limitations = ["HealthKit cache cannot be reset; historical data can change.", "Replay timings exclude HealthKit/network latency.", "Reference agreement does not certify Apple's private aggregation.", "Empty reads do not distinguish absent data from denied read permission.", "Operation totals overlap; process CPU cannot be assigned to overlapping tasks.", "Network interface changes, battery drain and energy use are not measured; battery level, thermal state, low-power mode, CPU and memory are sampled every 2 seconds.", "Live cases include private capture and instrumentation overhead; compare the minimal-recorder and no-raw-capture cases to see its size."]
 }
 struct DiagnosticCaseReport: Codable, Sendable {
     var name: String, transfer: String, elapsed: Double, records: Int, complete: Bool, verdict: String
@@ -56,5 +56,28 @@ final class DiagnosticReportStore: @unchecked Sendable {
         let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
         return ((try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []).filter { $0.pathExtension == "json" }.compactMap { try? d.decode(DiagnosticRunReport.self, from: Data(contentsOf: $0)) }.sorted { $0.date > $1.date }
     }
+    /// Keeps the newest reports (and every paused one, which can still be resumed); older reports and their private captures go.
+    func prune(keep: Int = 20) {
+        let all = reports()
+        for report in all.dropFirst(keep) where report.status != "paused" {
+            for file in files(report.id) { try? FileManager.default.removeItem(at: file) }
+            try? FileManager.default.removeItem(at: root.appendingPathComponent(report.id + "-private"))
+        }
+    }
     func files(_ id: String) -> [URL] { ["txt", "json", "csv"].map { root.appendingPathComponent(id + "." + $0) } }
 }
+
+#if DEBUG
+extension DiagnosticReportStore {
+    /// UI-test fixtures only: one finished and one paused report, so the saved, export and resume screens can be inspected.
+    static func seedSamples() {
+        let store = DiagnosticReportStore()
+        var done = DiagnosticRunReport(); done.id = "ui-seed-complete"; done.preset = "Full initial-sync diagnosis"; done.status = "complete"
+        done.configuration["accuracyGate"] = "NO REGRESSION DETECTED in the tested cases (agreement with this phone's own reference reader only)"
+        done.text = "ACCURACY SUMMARY\nKnown-answer fixtures: all passed\nRepeat live baseline: stable\nOVERALL: NO REGRESSION DETECTED in the tested cases\nSuite finished. Finishing is not an accuracy pass."
+        var paused = DiagnosticRunReport(); paused.id = "ui-seed-paused"; paused.preset = "Deep investigation"; paused.status = "paused"
+        paused.text = "Paused: completed cases saved. Resume starts an interrupted case from the beginning; history may have changed."
+        try? store.save(done); try? store.save(paused)
+    }
+}
+#endif
