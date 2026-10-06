@@ -51,6 +51,32 @@ final class PhoneSyncComparisonTests: XCTestCase {
         XCTAssertEqual(result.changedRecords, 1)
         XCTAssertGreaterThan(result.maximumDelta, 0)
     }
+    func testCutoffDayDifferencesAreSeparatedAndNoiseIsCountedSeparately() async throws {
+        let old = day("2020-01-01", 72), today = day("2026-10-06", 5)
+        let a = try await index("a", rows: [old, today, today])
+        // Yesterday and before differ only by noise; today lost one duplicate occurrence.
+        let b = try await index("b", rows: [day("2020-01-01", 72 + 1e-12), today])
+        let result = try b.compare(to: a, currentDay: "2026-10-06")
+        XCTAssertTrue(result.equivalent); XCTAssertFalse(result.exact)
+        XCTAssertEqual(result.noiseRecords, 1); XCTAssertEqual(result.currentDayChanged, 1); XCTAssertEqual(result.beyondTolerance, 0)
+        XCTAssertFalse(try b.compare(to: a).equivalent, "without naming the cutoff day the missing occurrence must fail")
+    }
+    func testChangeBeyondToleranceOnAnEarlierDayStillFailsAndNamesTheDay() async throws {
+        let a = try await index("a", rows: [day("2020-01-01", 72), day("2026-10-06", 5)])
+        let b = try await index("b", rows: [day("2020-01-01", 75), day("2026-10-06", 9)])
+        let result = try b.compare(to: a, currentDay: "2026-10-06")
+        XCTAssertFalse(result.equivalent)
+        XCTAssertEqual(result.beyondTolerance, 1); XCTAssertEqual(result.changedDays, ["2020-01-01": 1]); XCTAssertEqual(result.currentDayChanged, 1)
+        XCTAssertEqual(result.maximumDelta, 3, accuracy: 1e-9); XCTAssertEqual(result.currentDayMaximumDelta, 4, accuracy: 1e-9)
+    }
+    func testMissingAndExtraOccurrencesAreCountedIndividually() async throws {
+        let a = try await index("a", rows: [day(), day(), day("2020-01-02", 80)])
+        let b = try await index("b", rows: [day(), day("2020-01-02", 80), day("2020-01-02", 80)])
+        let result = try b.compare(to: a)
+        XCTAssertFalse(result.equivalent)
+        XCTAssertEqual(result.changedRecords, 2)   // one missing 2020-01-01, one extra 2020-01-02
+        XCTAssertEqual(result.changedDays, ["2020-01-01": 1, "2020-01-02": 1])
+    }
     func testInvalidBatchHashIsRejected() async throws {
         let sink = try DiagnosticBatchSink(root: root, delay: 0)
         do { try await sink.upload(batchId: "bad", gz: Data([1]), sha256: "wrong", typeId: "daily"); XCTFail() }

@@ -75,61 +75,68 @@ struct DiagnosticRecordIndex: Sendable {
         }
         groups = found; self.count = count
     }
-    func compare(to reference: Self, tolerance: Double = 1e-9) throws -> HistoryRecordComparison {
+    /// `currentDay` (a "YYYY-MM-DD" key) names the day that is still being written while a run proceeds (the cutoff day: last night's
+    /// sleep, today's rings). Differences on it are counted and reported but never make the comparison fail; every other day is held
+    /// to `tolerance`. Records are matched as a multiset of exact digests first, so duplicate multiplicity is compared exactly.
+    func compare(to reference: Self, tolerance: Double = 1e-9, currentDay: String? = nil) throws -> HistoryRecordComparison {
         let a = try FileHandle(forReadingFrom: reference.file), b = try FileHandle(forReadingFrom: file)
         defer { try? a.close(); try? b.close() }
-        var result = HistoryRecordComparison(exact: count == reference.count && Set(groups.keys) == Set(reference.groups.keys), equivalent: count == reference.count && Set(groups.keys) == Set(reference.groups.keys), maximumDelta: 0, changedRecords: 0)
+        var result = HistoryRecordComparison(exact: true, equivalent: true, maximumDelta: 0, changedRecords: 0)
+        func describe(_ object: Any) -> (kind: String, keys: String, day: String?) {
+            let o = object as? [String: Any] ?? [:]
+            return (o["k"] as? String ?? "record", (o["m"] as? [String: Any])?.keys.sorted().joined(separator: ",") ?? (o["ty"] as? String ?? ""), o["day"] as? String)
+        }
+        // A record present on only one side.
+        func unpaired(_ object: Any, _ side: String) {
+            let d = describe(object)
+            result.changedRecords += 1; result.exact = false
+            if let day = d.day, day == currentDay { result.currentDayChanged += 1; result.changedFields["currentDay.\(d.kind).\(d.keys).\(side)", default: 0] += 1; return }
+            result.beyondTolerance += 1; result.equivalent = false
+            result.changedFields["\(d.kind).\(d.keys).\(d.day ?? "").\(side)", default: 0] += 1
+            if let day = d.day { result.changedDays[day, default: 0] += 1 }
+        }
         for key in Set(groups.keys).union(reference.groups.keys).sorted() {
             try Task.checkCancellation()
             let originals = reference.groups[key] ?? [], candidates = groups[key] ?? []
-            guard originals.count == candidates.count else {
-                result.exact = false; result.equivalent = false
-                result.changedRecords += max(originals.count, candidates.count)
-                let location = originals.first ?? candidates.first
-                if let location {
-                    let object = try Self.read(originals.isEmpty ? b : a, location) as? [String: Any] ?? [:]
-                    let kind = object["k"] as? String ?? "record"
-                    let day = object["day"] as? String ?? ""
-                    let keys = (object["m"] as? [String: Any])?.keys.sorted().joined(separator: ",") ?? (object["ty"] as? String ?? "")
-                    result.changedFields["\(kind).\(keys).\(day).occurrences", default: 0] += max(originals.count, candidates.count)
-                }
-                continue
-            }
-            func frequencies(_ locations: [Location]) -> [String: Int] {
-                locations.reduce(into: [:]) { $0[$1.digest, default: 0] += 1 }
-            }
-            if frequencies(originals) == frequencies(candidates) { continue }
+            var pool: [String: Int] = [:]
+            for c in candidates { pool[c.digest, default: 0] += 1 }
+            var unmatchedOriginals: [Location] = []
+            for o in originals { if let n = pool[o.digest], n > 0 { pool[o.digest] = n - 1 } else { unmatchedOriginals.append(o) } }
+            var free: [Location] = []
+            for c in candidates { if let n = pool[c.digest], n > 0 { pool[c.digest] = n - 1; free.append(c) } }
+            if unmatchedOriginals.isEmpty && free.isEmpty { continue }
             result.exact = false
-            var remaining = candidates
-            var unmatched: [Location] = []
-            // Reserve every exact occurrence before pairing changed numeric records.
-            for location in originals {
-                if let exact = remaining.firstIndex(where: { $0.digest == location.digest }) { remaining.remove(at: exact) }
-                else { unmatched.append(location) }
-            }
-            for location in unmatched {
+            for location in unmatchedOriginals {
                 try Task.checkCancellation()
                 let original = try Self.read(a, location)
                 var best: (Int, Double)?
-                for (i, location) in remaining.enumerated() {
-                    if let delta = HistoryRecordComparison.distance(original, try Self.read(b, location)), best == nil || delta < best!.1 { best = (i, delta) }
+                for (i, candidateLocation) in free.enumerated() {
+                    if let delta = HistoryRecordComparison.distance(original, try Self.read(b, candidateLocation)), best == nil || delta < best!.1 { best = (i, delta) }
                 }
-                result.changedRecords += 1
-                guard let best else { result.equivalent = false; continue }
-                let candidate = try Self.read(b, remaining[best.0])
+                guard let best else { unpaired(original, "missing"); continue }
+                let candidate = try Self.read(b, free[best.0]); free.remove(at: best.0)
+                let d = describe(original)
                 let differences = HistoryRecordComparison.differingFields(original, candidate, tolerance: tolerance)
-                let label = (original as? [String: Any])?["k"] as? String ?? "record"
-                for field in Set(differences.map { label + "." + $0.0 }) { result.changedFields[field, default: 0] += 1 }
-                if result.examples.count < 8, let first = differences.first {
-                    let day = (original as? [String: Any])?["day"] as? String
-                    let date = day.map { " day=" + $0 } ?? ""
-                    let values = first.1.flatMap { a in first.2.map { b in " reference=\(a) candidate=\(b)" } } ?? " shape/value changed"
-                    result.examples.append("Difference \(label)\(date) field=\(first.0)\(values)")
+                result.changedRecords += 1
+                if let day = d.day, day == currentDay {
+                    result.currentDayMaximumDelta = max(result.currentDayMaximumDelta, best.1)
+                    if differences.isEmpty { result.noiseRecords += 1; continue }
+                    result.currentDayChanged += 1
+                    for field in Set(differences.map { "currentDay." + d.kind + "." + $0.0 }) { result.changedFields[field, default: 0] += 1 }
+                    continue
                 }
-                remaining.remove(at: best.0)
                 result.maximumDelta = max(result.maximumDelta, best.1)
-                if !best.1.isFinite || best.1 > tolerance { result.equivalent = false }
+                if differences.isEmpty { result.noiseRecords += 1; continue }
+                result.beyondTolerance += 1; result.equivalent = false
+                if let day = d.day { result.changedDays[day, default: 0] += 1 }
+                for field in Set(differences.map { d.kind + "." + $0.0 }) { result.changedFields[field, default: 0] += 1 }
+                if result.examples.count < 8, let first = differences.first {
+                    let date = d.day.map { " day=" + $0 } ?? ""
+                    let values = first.1.flatMap { x in first.2.map { y in " reference=\(x) candidate=\(y)" } } ?? " shape/value changed"
+                    result.examples.append("Difference \(d.kind)\(date) field=\(first.0)\(values)")
+                }
             }
+            for location in free { unpaired(try Self.read(b, location), "extra") }
         }
         return result
     }

@@ -156,7 +156,8 @@ enum DiagnosticSuite {
                 let wall = ProcessInfo.processInfo.systemUptime - start
                 sampling.cancel(); await sampling.value
                 let index = try DiagnosticRecordIndex(sink: sink)
-                let comparison = try reference.map { try index.compare(to: $0) }
+                let currentDayKey = SleepNights.dayKey(saved.cutoff, calendar: .current)
+                let comparison = try reference.map { try index.compare(to: $0, currentDay: currentDayKey) }
                 let complete = outcome == .finished && box.pending().isEmpty && box.state.detailsDone.count == box.state.workoutTotal && (selectedScope.dailyMetrics.isEmpty || box.state.dailyFullAt == saved.cutoff) && (selectedScope.hourly.isEmpty || box.state.hourlyAt == saved.cutoff)
                 let snapshot = probe.snapshot(compact: true)
                 let referenceCase = report.cases.first(where: { $0.name == "baseline-start" })
@@ -165,11 +166,18 @@ enum DiagnosticSuite {
                 let kind = classify(variant: variant, reference: plan[0], complete: complete, comparison: comparison, referenceCase: referenceCase, liveInput: liveInput, liveRaw: liveRaw)
                 var verdict = verdictText(kind)
                 if !variant.fault.isEmpty { verdict += "; isolated fault-injection case, not a production timing" }
+                if let c = comparison {
+                    if c.noiseRecords > 0 { verdict += "; \(c.noiseRecords) records differ only by floating-point noise inside the 1e-9 tolerance" }
+                    if c.currentDayChanged > 0 { verdict += "; \(c.currentDayChanged) difference(s) on the cutoff day \(currentDayKey), which was still changing, are reported but excluded from the verdict" }
+                }
                 if snapshot.devices.contains(where: { $0.thermal >= 2 }) { verdict += "; heat affected" }
                 if snapshot.droppedTraceEvents > 0 { verdict += "; trace truncated (\(snapshot.droppedTraceEvents) events dropped, summaries complete)" }
-                report.cases.append(DiagnosticCaseReport(name: variant.id, transfer: variant.replay ? "local simulated (fixed-input replay)" : "local simulated (live Apple Health)", elapsed: wall, records: index.count, complete: complete, verdict: verdict, changed: comparison?.changedRecords ?? 0, maximumDelta: comparison?.maximumDelta ?? 0, fields: comparison?.changedFields ?? [:], snapshot: snapshot, kind: kind, inputDigest: liveInput, rawDigest: liveRaw, exact: comparison?.exact))
+                report.cases.append(DiagnosticCaseReport(name: variant.id, transfer: variant.replay ? "local simulated (fixed-input replay)" : "local simulated (live Apple Health)", elapsed: wall, records: index.count, complete: complete, verdict: verdict, changed: comparison?.changedRecords ?? 0, maximumDelta: comparison?.maximumDelta ?? 0, fields: comparison?.changedFields ?? [:], snapshot: snapshot, kind: kind, inputDigest: liveInput, rawDigest: liveRaw, exact: comparison?.exact, noiseRecords: comparison?.noiseRecords, currentDayChanged: comparison?.currentDayChanged, changedDays: comparison?.changedDays))
                 report.text += String(format: "\n%@: %.2fs elapsed · %d records · %@\n", variant.id, wall, index.count, verdict) + probe.summary() + "\nCounters: \(snapshot.counters)\n"
-                if let comparison { report.text += "Changed fields: \(comparison.changedFields) · max delta \(comparison.maximumDelta)\n" }
+                if let comparison {
+                    report.text += "Not byte-identical: \(comparison.changedRecords) records = \(comparison.noiseRecords) floating-point noise inside tolerance + \(comparison.beyondTolerance) beyond tolerance + \(comparison.currentDayChanged) on the cutoff day. Changed fields: \(comparison.changedFields) · max delta excluding the cutoff day \(comparison.maximumDelta)\n"
+                    if !comparison.changedDays.isEmpty { report.text += "Days with differences beyond tolerance: \(comparison.changedDays.sorted { $0.key < $1.key }.map { "\($0.key)×\($0.value)" }.joined(separator: ", "))\n" }
+                }
                 try reports.save(report); onUpdate(report)
                 if variant.id == "baseline-start" {
                     reference = index; baselineSink = sink
@@ -328,8 +336,15 @@ enum DiagnosticSuite {
         lines.append("Live matched: \(cases.filter { $0.kind == "matched" && !$0.transfer.contains("replay") }.count) · source/read-set changed: \(count("sourceChanged")) · reader differences: \(count("readerDifference")) · engine differences: \(count("engineDifference"))")
         lines.append("Candidate readers differing: \(count("candidateDifference")) · recovery differences: \(count("recoveryDifference")) · known-regression readers that differed as expected: \(count("knownRegression"))")
         lines.append("Incomplete cases: \(count("incomplete")) · incomplete-data cost probes (not accuracy results): \(count("costProbe"))")
-        let noisy = cases.filter { $0.exact == false && $0.maximumDelta <= 1e-9 }
-        lines.append(noisy.isEmpty ? "Numeric exactness: every compared case was byte-identical to the reference" : "Numeric exactness: \(noisy.count) case(s) were not byte-identical but stayed inside the 1e-9 tolerance (largest delta \(noisy.map(\.maximumDelta).max() ?? 0)); the tolerance was not relaxed")
+        let inexact = cases.filter { $0.exact == false }
+        if inexact.isEmpty { lines.append("Numeric exactness: every compared case was byte-identical to the reference") }
+        else {
+            let noise = inexact.map { $0.noiseRecords ?? 0 }.max() ?? 0
+            let beyond = inexact.reduce(0) { $0 + max(0, $1.changed - ($1.noiseRecords ?? 0) - ($1.currentDayChanged ?? 0)) }
+            lines.append("Numeric exactness: \(inexact.count) case(s) were not byte-identical; up to \(noise) records per case differ only by floating-point noise inside the 1e-9 tolerance (not relaxed); \(beyond) record(s) differ beyond it on days before the cutoff")
+        }
+        let drift = cases.filter { ($0.currentDayChanged ?? 0) > 0 }
+        if !drift.isEmpty { lines.append("Cutoff-day drift: \(drift.reduce(0) { $0 + ($1.currentDayChanged ?? 0) }) record difference(s) in \(drift.count) case(s) on the day the run started (last night's sleep, today's activity), which Apple Health was still updating; listed here, excluded from the verdict") }
         lines.append("Isolated real transfer: \(realTransfer)")
         let verdict: String
         if !failures.isEmpty { verdict = "FAILED — " + failures.map { "\($0.1) \($0.0)" }.joined(separator: ", ") }

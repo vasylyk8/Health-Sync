@@ -38,6 +38,8 @@ struct DiagnosticCaseReport: Codable, Sendable {
     var kind: String? = nil, inputDigest: String? = nil, rawDigest: String? = nil
     /// True when every record is byte-identical to the reference; false with a tiny maximumDelta means floating-point noise inside the declared 1e-9 tolerance.
     var exact: Bool? = nil
+    /// Records not byte-identical but inside the tolerance, records that differed on the still-changing cutoff day, and dated differences beyond tolerance.
+    var noiseRecords: Int? = nil, currentDayChanged: Int? = nil, changedDays: [String: Int]? = nil
 }
 final class DiagnosticReportStore: @unchecked Sendable {
     let root: URL
