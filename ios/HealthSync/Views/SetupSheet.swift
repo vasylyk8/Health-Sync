@@ -6,7 +6,7 @@ struct SetupSheet: View {
     let provider: AIProvider
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.openURL) private var openURL
+    @State private var webPage: WebPage?
     @State private var link: String?
     @State private var consented = false
     @State private var copied = false
@@ -46,6 +46,9 @@ struct SetupSheet: View {
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(Theme.sheetRadius)
         .presentationBackground(Theme.background)
+        .fullScreenCover(item: $webPage) { page in
+            SafariView(url: page.url).ignoresSafeArea()
+        }
         .onAppear {
             link = model.existingLink(for: provider)
             if model.isSetUp(provider) { link = nil }
@@ -131,7 +134,7 @@ struct SetupSheet: View {
                                 .accessibilityIdentifier("copyLink")
                             case 1:
                                 Button {
-                                    openURL(provider.setupURL)
+                                    webPage = WebPage(url: provider.setupURL)
                                 } label: {
                                     Label(Copy.Sheet.openSite(provider.websiteLabel), systemImage: "arrow.up.right")
                                 }
@@ -197,7 +200,7 @@ struct SetupSheet: View {
                         VStack(alignment: .leading, spacing: 12) {
                             choiceHint(chatGPT: chatGPT)
                             Button {
-                                openURL(provider.oauthURL)
+                                webPage = WebPage(url: provider.oauthURL)
                             } label: {
                                 Label(Copy.Sheet.openSite(provider.oauthLabel), systemImage: "arrow.up.right")
                                     .labelStyle(TrailingIconLabelStyle())
