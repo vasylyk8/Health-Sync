@@ -9,8 +9,10 @@ final class HealthBenchUITests: XCTestCase {
         let count = ProcessInfo.processInfo.environment["BENCH_COUNT"] ?? "300"
         let shared = ProcessInfo.processInfo.environment["BENCH_SHARED"] == "1"
         let daily = ProcessInfo.processInfo.environment["BENCH_DAILY_CONCURRENCY"] == "1"
+        let suite = ProcessInfo.processInfo.environment["BENCH_DIAGNOSTIC_SUITE"] == "1"
         let phone = ProcessInfo.processInfo.environment["BENCH_PHONE_COMPARISON"] == "1"
         app.launchArguments = ["-healthBench", "-benchCount", count]
+        if suite { app.launchArguments += ["-benchDiagnosticSuite", "-benchHeavy", "24"] }
         if shared { app.launchArguments += ["-benchShared", "-benchHeavy", "24"] }
         if phone { app.launchArguments += ["-benchPhoneComparison", "-benchHeavy", "24"] }
         if daily { app.launchArguments += ["-benchDailyConcurrency", "-benchHeavy", "24"] }
@@ -46,6 +48,11 @@ final class HealthBenchUITests: XCTestCase {
         shot.lifetime = .keepAlways
         add(shot)
         XCTAssertTrue(output.label.contains("BENCH DONE"), "benchmark did not finish")
+        if suite {
+            XCTAssertTrue(output.label.contains("SUITEPATH CHECK OK forced=false"), output.label)
+            XCTAssertTrue(output.label.contains("SUITEPATH CHECK OK forced=true"), output.label)
+            XCTAssertFalse(output.label.contains("SUITEPATH CHECK FAILED"), output.label)
+        }
         if phone {
             XCTAssertTrue(output.label.contains("PHONEPATH CHECK OK forced=false"), output.label)
             XCTAssertTrue(output.label.contains("PHONEPATH CHECK OK forced=true"), output.label)

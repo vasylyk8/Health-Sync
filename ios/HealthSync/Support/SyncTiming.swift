@@ -45,6 +45,8 @@ final class SyncTiming: @unchecked Sendable {
 
     /// Times `body` under `name` (a phase such as "detail.read", "upload", "outbox.enqueue").
     func measure<T>(_ name: StaticString, _ body: () async throws -> T) async rethrows -> T {
+        var probeFailed = false
+        let probe = SyncProbe.begin("\(name)"); defer { SyncProbe.end(probe, error: probeFailed) }
         let id = signposter.makeSignpostID()
         let state = signposter.beginInterval(name, id: id)
         let t0 = DispatchTime.now().uptimeNanoseconds
@@ -55,10 +57,12 @@ final class SyncTiming: @unchecked Sendable {
             lock.withLock { inFlight["\(name)"]?[token] = nil }
             record("\(name)", ms: Double(DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000)
         }
-        return try await body()
+        do { return try await body() } catch { probeFailed = true; throw error }
     }
 
     func measureSync<T>(_ name: StaticString, _ body: () throws -> T) rethrows -> T {
+        var probeFailed = false
+        let probe = SyncProbe.begin("\(name)"); defer { SyncProbe.end(probe, error: probeFailed) }
         let id = signposter.makeSignpostID()
         let state = signposter.beginInterval(name, id: id)
         let t0 = DispatchTime.now().uptimeNanoseconds
@@ -66,7 +70,7 @@ final class SyncTiming: @unchecked Sendable {
             signposter.endInterval(name, state)
             record("\(name)", ms: Double(DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000)
         }
-        return try body()
+        do { return try body() } catch { probeFailed = true; throw error }
     }
 
     /// Counts and durations only; run-local diagnostics never reuse the production session.
@@ -160,6 +164,10 @@ final class SyncTiming: @unchecked Sendable {
         }
     }
 
+    var experimentSummary: String {
+        lock.withLock { counters.keys.filter { $0.hasPrefix("experiment.") }.sorted().map { "\($0)=\(counters[$0]!)" }.joined(separator: " ") }
+    }
+
     /// Upload numbers of this app session's sync, for the speed test (nil before the first upload).
     func uploadSummary() -> String? {
         lock.withLock {
@@ -184,10 +192,12 @@ final class SyncTiming: @unchecked Sendable {
 
     /// A value that is replaced, not added to (for example the current number of parallel readers).
     func set(_ name: String, _ value: Int) {
+        SyncProbe.recorder?.set(name, value)
         lock.withLock { counters[name] = value }
     }
 
     func count(_ name: String, _ n: Int = 1) {
+        SyncProbe.recorder?.count(name, n)
         lock.withLock { counters[name, default: 0] += n }
     }
 

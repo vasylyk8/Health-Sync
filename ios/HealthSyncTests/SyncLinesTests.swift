@@ -85,3 +85,4 @@ final class SyncLinesTests: XCTestCase {
         XCTAssertEqual(Copy.Home.Line.hours(1), "1 hour")
     }
 }
+

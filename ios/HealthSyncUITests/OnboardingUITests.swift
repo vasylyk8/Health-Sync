@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// Runs the real UI against in-memory fakes (launch argument -uiTesting). Also captures the
@@ -132,6 +133,67 @@ final class OnboardingUITests: XCTestCase {
         // Re-opening shows the connected state with Disconnect.
         app.buttons["provider.claude"].tap()
         XCTAssertTrue(app.buttons["disconnect"].waitForExistence(timeout: 5))
+    }
+
+    /// What is on screen, as text: element names, plus a small screenshot (base64 JPEG) to decode from the CI log.
+    private func diagnostics(_ app: XCUIApplication) -> String {
+        let buttons = app.buttons.allElementsBoundByIndex.prefix(25).map { "\($0.identifier)/\($0.label)" }.joined(separator: ", ")
+        let others = app.otherElements.allElementsBoundByIndex.map(\.identifier).filter { !$0.isEmpty }.prefix(25).joined(separator: ", ")
+        let image = XCUIScreen.main.screenshot().image
+        let scale = 220 / max(image.size.width, 1)
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let small = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+        let jpeg = small.jpegData(compressionQuality: 0.4)?.base64EncodedString() ?? "-"
+        return "state=\(app.state.rawValue) safari=\(XCUIApplication(bundleIdentifier: "com.apple.mobilesafari").state.rawValue) BUTTONS: \(buttons) OTHERS: \(others) SHOT: \(jpeg)"
+    }
+
+    /// "Open claude.ai" shows the page in an in-app browser. A plain openURL would leave the app
+    /// (Safari here, the Claude app on a phone that has it installed).
+    private func assertOpensInAppBrowser(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let open = app.buttons["openWebsite"]
+        XCTAssertTrue(open.waitForExistence(timeout: 30), "the Open button is shown", file: file, line: line)
+        open.tap()
+        // The browser is hosted out of process; depending on the iOS version its controls show up in KROK's tree.
+        let done = app.buttons["Done"]
+        let shown = done.waitForExistence(timeout: 20)
+            || app.otherElements["SFSafariViewController"].exists
+            || app.otherElements["TopBrowserBar"].exists
+        XCTAssertTrue(shown, "the page opens in an in-app browser. \(diagnostics(app))", file: file, line: line)
+        XCTAssertEqual(app.state, .runningForeground, "KROK stays in front", file: file, line: line)
+        XCTAssertNotEqual(XCUIApplication(bundleIdentifier: "com.apple.mobilesafari").state, .runningForeground,
+                          "the link does not leave the app", file: file, line: line)
+        snapshot("06-In-App-Browser")
+        if done.exists { done.tap() }
+        XCTAssertTrue(open.waitForExistence(timeout: 10), "closing the browser returns to the setup sheet", file: file, line: line)
+    }
+
+    func testOpenWebsiteOpensInAppBrowserOnTheStepsScreen() {
+        // The fake backend would report Claude as set up after 6 s and close the sheet mid-test.
+        let app = launch(["-onboarded", "-noAutoSetUp"])
+        XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))
+        app.buttons["provider.claude"].tap()
+        XCTAssertTrue(app.buttons["consentContinue"].waitForExistence(timeout: 30))
+        app.buttons["consentContinue"].tap()
+        XCTAssertTrue(app.buttons["copyLink"].waitForExistence(timeout: 30))
+        assertOpensInAppBrowser(app)
+    }
+
+    func testOpenWebsiteOpensInAppBrowserOnTheAppleAccountScreen() {
+        let app = launch(["-onboarded", "-appleLinked"])
+        XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 10))
+        var oauth = false
+        for _ in 0..<10 where !oauth {
+            app.buttons["provider.claude"].tap()
+            oauth = app.buttons["copyOAuthURL"].waitForExistence(timeout: 3)
+            if !oauth {
+                if app.buttons["Close"].waitForExistence(timeout: 2) { app.buttons["Close"].tap() }
+                _ = app.buttons["provider.claude"].waitForExistence(timeout: 2)
+            }
+        }
+        XCTAssertTrue(oauth, "a linked account sets up through OAuth")
+        assertOpensInAppBrowser(app)
     }
 
     func testDeleteAllDataReturnsToWelcome() {

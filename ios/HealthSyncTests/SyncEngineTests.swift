@@ -783,3 +783,4 @@ final class ProgressLog: @unchecked Sendable {
     func add(_ p: SyncProgress) { lock.lock(); all.append(p); lock.unlock() }
     var items: [SyncProgress] { lock.lock(); defer { lock.unlock() }; return all }
 }
+
