@@ -430,6 +430,21 @@ final class AppModel: ObservableObject {
 
     func syncNow() async {
         guard !benchmarkRunning else { return }
+        guard captureNextSync else { await performSyncNow(); return }
+        captureNextSync = false
+        let passive = SyncProbeRecorder(), sampling = Task { @MainActor in
+            while !Task.isCancelled { try? Task.checkCancellation(); passive.sampleDevice(); do { try await Task.sleep(for: .seconds(2)) } catch { break } }
+        }
+        await SyncProbe.$recorder.withValue(passive) { await performSyncNow() }
+        sampling.cancel(); await sampling.value
+        var report = DiagnosticRunReport(); report.preset = "Actual normal sync"; report.status = Task.isCancelled ? "paused" : syncIssue == nil ? "complete" : "incomplete"
+        report.text = "Actual normal sync (real uploads), including account/configuration checks and engine retries. Timings only; no diagnostic accuracy comparison.\n" + passive.summary()
+        report.cases = [DiagnosticCaseReport(name: "normal-sync", transfer: "production real", elapsed: passive.snapshot().elapsed, records: 0, complete: report.status == "complete", verdict: "Timing only; completion reflects app outcome", snapshot: passive.snapshot())]
+        try? DiagnosticReportStore().save(report); reloadDiagnosticReports()
+    }
+
+    private func performSyncNow() async {
+        guard !benchmarkRunning else { return }
         let syncStarted = ProcessInfo.processInfo.systemUptime
         do {
             try await ensureCurrentAccount()
@@ -441,17 +456,7 @@ final class AppModel: ObservableObject {
             await refreshStatus()
             await applyDefaultCategoriesIfNeeded()
             // A background wake-up may be using the engine for a moment; wait for it instead of skipping the sync.
-            let passive = captureNextSync ? SyncProbeRecorder(trace: true) : nil
-            captureNextSync = false
-            let recorderTask = Task { @MainActor in while !Task.isCancelled { if let passive { passive.sampleDevice() } else { break }; do { try await Task.sleep(for: .seconds(2)) } catch { break } } }
-            defer { recorderTask.cancel() }
-            var outcome = try await SyncProbe.$recorder.withValue(passive) { try await engine.run() }
-            if let passive {
-                var report = DiagnosticRunReport(); report.preset = "Actual normal sync"; report.status = outcome == .finished ? "complete" : "incomplete"
-                report.text = "Actual normal sync (real uploads). Includes this engine run only, not app-session totals.\n" + passive.summary()
-                report.cases = [DiagnosticCaseReport(name: "normal-sync", transfer: "production real", elapsed: passive.snapshot().elapsed, records: 0, complete: outcome == .finished, verdict: "Timing only; no diagnostic accuracy comparison", snapshot: passive.snapshot())]
-                try DiagnosticReportStore().save(report); reloadDiagnosticReports()
-            }
+            var outcome = try await engine.run()
             var waits = 0
             while outcome == .alreadyRunning && waits < 6 {
                 waits += 1
@@ -788,7 +793,10 @@ extension AppModel {
         if suiteReport?.id == report.id { suiteReport = nil }; reloadDiagnosticReports()
     }
     func stopDiagnosticSuite() { suiteTask?.cancel() }
-    func recordNextSync() { captureNextSync = true; syncTask?.cancel(); syncTask = Task { await syncNow() } }
+    func recordNextSync() {
+        let previous = syncTask; previous?.cancel()
+        syncTask = Task { await previous?.value; guard !Task.isCancelled else { return }; captureNextSync = true; await syncNow() }
+    }
     func runDiagnosticSuite(deep: Bool, real: Bool, retain: Bool, resume: DiagnosticRunReport? = nil) {
         guard !benchmarkRunning, Theme.isInternalBuild else { return }
         benchmarkRunning = true; suiteRunning = true; showDiagnostics = true

@@ -69,11 +69,25 @@ export async function probeBatch(uid: string, input: unknown, user: UserDoc) {
       for (const row of expected) {
         const key = signature(row as unknown as Record<string, unknown>), list = buckets.get(key);
         if (!list?.length) throw new DiagnosticProbeError('missing row');
-        const item = list.pop()!;
+        const at = list.findIndex(item => ['v', 'v2', 'v3', 'c'].every(k => difference((row as unknown as Record<string, unknown>)[k], item[k]) <= 1e-9));
+        if (at < 0) throw new DiagnosticProbeError('row value regression');
+        const item = list.splice(at, 1)[0]!;
         for (const k of ['v', 'v2', 'v3', 'c']) maxDelta = Math.max(maxDelta, difference((row as unknown as Record<string, unknown>)[k], item[k]));
       }
       if ([...buckets.values()].some(a => a.length)) throw new DiagnosticProbeError('extra row');
       readbackRows += actual.length;
+    }
+    const manifest = await meta.getManifest(sandbox, parsed.header.type);
+    const deleted: string[] = [];
+    for (const ref of manifest?.files._tombstones ?? []) {
+      const local = join(dir, `${index++}.parquet`); await data.download(ref.path, local);
+      deleted.push(...(await rows(c, `SELECT id FROM read_parquet(${lit(local)})`)).map(r => String(r.id)));
+    }
+    if (JSON.stringify(deleted.sort()) !== JSON.stringify([...parsed.tombstones].sort())) throw new DiagnosticProbeError('tombstone regression');
+    readbackRows += deleted.length;
+    for (const mark of parsed.marks) {
+      const held = await meta.getWorkoutData(sandbox, mark.wid);
+      if (!held || held.expectedGen !== mark.gen || JSON.stringify(Object.entries(held.expected ?? {}).sort()) !== JSON.stringify(Object.entries(mark.expected).sort())) throw new DiagnosticProbeError('completion mark regression');
     }
     for (const workout of await meta.listWorkoutData(sandbox)) {
       for (const [streamName, stream] of Object.entries(workout.streams)) {
@@ -84,7 +98,9 @@ export async function probeBatch(uid: string, input: unknown, user: UserDoc) {
           const columns = ['t', ...STREAM_COLS].map(k => ref.scale?.[k] ? `${k} / ${ref.scale[k]} AS ${k}` : k).join(',');
           actual.push(...await rows(c, `SELECT ${columns} FROM read_parquet(${lit(local)}) ORDER BY t`));
         }
-        actual.sort((a, b) => Number(a.t) - Number(b.t));
+        const canonical = (r: Record<string, unknown>) => JSON.stringify(['t', ...STREAM_COLS].map(k => normalize(r[k])));
+        expected.sort((a, b) => canonical(a).localeCompare(canonical(b)));
+        actual.sort((a, b) => canonical(a).localeCompare(canonical(b)));
         if (actual.length !== expected.length) throw new DiagnosticProbeError('stream count mismatch');
         for (let i = 0; i < expected.length; i++) for (const k of ['t', ...STREAM_COLS]) maxDelta = Math.max(maxDelta, difference(expected[i]![k], actual[i]![k]));
         readbackRows += actual.length;

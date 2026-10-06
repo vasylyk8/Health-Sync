@@ -33,7 +33,7 @@ enum DiagnosticSuite {
             report.preset = options.deep ? "Deep investigation" : "Full initial-sync diagnosis"; report.cutoff = options.cutoff
             report.coverage = DiagnosticCoverage.inventory(scope, categories: categories)
             report.configuration = ["uploadModel": "\(options.delay)s per batch", "categories": categories.sorted().joined(separator: ","), "variants": plan.map(\.id).joined(separator: ","), "keepCaptures": String(options.keepCaptures)]
-            report.text = "\(report.preset)\n\(plan.count) full-history cases, fixed cutoff \(SleepNights.dayKey(report.cutoff, calendar: .current)). Every enabled metric is included.\nLocal uploads modeled at \(options.delay)s per batch. Phases overlap. Fresh app caches; Apple cache cannot be reset.\n"
+            report.text = "\(report.preset)\n\(plan.count) full-history cases, fixed cutoff \(SleepNights.dayKey(report.cutoff, calendar: .current)). Every enabled metric is included.\nLocal uploads modeled at \(options.delay)s per batch. Phases overlap. Fresh app caches; Apple cache cannot be reset. Live cases include private capture/instrumentation overhead; replay excludes Apple Health latency.\n"
         }
         if options.resume == nil { report.text += try DiagnosticFixtures.run().joined(separator: "\n") + "\n" }
         let root = reports.root.appendingPathComponent(report.id + "-private")
@@ -45,6 +45,10 @@ enum DiagnosticSuite {
         onUpdate(report)
         defer { if report.status == "complete" && !options.keepCaptures { try? FileManager.default.removeItem(at: root) } }
         do {
+            if reference != nil {
+                let captured = RawReplayStore(scratch: try DiagnosticScratch(root: baselineRoot.appendingPathComponent("inputs")))
+                try rawChecks(captured, report: &report, deep: options.deep, reports: reports, onUpdate: onUpdate)
+            }
             for variant in plan where !report.cases.contains(where: { $0.name == variant.id }) {
                 try Task.checkCancellation()
                 guard ProcessInfo.processInfo.thermalState != .critical else { throw DiagnosticFailure.thermalPause }
@@ -79,7 +83,7 @@ enum DiagnosticSuite {
                 let outcome: SyncEngine.Outcome
                 do {
                     outcome = try await SyncProbe.$runSalt.withValue(saved.id) { try await SyncProbe.$recorder.withValue(probe) {
-                        try await SyncProbe.$rawCapture.withValue(variant.id == "baseline-start" ? raw : nil) {
+                        try await SyncProbe.$rawCapture.withValue(variant.replay ? nil : raw) {
                             try await PhoneSyncComparisonContext.$width.withValue(variant.width) {
                                 try await PhoneSyncComparisonContext.$queryLimit.withValue(variant.queryLimit > 0 ? variant.queryLimit : nil) {
                                     try await PhoneSyncComparisonContext.$historyCapacity.withValue(variant.historyCapacity > 0 ? variant.historyCapacity : nil) { try await PhoneSyncComparisonContext.$cacheRows.withValue(variant.cacheRows > 0 ? variant.cacheRows : nil) { try await PhoneSyncComparisonContext.$includeRoutes.withValue(variant.includeRoutes) { try await PhoneSyncComparisonContext.$cutoff.withValue(saved.cutoff) {
@@ -112,19 +116,7 @@ enum DiagnosticSuite {
                 if variant.id == "baseline-start" {
                     reference = index
                     updateCoverage(&report.coverage, sink: sink)
-                    report.text += "\nRaw replay: \(raw.inventory.count) captured metric/windows.\n"
-                    for f in raw.inventory {
-                        try Task.checkCancellation()
-                        var live = report; live.text += "\nChecking raw replay: \(HealthTypes.shortName(f.type)) · \(f.count) readings"; onUpdate(live)
-                        let a = try raw.replay(f, unified: false), b = try raw.replay(f, unified: true)
-                        let same = rawEqual(a, b)
-                        report.text += "Raw aggregate replay \(HealthTypes.shortName(f.type)): \(same ? "MATCH" : "DIFFER") · \(f.count) readings\n"
-                        try reports.save(report)
-                        if options.deep && f.count <= 10_000 {
-                            let reverse = try raw.replay(f, unified: false, reverse: true)
-                            if !rawEqual(a, reverse) { report.text += "ORDER-SENSITIVE aggregate: \(HealthTypes.shortName(f.type))\n" }
-                        }
-                    }
+                    try rawChecks(raw, report: &report, deep: options.deep, reports: reports, onUpdate: onUpdate)
                 }
                 // A selected real probe uses already-prepared private batches, never the production outbox.
                 if variant.id == "baseline-start", let realUploader {
@@ -155,6 +147,17 @@ enum DiagnosticSuite {
             report.status = "paused"
             report.text += "\nPaused: \((error as NSError).domain) \((error as NSError).code). Completed cases saved. Resume starts an interrupted case from the beginning; history may have changed.\n"
             try reports.save(report); onUpdate(report); throw error
+        }
+    }
+    private static func rawChecks(_ raw: RawReplayStore, report: inout DiagnosticRunReport, deep: Bool, reports: DiagnosticReportStore, onUpdate: @Sendable (DiagnosticRunReport) -> Void) throws {
+        let completed = Int(report.configuration["rawReplayCompleted"] ?? "0") ?? 0
+        for (i, f) in raw.inventory.enumerated() where i >= completed {
+            try Task.checkCancellation()
+            var live = report; live.text += "\nChecking raw replay: \(HealthTypes.shortName(f.type)) · \(f.count) readings"; onUpdate(live)
+            let a = try raw.replay(f, unified: false), b = try raw.replay(f, unified: true)
+            report.text += "Raw aggregate replay \(HealthTypes.shortName(f.type)): \(rawEqual(a, b) ? "MATCH" : "DIFFER") · \(f.count) readings\n"
+            if deep && f.count <= 10_000 && !rawEqual(a, try raw.replay(f, unified: false, reverse: true)) { report.text += "ORDER-SENSITIVE aggregate: \(HealthTypes.shortName(f.type))\n" }
+            report.configuration["rawReplayCompleted"] = String(i + 1); try reports.save(report)
         }
     }
     static func rawEqual(_ a: RawHistorySummary, _ b: RawHistorySummary) -> Bool {

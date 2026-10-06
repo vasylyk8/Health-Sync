@@ -87,6 +87,12 @@ final class SyncProbeRecorder: @unchecked Sendable {
     }
     func summary() -> String {
         let s = snapshot(), top = s.stats.sorted { $0.value.total > $1.value.total }.prefix(20)
-        return "Elapsed \(String(format: "%.2f", s.elapsed))s · \(s.active) operations active · oldest \(Int(s.oldestActiveSeconds))s\n" + top.map { key, v in String(format: "%@: %d calls · %.2fs accumulated (overlaps) · p50 %.3fs · p95≈%.3fs · max %.3fs · %d items · %d errors", key, v.count, v.total, v.p50, v.p95, v.maximum, v.items, v.errors) }.joined(separator: "\n")
+        let phases = Dictionary(grouping: s.events.filter { $0.name.hasPrefix("phase.") }, by: \.name)
+        let phaseText = phases.sorted { $0.key < $1.key }.map { key, events in String(format: "%@: %.2fs active, finished at %.2fs", key, Self.unionDuration(events), events.map(\.end).max() ?? 0) }.joined(separator: "\n")
+        let deviceText: String
+        if let first = s.devices.first, let last = s.devices.last {
+            deviceText = String(format: "Process CPU %.2fs · peak resident %.1f MB · thermal max %d · trace dropped %d", last.cpuSeconds - first.cpuSeconds, Double(s.devices.map(\.residentBytes).max() ?? 0) / 1_000_000, s.devices.map(\.thermal).max() ?? 0, s.droppedTraceEvents)
+        } else { deviceText = "Device sampling unavailable" }
+        return phaseText + "\n" + deviceText + "\nElapsed \(String(format: "%.2f", s.elapsed))s · \(s.active) operations active · oldest \(Int(s.oldestActiveSeconds))s\n" + top.map { key, v in String(format: "%@: %d calls · %.2fs accumulated (overlaps) · p50 %.3fs · p95≈%.3fs · max %.3fs · %d items · %d errors", key, v.count, v.total, v.p50, v.p95, v.maximum, v.items, v.errors) }.joined(separator: "\n")
     }
 }

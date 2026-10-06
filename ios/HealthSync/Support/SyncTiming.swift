@@ -45,7 +45,8 @@ final class SyncTiming: @unchecked Sendable {
 
     /// Times `body` under `name` (a phase such as "detail.read", "upload", "outbox.enqueue").
     func measure<T>(_ name: StaticString, _ body: () async throws -> T) async rethrows -> T {
-        let probe = SyncProbe.begin("\(name)"); defer { SyncProbe.end(probe) }
+        var probeFailed = false
+        let probe = SyncProbe.begin("\(name)"); defer { SyncProbe.end(probe, error: probeFailed) }
         let id = signposter.makeSignpostID()
         let state = signposter.beginInterval(name, id: id)
         let t0 = DispatchTime.now().uptimeNanoseconds
@@ -56,11 +57,12 @@ final class SyncTiming: @unchecked Sendable {
             lock.withLock { inFlight["\(name)"]?[token] = nil }
             record("\(name)", ms: Double(DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000)
         }
-        return try await body()
+        do { return try await body() } catch { probeFailed = true; throw error }
     }
 
     func measureSync<T>(_ name: StaticString, _ body: () throws -> T) rethrows -> T {
-        let probe = SyncProbe.begin("\(name)"); defer { SyncProbe.end(probe) }
+        var probeFailed = false
+        let probe = SyncProbe.begin("\(name)"); defer { SyncProbe.end(probe, error: probeFailed) }
         let id = signposter.makeSignpostID()
         let state = signposter.beginInterval(name, id: id)
         let t0 = DispatchTime.now().uptimeNanoseconds
@@ -68,7 +70,7 @@ final class SyncTiming: @unchecked Sendable {
             signposter.endInterval(name, state)
             record("\(name)", ms: Double(DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000)
         }
-        return try body()
+        do { return try body() } catch { probeFailed = true; throw error }
     }
 
     /// Counts and durations only; run-local diagnostics never reuse the production session.

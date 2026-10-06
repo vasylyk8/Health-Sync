@@ -30,4 +30,20 @@ describe('isolated phone diagnostics', () => {
     const env = makeEnv(), b = makeBatch(env, { type: 'HKWorkoutTypeIdentifier' }, [{ k: 'w', s: -1 }]);
     await expect(probeBatch(uid, request(b.gz), (await env.meta.getUser(env.uid))!)).rejects.toThrow('invalid');
   });
+  it('roundtrips workout series, routes, completion marks and same-time duplicates', async () => {
+    const env = makeEnv(), user = (await env.meta.getUser(env.uid))!, wid = '11111111-1111-4111-8111-111111111111';
+    const b = makeBatch(env, { type: '_wstream', mode: 'workoutdata' }, [
+      { k: 'ws', wid, st: 'HeartRate', gen: start, u: 'count/min', t: [start, start], v: [100.125, 120.875] },
+      { k: 'ws', wid, st: 'route', gen: start, t: [start, start + 1000], lat: [43.123456, 43.123457], lon: [-79.123456, -79.123457], alt: [10.125, 10.875] },
+      { k: 'wd', wid, gen: start, expected: { HeartRate: 2, route: 2 } },
+    ]);
+    const receipt = await probeBatch(uid, request(b.gz), user);
+    expect(receipt.readbackRows).toBe(4); expect(receipt.duplicateVerified).toBe(true); expect(receipt.maxDelta).toBeLessThanOrEqual(1e-9);
+  });
+  it('verifies delete markers without deleting caller data', async () => {
+    const env = makeEnv(), b = makeBatch(env, { type: 'HKWorkoutTypeIdentifier' }, [{ k: 'd', id: '11111111-1111-4111-8111-111111111111' }]);
+    const receipt = await probeBatch(uid, request(b.gz), (await env.meta.getUser(env.uid))!);
+    expect(receipt.readbackRows).toBe(1); expect(env.meta.manifests.size).toBe(0);
+  });
+
 });

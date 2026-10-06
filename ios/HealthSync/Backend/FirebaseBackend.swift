@@ -200,15 +200,21 @@ final class FirebaseDiagnosticUploader: DiagnosticTransferReporting, @unchecked 
     let expectedUID: String
     private let lock = NSLock()
     private var totals: [String: Double] = [:]
+    private let metrics = DiagnosticHTTPMetrics()
+    private lazy var session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.timeoutIntervalForRequest = 300
+        return URLSession(configuration: configuration, delegate: metrics, delegateQueue: nil)
+    }()
+    deinit { session.finishTasksAndInvalidate() }
     init(backend: FirebaseBackend, expectedUID: String) { self.backend = backend; self.expectedUID = expectedUID }
     func upload(batchId: String, gz: Data, sha256: String, typeId: String) async throws {
-        let receipt = try await backend.diagnosticUpload(gz: gz, sha256: sha256, expectedUID: expectedUID)
+        let receipt = try await backend.diagnosticUpload(gz: gz, sha256: sha256, expectedUID: expectedUID, session: session)
         lock.withLock { for (key, value) in receipt { totals[key, default: 0] += value }; totals["requests", default: 0] += 1 }
     }
-    func transferSummary() -> String { lock.withLock { "Isolated HTTPS/ingestion/readback: " + totals.sorted { $0.key < $1.key }.map { "\($0.key)=\(String(format: "%.3f", $0.value))" }.joined(separator: " · ") + "\nConnection/server durations can overlap and must not be summed as elapsed time. Storage SDK internals are not exposed by this HTTPS probe." } }
+    func transferSummary() -> String { lock.withLock { "Network transaction metrics: \(metrics.snapshot)\n" + "Isolated HTTPS/ingestion/readback: " + totals.sorted { $0.key < $1.key }.map { "\($0.key)=\(String(format: "%.3f", $0.value))" }.joined(separator: " · ") + "\nConnection/server durations can overlap and must not be summed as elapsed time. Storage SDK internals are not exposed by this HTTPS probe." } }
 }
 extension FirebaseBackend {
-    func diagnosticUpload(gz: Data, sha256: String, expectedUID: String) async throws -> [String: Double] {
+    func diagnosticUpload(gz: Data, sha256: String, expectedUID: String, session: URLSession) async throws -> [String: Double] {
         guard let user = Auth.auth().currentUser, user.uid == expectedUID, gz.count <= 5 * 1024 * 1024, let project = FirebaseApp.app()?.options.projectID else { throw BackendError.notSignedIn }
         let token = try await SyncProbe.measure("network.authToken") { try await user.getIDToken() }
         guard Auth.auth().currentUser?.uid == expectedUID else { throw BackendError.notSignedIn }
@@ -217,13 +223,10 @@ extension FirebaseBackend {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type"); request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
         if let appToken = try? await AppCheck.appCheck().token(forcingRefresh: false) { request.setValue(appToken.token, forHTTPHeaderField: "X-Firebase-AppCheck") }
         let body = try JSONSerialization.data(withJSONObject: ["data": ["expectedUid": expectedUID, "gz": gz.base64EncodedString(), "sha256": sha256]])
-        let metrics = DiagnosticHTTPMetrics()
-        let configuration = URLSessionConfiguration.ephemeral; configuration.timeoutIntervalForRequest = 300
-        let session = URLSession(configuration: configuration, delegate: metrics, delegateQueue: nil); defer { session.finishTasksAndInvalidate() }
         let (bytes, response) = try await SyncProbe.measure("network.isolatedHTTPS") { try await session.upload(for: request, from: body) }
         guard (response as? HTTPURLResponse)?.statusCode == 200, let result = try JSONSerialization.jsonObject(with: bytes) as? [String: Any], let receipt = (result["result"] ?? result["data"]) as? [String: Any], Auth.auth().currentUser?.uid == expectedUID,
             receipt["accountVerified"] as? Bool == true, receipt["sha256"] as? String == sha256, receipt["duplicateVerified"] as? Bool == true, let delta = receipt["maxDelta"] as? Double, delta <= 1e-9 else { throw BackendError.badResponse }
-        var timings = metrics.snapshot
+        var timings: [String: Double] = [:]
         for key in ["bytes", "records", "readbackRows", "parseMs", "ingestMs", "duplicateMs", "readbackMs", "totalMs"] { if let number = receipt[key] as? NSNumber { timings["server." + key] = number.doubleValue } }
         return timings
     }

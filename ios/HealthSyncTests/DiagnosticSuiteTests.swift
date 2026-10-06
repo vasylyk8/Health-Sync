@@ -76,3 +76,28 @@ extension DiagnosticSuiteTests {
         let store = DiagnosticReportStore(); for file in store.files(result.id) { try? FileManager.default.removeItem(at: file) }
     }
 }
+
+extension DiagnosticSuiteTests {
+    func testSourceCaptureChecksumsSurviveReopenAndDetectReplacement() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scratch = try DiagnosticScratch(root: root), store = SourceReplayStore(scratch: scratch)
+        try store.capture("a", reply: .init(count: 7))
+        XCTAssertEqual(try SourceReplayStore(scratch: scratch).read("a").count, 7)
+        try Gzip.compress(JSONEncoder().encode(SourceReplayStore.Reply(count: 8))).write(to: root.appendingPathComponent(DiagnosticScratch.digest(Data("a".utf8)) + ".source.gz"))
+        XCTAssertThrowsError(try store.read("a"))
+    }
+    func testRawCaptureChecksumsDetectAlteredReadings() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scratch = try DiagnosticScratch(root: root), store = RawReplayStore(scratch: scratch), start = Date(timeIntervalSince1970: 1_700_000_000)
+        let writer = try store.writer(type: "Steps", from: start, to: start.addingTimeInterval(3600), style: .cumulative)
+        try writer.append(RawReading(start: start, end: start.addingTimeInterval(600), value: 100, source: "watch"), id: "a"); try writer.finish()
+        let fixture = try XCTUnwrap(store.inventory.first)
+        XCTAssertEqual(RawReplayStore(scratch: scratch).inventory.count, 1)
+        let file = root.appendingPathComponent(fixture.name)
+        let text = try String(contentsOf: file, encoding: .utf8).replacingOccurrences(of: "100", with: "101")
+        try Data(text.utf8).write(to: file)
+        XCTAssertThrowsError(try store.replay(fixture, unified: false))
+    }
+}
