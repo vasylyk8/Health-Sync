@@ -18,7 +18,7 @@ struct DiagnosticsView: View {
                         Toggle("Deep investigation", isOn: $deep)
                         Toggle("Include isolated real upload", isOn: $real)
                         Toggle("Keep private replay on this phone", isOn: $retain)
-                        Text("Every enabled metric, full history, record comparisons and saved reports. Keep KROK open and unlocked. Multiple full reads can take an hour or more. Apple’s cache cannot be reset.").font(.footnote)
+                        Text("Every enabled metric, full history, record comparisons and saved reports. Keep KROK open and unlocked. Multiple full reads can take an hour or more, and the suite pauses up to 8 minutes before a case if the phone is hot. Apple’s cache cannot be reset.").font(.footnote)
                         Text("Real upload sends private test batches to an authenticated temporary server sandbox. It does not replace synced data. Replay stays on this phone.").font(.footnote)
                         Toggle("Custom experiment configuration", isOn: $custom)
                         if custom {
