@@ -284,7 +284,8 @@ extension QAUITests {
         XCTAssertTrue(app.buttons["moreMenu"].waitForExistence(timeout: 10)); app.buttons["moreMenu"].tap()
         let entry = app.buttons["Sync diagnostics"].firstMatch
         XCTAssertTrue(entry.waitForExistence(timeout: 5)); entry.tap()
-        XCTAssertTrue(app.buttons["diagnostics.start"].waitForExistence(timeout: 5))
+        // At the largest text sizes the start button is below the fold of a lazy list, so identify the screen by its title.
+        XCTAssertTrue(app.navigationBars["Sync diagnostics"].waitForExistence(timeout: 5))
         return app
     }
     private func savedReport(_ app: XCUIApplication, _ title: String) -> XCUIElement {
