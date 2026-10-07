@@ -127,7 +127,9 @@ export class KrokOAuth implements OAuthServerProvider {
       if (!uid) throw new InvalidGrantError('Sign in first.');
       const user = await tx.get<UserDoc>(`users/${uid}`);
       if (!user || user.deleting) throw new InvalidGrantError('Open KROK on your iPhone and connect Apple Health before authorizing an assistant.');
-      const scopes = p.scopes.filter((s) => s !== 'health:routes:full' || fullRoutes);
+      // Access tokens last 15 minutes, so every grant must be refreshable. ChatGPT requests only the per-tool
+      // health scopes and never offline_access; without a refresh token it showed "Reconnect" after 15 minutes.
+      const scopes = [...new Set([...p.scopes.filter((s) => s !== 'health:routes:full' || fullRoutes), 'offline_access'])];
       const grantId = randomUUID(), code = generateToken(), connectedAt = this.now();
       const grant: Grant = { uid, clientId: p.clientId, provider: p.provider, scopes, generation: user.generation,
         epoch: user.oauthEpochs?.[p.provider] ?? 0, expires: connectedAt + GRANT_MS, revoked: false };

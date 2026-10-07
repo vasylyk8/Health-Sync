@@ -121,6 +121,28 @@ describe('Public OAuth HTTP boundary', () => {
     expect((await post('/revoke', { client_id: first.client_id, token: next.refresh_token })).status).toBe(200);
     await expect(oauth.verifyAccessToken(next.access_token)).rejects.toThrow();
   });
+  it('returns a refresh token to a client that asks only for data scopes (ChatGPT)', async () => {
+    const first = await token(DEFAULT_SCOPES.filter((s) => s !== 'offline_access'));
+    expect(first.refresh_token).toBeTruthy();
+    const refresh = await post('/token', { grant_type: 'refresh_token', client_id: first.client_id, refresh_token: first.refresh_token, resource: oauth.resource });
+    expect(refresh.status).toBe(200);
+    expect((await refresh.json() as { refresh_token?: string }).refresh_token).toBeTruthy();
+  });
+  it('logs rejected token requests without logging credentials', async () => {
+    const first = await token();
+    const lines: string[] = [];
+    const write = process.stdout.write.bind(process.stdout);
+    const hsLog = process.env.HS_LOG; delete process.env.HS_LOG;
+    process.stdout.write = ((chunk: string | Uint8Array) => { lines.push(String(chunk)); return true; }) as typeof process.stdout.write;
+    try {
+      const response = await post('/token', { grant_type: 'refresh_token', client_id: first.client_id, refresh_token: generateToken(), scope: 'health:daily:read' });
+      expect(response.status).toBe(400);
+    } finally { process.stdout.write = write; if (hsLog !== undefined) process.env.HS_LOG = hsLog; }
+    const entry = lines.map((l) => { try { return JSON.parse(l) as Record<string, unknown>; } catch { return undefined; } })
+      .find((e) => e?.message === 'oauth request rejected');
+    expect(entry).toMatchObject({ severity: 'WARNING', op: '/token', status: 400, code: 'refresh_token', note: 'resource=false scope=health:daily:read' });
+    expect(lines.join('')).not.toContain(first.refresh_token);
+  });
   it('rate limits public authorization and MCP traffic', async () => {
     const credentials = await token(); allowed = false;
     expect((await fetch(`${base}/.well-known/oauth-authorization-server`)).status).toBe(429);

@@ -79,6 +79,17 @@ describe('KROK OAuth identity and credential lifecycle', () => {
     const t2 = await oauth.exchangeAuthorizationCode(client, url.searchParams.get('code')!, undefined, callback, new URL(oauth.resource));
     expect((await oauth.verifyAccessToken(t2.access_token)).scopes).toContain('health:routes:full');
   });
+  it('issues a refreshable grant even when the client never requests offline_access (ChatGPT)', async () => {
+    const chatgptScopes = DEFAULT_SCOPES.filter((s) => s !== 'offline_access');
+    const first = await tokens(chatgptScopes);
+    expect(first.refresh_token).toBeTruthy();
+    expect(first.scope.split(' ')).toContain('offline_access');
+    now += 16 * 60_000;
+    await expect(oauth.verifyAccessToken(first.access_token)).rejects.toThrow(/expired/);
+    const second = await oauth.exchangeRefreshToken(client, first.refresh_token!, undefined, new URL(oauth.resource));
+    expect(second.refresh_token).toBeTruthy();
+    expect((await oauth.verifyAccessToken(second.access_token)).scopes).not.toContain('health:routes:full');
+  });
   it('rotates refresh tokens and revokes the entire grant on replay', async () => {
     const first = await tokens();
     const second = await oauth.exchangeRefreshToken(client, first.refresh_token!, undefined, new URL(oauth.resource));
