@@ -3,6 +3,7 @@ import { mcpAuthRouter, createOAuthMetadata } from '@modelcontextprotocol/sdk/se
 import { OAuthError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { KrokOAuth, OAUTH_SCOPES, CONSENT_COOKIE } from './oauth.js';
 import type { RateLimiter } from './tokens.js';
+import { log } from '../log.js';
 
 export interface LoginIdentity { uid: string; apple: boolean; reviewer: boolean }
 const cookie = (req: Request): string => {
@@ -33,6 +34,21 @@ export function createOAuthRouter(provider: KrokOAuth, verifyLogin: (token: stri
       }
       next();
     } catch (error) { next(error); }
+  });
+  // Rejected token, revoke and registration calls are otherwise invisible. Log only the endpoint, status, grant type,
+  // whether the client sent `resource`, and the requested scope names; never credentials.
+  app.use((req, res, next) => {
+    const op = req.path;
+    if (['/token', '/revoke', '/register'].includes(op)) {
+      res.on('finish', () => {
+        if (res.statusCode < 400) return;
+        const body = (req.body ?? {}) as Record<string, unknown>;
+        log.warn('oauth request rejected', { op, status: res.statusCode,
+          code: typeof body.grant_type === 'string' ? body.grant_type : undefined,
+          note: `resource=${body.resource !== undefined} scope=${typeof body.scope === 'string' ? body.scope : ''}` });
+      });
+    }
+    next();
   });
   // Firebase Functions already parses the body. These also support standalone test servers.
   app.use(express.json({ limit: '8kb' }));
