@@ -1,0 +1,91 @@
+# Read-only diagnosis of ChatGPT connector disconnects. Prints only non-identifying metadata
+# (no uids, tokens, IPs or URL paths beyond the first segment) because job logs of a public repo are public.
+name: oauth-diagnose
+on:
+  push:
+    branches: [claude/wizardly-ritchie-b9pqqq]
+    paths: ['.github/workflows/oauth-diagnose.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Firestore OAuth grants (metadata only)
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, urllib.request, urllib.error, datetime, collections
+          P = os.environ['GCP_PROJECT_ID']
+          tok = subprocess.check_output(['gcloud', 'auth', 'print-access-token']).decode().strip()
+          base = f'https://firestore.googleapis.com/v1/projects/{P}/databases/(default)/documents'
+          def call(url, body=None):
+              req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None,
+                  headers={'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json', 'x-goog-user-project': P})
+              try: return json.load(urllib.request.urlopen(req))
+              except urllib.error.HTTPError as e: return {'_error': e.code, '_body': e.read().decode()[:300]}
+          def val(v):
+              for k in ('stringValue', 'doubleValue', 'booleanValue', 'timestampValue'):
+                  if k in v: return v[k]
+              if 'integerValue' in v: return int(v['integerValue'])
+              if 'mapValue' in v: return {k: val(x) for k, x in v['mapValue'].get('fields', {}).items()}
+              if 'arrayValue' in v: return [val(x) for x in v['arrayValue'].get('values', [])]
+              return None
+          def doc(d): return {k: val(v) for k, v in d.get('fields', {}).items()}
+          def query(coll, limit):
+              r = call(base + ':runQuery', {'structuredQuery': {'from': [{'collectionId': coll, 'allDescendants': True}], 'limit': limit}})
+              if isinstance(r, dict): print('query error', coll, r); return []
+              return [x['document'] for x in r if 'document' in x]
+          iso = lambda ms: datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc).strftime('%Y-%m-%d %H:%MZ')
+          creds = collections.defaultdict(lambda: collections.Counter())
+          access_times = collections.defaultdict(list)
+          for d in query('oauthCredentials', 1000):
+              c = doc(d)
+              k = c.get('kind')
+              creds[c.get('grantId')][k + ('_used' if c.get('used') else '')] += 1
+              if k == 'access': access_times[c.get('grantId')].append(c['expires'] - 15 * 60_000)
+          grants = []
+          for d in query('oauthGrants', 200):
+              parts = d['name'].split('/')
+              grants.append((parts[-3], parts[-1], doc(d)))
+          grants.sort(key=lambda g: -g[2].get('expires', 0))
+          print(f'{len(grants)} grant(s); now = {datetime.datetime.now(datetime.timezone.utc):%Y-%m-%d %H:%MZ}')
+          for i, (uid, gid, g) in enumerate(grants[:15]):
+              u = call(f'{base}/users/{uid}')
+              u = doc(u) if '_error' not in u else {}
+              ep = (u.get('oauthEpochs') or {}).get(g.get('provider'), 0)
+              at = sorted(access_times.get(gid, []))
+              print(f'#{i} provider={g.get("provider")} connected~{iso(g["expires"] - 30 * 86_400_000)} grantExpires={iso(g["expires"])}'
+                    f' revoked={g.get("revoked")} generationMatch={g.get("generation") == u.get("generation")}'
+                    f' epochMatch={g.get("epoch") == ep} userDeleting={u.get("deleting")} userFound={bool(u)}'
+                    f' lastUsed={iso(((u.get("connections") or {}).get(g.get("provider")) or {}).get("lastUsedAt", 0)) if u else None}')
+              print(f'    credentials={dict(creds.get(gid, {}))} accessTokensIssued={len(at)}'
+                    + (f' firstIssued={iso(at[0])} lastIssued={iso(at[-1])}' if at else ''))
+          PY
+      - name: Cloud Run request log, authorization + mcp (status codes only)
+        continue-on-error: true
+        run: |
+          gcloud logging read 'resource.type="cloud_run_revision" AND logName:"run.googleapis.com%2Frequests" AND (resource.labels.service_name="authorization" OR resource.labels.service_name="mcp")' \
+            --project "$GCP_PROJECT_ID" --freshness=24h --limit=500 --format=json > /tmp/requests.json
+          python3 - <<'PY'
+          import json, urllib.parse
+          rows = json.load(open('/tmp/requests.json'))
+          out = []
+          for r in rows:
+              h = r.get('httpRequest', {})
+              path = urllib.parse.urlparse(h.get('requestUrl', '')).path.split('/')
+              out.append((r['timestamp'][:19], r['resource']['labels']['service_name'], h.get('requestMethod'), h.get('status'), '/' + path[1] if len(path) > 1 else '/'))
+          out.sort()
+          print(f'{len(out)} request(s) in the last 24h (UTC)')
+          for o in out: print(*o)
+          PY
