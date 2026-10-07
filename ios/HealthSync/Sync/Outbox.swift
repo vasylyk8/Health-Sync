@@ -55,6 +55,9 @@ final class Outbox: @unchecked Sendable {
         /// Workouts found on this iPhone at the last check (for progress).
         var workoutTotal = 0
         var lastSyncAt: Date?
+        /// When the app last finished checking Apple Health against the server with nothing left to send (a full run or a wake for new data).
+        /// Shown on Home as "Checked 5 min ago"; separate from `lastSyncAt`, which decides when a long absence needs a reconcile.
+        var lastCheckedAt: Date?
         /// Content hash of the daily rows last sent per chunk ("full|type|chunkStart" or "inc|type"), so unchanged rows are not sent again.
         var dailyHashes: [String: String] = [:]
         /// Hourly series: uploaded through this time, and when the last complete pass ended.
@@ -73,7 +76,7 @@ final class Outbox: @unchecked Sendable {
         init() {}
 
         private enum CodingKeys: String, CodingKey {
-            case schemaVersion, anchors, seq, recentDone, caughtUp, reconcile, dailyFullAt, detailsDone, workoutTotal, lastSyncAt
+            case schemaVersion, anchors, seq, recentDone, caughtUp, reconcile, dailyFullAt, detailsDone, workoutTotal, lastSyncAt, lastCheckedAt
             case dailyHashes, hourlyThrough, hourlyAt, historyFrom, profileAt, dailyVersion, hourlyVersion, detailVersion
         }
 
@@ -91,6 +94,7 @@ final class Outbox: @unchecked Sendable {
             detailsDone = try c.decodeIfPresent(Set<String>.self, forKey: .detailsDone) ?? []
             workoutTotal = try c.decodeIfPresent(Int.self, forKey: .workoutTotal) ?? 0
             lastSyncAt = try c.decodeIfPresent(Date.self, forKey: .lastSyncAt)
+            lastCheckedAt = try c.decodeIfPresent(Date.self, forKey: .lastCheckedAt)
             dailyHashes = try c.decodeIfPresent([String: String].self, forKey: .dailyHashes) ?? [:]
             hourlyThrough = try c.decodeIfPresent(Date.self, forKey: .hourlyThrough)
             hourlyAt = try c.decodeIfPresent(Date.self, forKey: .hourlyAt)

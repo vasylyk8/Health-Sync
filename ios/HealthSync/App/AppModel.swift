@@ -37,6 +37,9 @@ final class AppModel: ObservableObject {
     @Published var connectStage = ""
     /// Shown under the sync status when the last sync attempt failed; cleared by the next success.
     @Published var syncIssue: String?
+    /// Checks that are running now (opening the app, pull to refresh, a background catch-up while the app is open); Home says "Checking…" while any runs.
+    @Published private(set) var checksRunning = 0
+    var isChecking: Bool { checksRunning > 0 }
 
     /// Result of the read-speed test (shown in a sheet); the sync is paused while it runs.
     @Published var benchmarkText = ""
@@ -252,6 +255,9 @@ final class AppModel: ObservableObject {
         Task { await engine.onProgress { p in Task { @MainActor in self.progress = p } } }
         startObservers()
         syncTask = Task {
+            // Counted from the start (the permission sheet for new types can come first), so Home shows the check at once.
+            checksRunning += 1
+            defer { checksRunning -= 1 }
             await requestNewTypes()
             await syncNow()
         }
@@ -405,16 +411,24 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Pull down to refresh: starts a sync if none is running and returns after a moment, so the spinner never hangs
-    /// for the minutes a large sync can take (a refresh that is still "in progress" ignores further pulls).
+    /// Pull down to refresh: starts a check if none is running and keeps the spinner until it finishes, so the screen
+    /// shows the result ("Checked just now"). The wait is capped, so the spinner never hangs for the minutes a large
+    /// sync can take: after that the check carries on and Home keeps saying "Checking…". During the first sync the
+    /// spinner only blinks (that sync has its own status).
     func pullToRefresh() async {
-        await refreshStatus()
-        if !progress.isSyncing {
-            syncTask?.cancel()
+        if !isChecking && !progress.isSyncing {
             syncTask = Task { await syncNow() }
         }
-        try? await Task.sleep(for: .seconds(2))
+        let started = Date()
+        let cap: TimeInterval = progress.historyComplete ? Self.refreshWaitCap : 1
+        try? await Task.sleep(for: .seconds(1))
+        while isChecking, Date().timeIntervalSince(started) < cap {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
     }
+
+    /// The longest a pull to refresh waits for the check to finish.
+    static let refreshWaitCap: TimeInterval = 10
 
     /// Signs in and checks the account is the one this phone's outbox belongs to. If the account changed (for example the
     /// old one was deleted on the server and the app fell back to a new anonymous one), what was "already uploaded" went to
@@ -449,6 +463,8 @@ final class AppModel: ObservableObject {
     @discardableResult
     private func performSyncNow() async -> String {
         guard !benchmarkRunning else { return "skipped (a diagnostic was running)" }
+        checksRunning += 1
+        defer { checksRunning -= 1 }
         let syncStarted = ProcessInfo.processInfo.systemUptime
         do {
             try await ensureCurrentAccount()
