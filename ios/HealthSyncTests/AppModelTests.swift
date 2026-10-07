@@ -114,6 +114,35 @@ final class AppModelTests: XCTestCase {
         XCTAssertNil(model.syncIssue)
     }
 
+    func testAPullToRefreshRunsACheckAndWaitsForIt() async {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        XCTAssertFalse(model.isChecking)
+        await model.pullToRefresh()
+        XCTAssertGreaterThan(backend.registerCalls, 0, "the pull started a sync")
+        XCTAssertFalse(model.isChecking, "and it was over when the spinner went away")
+        XCTAssertNil(model.syncIssue)
+    }
+
+    func testAFailedCheckStillEndsThePullToRefresh() async {
+        let backend = StubBackend()
+        backend.signInError = URLError(.notConnectedToInternet)
+        let model = makeModel(backend)
+        await model.pullToRefresh()
+        XCTAssertFalse(model.isChecking)
+        XCTAssertEqual(model.syncIssue?.contains("offline"), true)
+    }
+
+    func testChecksAreCountedWhileTheyRun() async {
+        let backend = StubBackend()
+        let model = makeModel(backend)
+        await model.syncNow()
+        XCTAssertEqual(model.checksRunning, 0)
+        backend.signInError = BackendError.badResponse
+        await model.syncNow()
+        XCTAssertEqual(model.checksRunning, 0, "a failed check also ends")
+    }
+
     func testOtherFailuresAskTheUserToRetry() async {
         let backend = StubBackend()
         backend.signInError = BackendError.badResponse

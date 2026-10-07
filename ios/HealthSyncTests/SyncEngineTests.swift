@@ -766,6 +766,74 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertNil(p.historySinceYear)
     }
 
+    // MARK: Last checked
+
+    func testAFinishedRunRecordsWhenItChecked() async throws {
+        let source = ScriptedSource()
+        let box = Outbox(root: root)
+        let engine = SyncEngine(source: source, uploader: RecordingUploader(), outbox: box, scope: scope)
+        var p = await engine.progress
+        XCTAssertNil(p.lastCheckedAt, "never checked")
+        let before = Date()
+        _ = try await engine.run()
+        p = await engine.progress
+        let checked = try XCTUnwrap(p.lastCheckedAt)
+        XCTAssertGreaterThanOrEqual(checked, before.addingTimeInterval(-1))
+        XCTAssertEqual(box.state.lastCheckedAt, box.state.lastSyncAt)
+    }
+
+    func testARunThatDoesNotFinishDoesNotCountAsAChecked() async throws {
+        let source = ScriptedSource()
+        source.failing = ["index"]
+        let box = Outbox(root: root)
+        let engine = SyncEngine(source: source, uploader: RecordingUploader(), outbox: box, scope: scope)
+        _ = try? await engine.run()
+        XCTAssertNil(box.state.lastCheckedAt, "a failed step is retried, so it is not a clean check")
+        let source2 = ScriptedSource()
+        source2.index = [WorkoutRef(id: "W1", start: Date())]
+        source2.details = ["W1": detail("W1")]
+        let box2 = Outbox(root: URL(fileURLWithPath: root.path + "-2"))
+        let engine2 = SyncEngine(source: source2, uploader: RecordingUploader(), outbox: box2, scope: scope)
+        let outcome = try await engine2.run(deadline: Date(timeIntervalSinceNow: -1))
+        XCTAssertEqual(outcome, .outOfTime)
+        XCTAssertNil(box2.state.lastCheckedAt, "out of time: not everything was checked")
+    }
+
+    func testAWakeForNewDataRecordsTheCheckAndReportsIt() async throws {
+        let source = ScriptedSource()
+        let box = Outbox(root: root)
+        let engine = SyncEngine(source: source, uploader: RecordingUploader(), outbox: box, scope: scope)
+        _ = try await engine.run()
+        let first = try XCTUnwrap(box.state.lastCheckedAt)
+        let log = ProgressLog()
+        await engine.onProgress { log.add($0) }
+        try await Task.sleep(for: .milliseconds(1_100))
+        try await engine.runWorkoutChanges(deadline: Date().addingTimeInterval(5))
+        let second = try XCTUnwrap(box.state.lastCheckedAt)
+        XCTAssertGreaterThan(second, first, "a wake that finishes is a check too")
+        XCTAssertEqual(log.items.last?.lastCheckedAt, second, "Home hears about it")
+        XCTAssertEqual(log.items.last?.isSyncing, false)
+    }
+
+    func testAWakeThatRunsOutOfTimeIsNotACheck() async throws {
+        let source = ScriptedSource()
+        let box = Outbox(root: root)
+        let engine = SyncEngine(source: source, uploader: RecordingUploader(), outbox: box, scope: scope)
+        _ = try await engine.run()
+        let first = try XCTUnwrap(box.state.lastCheckedAt)
+        source.index = [WorkoutRef(id: "N1", start: Date())]
+        source.details = ["N1": detail("N1")]
+        try await Task.sleep(for: .milliseconds(1_100))
+        try await engine.runWorkoutChanges(deadline: Date(timeIntervalSinceNow: -1))
+        XCTAssertEqual(box.state.lastCheckedAt, first)
+    }
+
+    func testTheLastCheckSurvivesARestart() throws {
+        let when = Date(timeIntervalSince1970: 1_700_000_000)
+        try Outbox(root: root).update { $0.lastCheckedAt = when }
+        XCTAssertEqual(Outbox(root: root).state.lastCheckedAt, when)
+    }
+
     func testTheHistoryStartSurvivesARestartAndKeepsTheEarliestDate() throws {
         let early = Date(timeIntervalSince1970: 1_500_000_000)
         let later = Date(timeIntervalSince1970: 1_600_000_000)

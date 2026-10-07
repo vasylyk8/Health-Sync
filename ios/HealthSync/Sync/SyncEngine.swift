@@ -37,6 +37,8 @@ struct SyncProgress: Equatable, Sendable {
     var hourlyFraction = 0.0
     /// The year the history starts in (nil until known).
     var historySinceYear: Int?
+    /// When the app last finished a check with nothing left to send (nil before the first one).
+    var lastCheckedAt: Date?
     /// Finished flags for [recent workouts, daily context, workout history, workout details].
     var stepFlags: [Bool] { [recentDone, dailyDone, historyDone, historyComplete] }
     var stepTitle: String {
@@ -202,6 +204,7 @@ actor SyncEngine {
         p.historyDone = s.caughtUp.contains(workoutId)
         p.hourlyDone = hourlyDone
         p.indexingDone = p.recentDone && p.historyDone && (indexRead || s.workoutTotal > 0)
+        p.lastCheckedAt = s.lastCheckedAt
         p.stats = stats.snapshot()
         addHistoryCounters(to: &p, state: s)
         return p
@@ -247,7 +250,7 @@ actor SyncEngine {
         p.isSyncing = syncing
         let key: [Int] = [Int(p.fraction * 100), p.phase, p.isSyncing ? 1 : 0, p.recentReady ? 1 : 0, p.historyComplete ? 1 : 0, p.detailsDone,
                    p.recentDone ? 1 : 0, p.dailyDone ? 1 : 0, p.historyDone ? 1 : 0, p.stats.version,
-                   p.indexingDone ? 1 : 0, p.hourlyDone ? 1 : 0, p.daysRead, p.hoursRead]
+                   p.indexingDone ? 1 : 0, p.hourlyDone ? 1 : 0, p.daysRead, p.hoursRead, Int(p.lastCheckedAt?.timeIntervalSince1970 ?? 0)]
         guard key != lastReported else { return }
         lastReported = key
         progressHandler?(p)
@@ -353,7 +356,11 @@ actor SyncEngine {
         // A step that failed (e.g. one HealthKit query error) didn't stop the others; report the run
         // as failed so it is retried, but everything else is already synced.
         if let first = stepErrors.first { throw first }
-        try outbox.update { $0.lastSyncAt = now() }
+        let finishedAt = now()
+        try outbox.update { s in
+            s.lastSyncAt = finishedAt
+            s.lastCheckedAt = finishedAt
+        }
         return .finished
     }
 
@@ -388,12 +395,15 @@ actor SyncEngine {
         defer {
             running = false
             self.deadline = nil
+            // Tells Home when the check finished (nothing else about a wake for new data is shown).
+            report(syncing: false)
         }
         try await SharedRawHistory.withFreshCache(endingAt: now()) { try await self.workoutChangesInReadSession(wt, deadline: deadline) }
     }
 
     private func workoutChangesInReadSession(_ wt: SyncType, deadline: Date) async throws {
         try await flush()
+        var finished = true
         do {
             while now() < deadline {
                 if try await anchoredPage(wt) { break }
@@ -408,8 +418,10 @@ actor SyncEngine {
             try await profileSync()
         } catch is OutOfTime {
             // Everything is resumable; the next run continues.
+            finished = false
         }
         try await sendStatus()
+        if finished { try outbox.update { $0.lastCheckedAt = now() } }
     }
 
     // MARK: Steps

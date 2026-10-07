@@ -164,12 +164,22 @@ struct ConnectView: View {
                     .smallText()
                     .foregroundStyle(Theme.muted)
                     .padding(.top, 2)
-            } else if let last = model.status.lastVisibleDate {
-                Text(Copy.Home.upToDate).bodyText(.semibold)
-                Text("Last synced \(last, format: .relative(presentation: .named))")
-                    .smallText()
-                    .foregroundStyle(Theme.muted)
-                    .padding(.top, 2)
+            } else if model.uploadFinished || p.historyComplete {
+                // "Up to date" means the last check found everything on the phone already visible to the AI; the time re-renders as it ages.
+                TimelineView(.periodic(from: .now, by: 15)) { context in
+                    let status = SyncStatus.lines(lastChecked: p.lastCheckedAt, checking: model.isChecking, failed: model.syncIssue != nil, now: context.date)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(status.title)
+                            .bodyText(.semibold)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(status.detail)
+                            .smallText()
+                            .foregroundStyle(Theme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 2)
+                            .accessibilityIdentifier("syncStatus")
+                    }
+                }
             } else {
                 // Upload hasn't begun: the first line is already loading.
                 StepBar(lines: p.lines)

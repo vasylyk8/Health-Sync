@@ -47,6 +47,13 @@ enum Copy {
         static let overAnHour = "More than an hour left"
         static let keepOpen = "Keep the app open."
         static let upToDate = "Up to date"
+        static let checkingForNewData = "Checking for new data…"
+        static let checking = "Checking…"
+        static let waitingToSync = "Waiting to sync"
+        static let notCheckedYet = "Not checked yet"
+        static let justNow = "just now"
+        static func checked(_ ago: String) -> String { "Checked \(ago)" }
+        static func lastChecked(_ ago: String) -> String { "Last checked \(ago)" }
         static let askYourAI = "ASK YOUR AI"
         static let copied = "COPIED"
         static let gettingReady = "Getting ready…"
