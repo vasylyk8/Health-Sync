@@ -21,7 +21,7 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOY_SA }}
       - uses: google-github-actions/setup-gcloud@v2
-      - name: Firestore OAuth grants (metadata only)
+      - name: Granted scopes per grant (metadata only)
         continue-on-error: true
         run: |
           python3 - <<'PY'
@@ -42,50 +42,22 @@ jobs:
               if 'arrayValue' in v: return [val(x) for x in v['arrayValue'].get('values', [])]
               return None
           def doc(d): return {k: val(v) for k, v in d.get('fields', {}).items()}
-          def query(coll, limit):
-              r = call(base + ':runQuery', {'structuredQuery': {'from': [{'collectionId': coll, 'allDescendants': True}], 'limit': limit}})
-              if isinstance(r, dict): print('query error', coll, r); return []
-              return [x['document'] for x in r if 'document' in x]
+          r = call(base + ':runQuery', {'structuredQuery': {'from': [{'collectionId': 'oauthGrants', 'allDescendants': True}], 'limit': 200}})
+          grants = [doc(x['document']) for x in r if 'document' in x] if isinstance(r, list) else []
+          grants.sort(key=lambda g: -g.get('expires', 0))
           iso = lambda ms: datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc).strftime('%Y-%m-%d %H:%MZ')
-          creds = collections.defaultdict(lambda: collections.Counter())
-          access_times = collections.defaultdict(list)
-          for d in query('oauthCredentials', 1000):
-              c = doc(d)
-              k = c.get('kind')
-              creds[c.get('grantId')][k + ('_used' if c.get('used') else '')] += 1
-              if k == 'access': access_times[c.get('grantId')].append(c['expires'] - 15 * 60_000)
-          grants = []
-          for d in query('oauthGrants', 200):
-              parts = d['name'].split('/')
-              grants.append((parts[-3], parts[-1], doc(d)))
-          grants.sort(key=lambda g: -g[2].get('expires', 0))
-          print(f'{len(grants)} grant(s); now = {datetime.datetime.now(datetime.timezone.utc):%Y-%m-%d %H:%MZ}')
-          for i, (uid, gid, g) in enumerate(grants[:15]):
-              u = call(f'{base}/users/{uid}')
-              u = doc(u) if '_error' not in u else {}
-              ep = (u.get('oauthEpochs') or {}).get(g.get('provider'), 0)
-              at = sorted(access_times.get(gid, []))
-              print(f'#{i} provider={g.get("provider")} connected~{iso(g["expires"] - 30 * 86_400_000)} grantExpires={iso(g["expires"])}'
-                    f' revoked={g.get("revoked")} generationMatch={g.get("generation") == u.get("generation")}'
-                    f' epochMatch={g.get("epoch") == ep} userDeleting={u.get("deleting")} userFound={bool(u)}'
-                    f' lastUsed={iso(((u.get("connections") or {}).get(g.get("provider")) or {}).get("lastUsedAt", 0)) if u else None}')
-              print(f'    credentials={dict(creds.get(gid, {}))} accessTokensIssued={len(at)}'
-                    + (f' firstIssued={iso(at[0])} lastIssued={iso(at[-1])}' if at else ''))
+          print(f'{len(grants)} grant(s)')
+          for g in grants[:10]:
+              print(f'provider={g.get("provider")} connected~{iso(g["expires"] - 30 * 86_400_000)} revoked={g.get("revoked")} hasOfflineAccess={"offline_access" in (g.get("scopes") or [])} scopes={g.get("scopes")}')
           PY
-      - name: Cloud Run request log, authorization + mcp (status codes only)
+      - name: Requested scopes on /authorize (scope and resource params only)
         continue-on-error: true
         run: |
-          gcloud logging read 'resource.type="cloud_run_revision" AND logName:"run.googleapis.com%2Frequests" AND (resource.labels.service_name="authorization" OR resource.labels.service_name="mcp")' \
-            --project "$GCP_PROJECT_ID" --freshness=24h --limit=500 --format=json > /tmp/requests.json
+          gcloud logging read 'resource.type="cloud_run_revision" AND logName:"run.googleapis.com%2Frequests" AND resource.labels.service_name="authorization" AND httpRequest.requestUrl:"/authorize"' \
+            --project "$GCP_PROJECT_ID" --freshness=48h --limit=50 --format=json > /tmp/authorize.json
           python3 - <<'PY'
           import json, urllib.parse
-          rows = json.load(open('/tmp/requests.json'))
-          out = []
-          for r in rows:
-              h = r.get('httpRequest', {})
-              path = urllib.parse.urlparse(h.get('requestUrl', '')).path.split('/')
-              out.append((r['timestamp'][:19], r['resource']['labels']['service_name'], h.get('requestMethod'), h.get('status'), '/' + path[1] if len(path) > 1 else '/'))
-          out.sort()
-          print(f'{len(out)} request(s) in the last 24h (UTC)')
-          for o in out: print(*o)
+          for r in sorted(json.load(open('/tmp/authorize.json')), key=lambda r: r['timestamp']):
+              q = urllib.parse.parse_qs(urllib.parse.urlparse(r['httpRequest']['requestUrl']).query)
+              print(r['timestamp'][:19], 'scope=', q.get('scope'), 'resource=', q.get('resource'))
           PY
