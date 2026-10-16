@@ -110,17 +110,18 @@ final class OnboardingUITests: XCTestCase {
 
     func testAppReviewCanSignInWithTheTestAccountWithoutAppleHealth() {
         let app = launch()
-        XCTAssertTrue(app.buttons["reviewLink"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["reviewLink"].waitForExistence(timeout: 5), "the App Review sign-in link is on the welcome page")
         app.buttons["reviewLink"].tap()
         let email = app.textFields["reviewEmail"]
-        XCTAssertTrue(email.waitForExistence(timeout: 5))
+        XCTAssertTrue(email.waitForExistence(timeout: 5), "the review sheet opens")
         email.tap(); email.typeText("reviewer@example.test")
         let password = app.secureTextFields["reviewPassword"]
+        XCTAssertTrue(password.waitForExistence(timeout: 5), "the password field exists")
         password.tap(); password.typeText("ui-test-password")
         app.buttons["reviewSignIn"].tap()
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 10), "review sign-in reaches Home")
         app.buttons["moreMenu"].tap()
-        XCTAssertTrue(app.buttons["exitReview"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Exit review mode"].firstMatch.waitForExistence(timeout: 5), "review mode offers Exit")
         XCTAssertFalse(app.buttons["Delete All My Data"].exists, "review mode offers no deletion")
     }
 
