@@ -83,6 +83,14 @@ describe('OAuth on real Firestore transactions', () => {
     await disconnect(db, 'oauth-user', 'claude');
     await expect(oauth.verifyAccessToken(credentials.access_token)).rejects.toThrow(/disconnected/);
   });
+  it('ignores disconnect and deletion for the shared review account', async () => {
+    const reviewer = 'krok-reviewer-directory';
+    await db.doc(`users/${reviewer}`).set({ generation: 1, deleting: false, createdAt: 1, lastVisibleAt: null, tz: 'UTC', connections: {}, links: {}, synthetic: true });
+    await disconnect(db, reviewer, 'claude');
+    await beginDeletion(db, reviewer);
+    expect((await db.doc(`users/${reviewer}`).get()).data()).toMatchObject({ deleting: false, generation: 1 });
+    expect((await db.doc(`users/${reviewer}`).get()).get('oauthEpochs')).toBeUndefined();
+  });
   it('deletion stops access immediately and removes credentials outside the user subtree', async () => {
     const { oauth, credentials } = await oauthCredentials();
     await db.doc('oauthCredentials/other-user-credential').set({ uid: 'other-user' });

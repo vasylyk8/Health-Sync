@@ -142,6 +142,16 @@ final class FirebaseBackend: Backend, @unchecked Sendable {
         _ = try await Auth.auth().currentUser?.getIDToken(forcingRefresh: true)
     }
 
+    func signInReviewer(email: String, password: String) async throws {
+        let result = try await Auth.auth().signIn(withEmail: email, password: password)
+        // Only the dedicated, server-marked reviewer account may use this path; any other password account is signed out again.
+        let token = try await result.user.getIDTokenResult(forcingRefresh: true)
+        guard token.claims["krokReviewer"] as? Bool == true else {
+            try? Auth.auth().signOut()
+            throw BackendError.notReviewer
+        }
+    }
+
     func revokeAppleAuthorization(_ authorizationCode: String) async throws {
         try await Auth.auth().revokeToken(withAuthorizationCode: authorizationCode)
     }

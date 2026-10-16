@@ -60,7 +60,7 @@ struct ConnectView: View {
             Menu {
                 Link(destination: Theme.supportURL) { Label(Copy.Menu.help, systemImage: "questionmark.circle") }
                 Link(destination: Theme.privacyURL) { Label(Copy.Menu.privacy, systemImage: "hand.raised") }
-                if !model.appleAccountLinked {
+                if !model.appleAccountLinked && !model.isReviewDemo {
                     Button { Task { await model.signInWithAppleFromMenu() } } label: { Label(Copy.Menu.signIn, systemImage: "person.crop.circle") }
                 }
                 if Theme.isInternalBuild {
@@ -68,10 +68,15 @@ struct ConnectView: View {
                     Button { model.runSpeedTest() } label: { Label(Copy.Menu.speedTest, systemImage: "speedometer") }
                     Button { confirmComparison = true } label: { Label("Compare initial sync", systemImage: "arrow.left.arrow.right") }
                 }
-                if model.appleAccountLinked {
-                    Button { confirmLogOut = true } label: { Label(Copy.Menu.logOut, systemImage: "rectangle.portrait.and.arrow.right") }
+                if model.isReviewDemo {
+                    Button { Task { await model.exitReviewDemo() } } label: { Label(Copy.Review.exit, systemImage: "rectangle.portrait.and.arrow.right") }
+                        .accessibilityIdentifier("exitReview")
+                } else {
+                    if model.appleAccountLinked {
+                        Button { confirmLogOut = true } label: { Label(Copy.Menu.logOut, systemImage: "rectangle.portrait.and.arrow.right") }
+                    }
+                    Button { confirmDelete = true } label: { Label(Copy.Menu.deleteAll, systemImage: "trash") }
                 }
-                Button { confirmDelete = true } label: { Label(Copy.Menu.deleteAll, systemImage: "trash") }
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 20, weight: .semibold))

@@ -51,17 +51,16 @@ async function connect(provider, scope, testWrongPassword = false) {
   await page.goto(base + '/authorize?' + new URLSearchParams({ client_id: registration.client_id, redirect_uri: callback,
     response_type: 'code', resource, code_challenge: challenge, code_challenge_method: 'S256', scope, state }));
   await page.locator('#consent').waitFor({ state: 'visible', timeout: 60_000 });
-  await page.getByText('Directory reviewer access').click();
   await page.getByLabel('Email', { exact: true }).fill(email);
   if (testWrongPassword) {
     await page.getByLabel('Password', { exact: true }).fill(password + '-invalid');
-    await page.getByRole('button', { name: 'Sign in to review account' }).click();
-    await page.locator('#status').filter({ hasText: 'Reviewer sign-in failed' }).waitFor();
+    await page.getByRole('button', { name: 'Sign in with test account' }).click();
+    await page.locator('#status').filter({ hasText: 'Test account sign-in failed' }).waitFor();
     assert(await page.getByRole('button', { name: 'Allow access' }).isDisabled());
     passed('production wrong-password refusal');
   }
   await page.getByLabel('Password', { exact: true }).fill(password);
-  await page.getByRole('button', { name: 'Sign in to review account' }).click();
+  await page.getByRole('button', { name: 'Sign in with test account' }).click();
   await page.waitForFunction(() => !document.querySelector('#approve').disabled, null, { timeout: 60_000 });
   assert.equal(await page.getByLabel('Password', { exact: true }).inputValue(), '');
   await page.getByRole('button', { name: 'Allow access' }).click();

@@ -6,7 +6,7 @@ Owner has agreed to record both. Make two separate real recordings, approximatel
 
 1. Use the existing development/custom connection in each host with `https://krok-1d60a.firebaseapp.com/mcp` and OAuth. ChatGPT developer-mode availability depends on plan/workspace. Keep the directory review version and backend commit in private preparation notes. Do not record an old secret private-link connection as proof of public OAuth.
 2. Obtain the reviewer password securely using the reviewer runbook. Use only synthetic data. Close unrelated chats, disable notifications and hide passwords/tokens, private links, browser addresses containing authorization codes and unrelated identifiers.
-3. Rehearse once before recording. Begin at the assistant's connection screen. Show KROK's consent and read-only permissions. Pause recording while filling the reviewer credentials in “Directory reviewer access”; resume before “Allow access”. This demonstrates reviewer access; separately verify native Apple account → public OAuth with your own account without exposing real health data.
+3. Rehearse once before recording. Begin at the assistant's connection screen. Show KROK's consent and read-only permissions. Pause recording while filling the reviewer credentials in the visible test-account form; resume before “Allow access”. This demonstrates reviewer access; separately verify native Apple account → public OAuth with your own account without exposing real health data.
 4. Start a fresh conversation in each host. The fixture dates are January 2024, not “this week”. Keep results and actual tool calls legible. Let the model complete each answer; do not edit a failed result into a successful demonstration.
 
 ## Exact demo prompts, in order

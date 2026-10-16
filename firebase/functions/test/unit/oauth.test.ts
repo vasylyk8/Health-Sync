@@ -29,6 +29,18 @@ async function tokens(scopes = DEFAULT_SCOPES) {
 }
 
 describe('KROK OAuth identity and credential lifecycle', () => {
+  it('gives the shared review account a longer grant than ordinary users', async () => {
+    const grantExpiries = (id: string) => [...store.docs].filter(([path]) => path.startsWith(`users/${id}/oauthGrants/`)).map(([, doc]) => (doc as { expires: number }).expires);
+    const reviewer = 'krok-reviewer-directory';
+    await store.set(`users/${reviewer}`, { generation: 1, deleting: false, createdAt: 1, lastVisibleAt: null, tz: 'UTC', connections: {}, links: {} });
+    const p = await begin();
+    await oauth.finishConsent(p.id, p.csrf, reviewer, true, false);
+    const q = await begin();
+    await oauth.finishConsent(q.id, q.csrf, uid, true, false);
+    const [review] = grantExpiries(reviewer), [ordinary] = grantExpiries(uid);
+    expect(review! - now).toBe(180 * 86_400_000);
+    expect(ordinary! - now).toBe(30 * 86_400_000);
+  });
   it('links grants to the existing UID and preserves data and account generation', async () => {
     const t = await tokens();
     const identity = await oauth.verifyAccessToken(t.access_token);

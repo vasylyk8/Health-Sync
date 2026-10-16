@@ -54,7 +54,7 @@ async function start() {
     wasSignedIn = !!user;
     status.textContent = user ? 'Signed in. Tap Allow access to finish connecting.'
       : appleRedirectFailed ? 'Apple sign-in did not complete. Try signing in again, or cancel and restart the connection in your assistant. If Apple shows a different app, cancel and contact KROK support.'
-      : 'Sign in using the same Apple Account you linked in the KROK iPhone app.';
+      : 'Sign in with Apple (the Account linked in the KROK iPhone app), or, if you are a reviewer, use the test account below.';
   };
   onAuthStateChanged(auth, updateUser);
   signIn.onclick = async () => {
@@ -90,7 +90,7 @@ async function start() {
         document.querySelector<HTMLInputElement>('#reviewer-password')!.value);
       document.querySelector<HTMLInputElement>('#reviewer-password')!.value = '';
       updateUser();
-    } catch { status.textContent = 'Reviewer sign-in failed. Check the credentials supplied through the review portal.'; }
+    } catch { status.textContent = 'Test account sign-in failed. Check the email and password from the review notes, with no extra spaces.'; }
   };
 }
 void start().catch((error) => { status.textContent = error instanceof Error ? error.message : 'Could not load KROK sign-in. Please retry.'; });

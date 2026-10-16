@@ -86,6 +86,17 @@ enum Copy {
         }
     }
 
+    enum Review {
+        static let link = "App Review sign-in"
+        static let title = "App Review"
+        static let body = "Reviewers can explore KROK with a test account that already holds sample data. No Apple Health data is read or uploaded in this mode."
+        static let email = "Email"
+        static let password = "Password"
+        static let signIn = "Sign in"
+        static let exit = "Exit review mode"
+        static let oauthDetail = "Reviewers: on the page that opens, use the test account at the bottom instead of Apple, then tap Allow access."
+    }
+
     enum Menu {
         static let help = "Help & Support"
         static let privacy = "Privacy Policy"

@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { LIMITS, type Provider } from '../config.js';
+import { LIMITS, isReviewerUid, type Provider } from '../config.js';
 import { TOKEN_RE, hashToken, type AccessLog, type Connections, type RateLimiter, type TokenStore } from '../auth/tokens.js';
 import type { BlobStore, MetaStore } from '../store/types.js';
 import { checkPendingUploads, ToolError, type QueryDeps } from '../query/context.js';
@@ -330,7 +330,7 @@ export async function handleMcp(req: IncomingMessage & { body?: unknown }, res: 
     const uid = String(identity.extra?.uid), provider = identity.extra?.provider as Provider;
     const user = await deps.meta.getUser(uid);
     if (!user || user.deleting) return send(res, 401, { error: 'unauthorized' });
-    if (!await deps.limiter.hit(`oauth_mcp_${uid}_${provider}`, LIMITS.mcpRequestsPerMinute, 60_000)) {
+    if (!await deps.limiter.hit(`oauth_mcp_${uid}_${provider}`, isReviewerUid(uid) ? LIMITS.reviewerMcpRequestsPerMinute : LIMITS.mcpRequestsPerMinute, 60_000)) {
       res.setHeader('Retry-After', '60'); return send(res, 429, { error: 'too_many_requests' });
     }
     await deps.connections.touch(uid, provider, now(), user.connections[provider]).catch(() => undefined);

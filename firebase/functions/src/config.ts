@@ -23,6 +23,9 @@ export const LIMITS = {
   /** Wall-clock deadline for one MCP request (Hosting cuts at 60 s). */
   requestDeadlineMs: 45_000,
   mcpRequestsPerMinute: 120,
+  /** The shared directory-review account serves several reviewers and automated checkers at once. */
+  reviewerMcpRequestsPerMinute: 600,
+  reviewerGrantMs: 180 * 86_400_000,
   invalidTokenPerIpPerMinute: 30,
   staleAfterMs: 24 * 3600 * 1000,
   /** Longest a merged-totals window may trail the latest check and still count as current. */
@@ -96,3 +99,6 @@ const BY_SHORT = new Map(COVERAGE.types.map((t) => [shortName(t.id).toLowerCase(
 export function resolveType(name: string): CoverageEntry | undefined {
   return TYPES_BY_ID.get(name) ?? BY_SHORT.get(name.toLowerCase());
 }
+
+/** Dedicated synthetic accounts for directory and App Review (see scripts/prepare-reviewer.mjs). */
+export const isReviewerUid = (uid: string): boolean => /^krok-reviewer-[A-Za-z0-9_-]{1,80}$/.test(uid);

@@ -10,7 +10,7 @@ import { HttpsError, onCall, onRequest, type CallableRequest } from 'firebase-fu
 import { onObjectFinalized } from 'firebase-functions/v2/storage';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onTaskDispatched } from 'firebase-functions/v2/tasks';
-import { REGION, LIMITS, RETIRED_TYPES } from './config.js';
+import { REGION, LIMITS, RETIRED_TYPES, isReviewerUid } from './config.js';
 import { FirestoreMeta, GcsBlobs } from './store/firestore.js';
 import { FirestoreTokens } from './auth/tokens.js';
 import { ingestObject } from './ingest/ingest.js';
@@ -198,7 +198,7 @@ export const purgeInactive = onSchedule({ schedule: 'every day 02:17', timeZone:
   const never = await d.db.collection('users').where('lastVisibleAt', '==', null).where('createdAt', '<', cutoff).limit(500).get();
   const queue = getFunctions().taskQueue(`locations/${REGION}/functions/purgeUserTask`);
   for (const doc of [...stale.docs, ...never.docs]) {
-    if (doc.get('deleting') === true) continue;
+    if (doc.get('deleting') === true || isReviewerUid(doc.id)) continue;
     await beginDeletion(d.db, doc.id);
     await queue.enqueue({ uid: doc.id });
   }

@@ -60,10 +60,9 @@ async function begin(page: Page, scopes = DEFAULT_SCOPES, name = 'Claude') {
   await expect(page.locator('#consent')).toBeVisible();
 }
 async function signIn(page: Page) {
-  await page.getByText('Directory reviewer access').click();
   await page.getByLabel('Email', { exact: true }).fill(reviewer);
   await page.getByLabel('Password', { exact: true }).fill(password);
-  await page.getByRole('button', { name: 'Sign in to review account' }).click();
+  await page.getByRole('button', { name: 'Sign in with test account' }).click();
   await expect(page.getByRole('button', { name: 'Allow access' })).toBeEnabled();
 }
 
@@ -159,20 +158,18 @@ test('expired browser binding gives actionable recovery and no consent controls'
 });
 test('wrong reviewer password stays signed out with a recoverable error', async ({ page }) => {
   await begin(page);
-  await page.getByText('Directory reviewer access').click();
   await page.getByLabel('Email', { exact: true }).fill(reviewer);
   await page.getByLabel('Password', { exact: true }).fill('wrong-password');
-  await page.getByRole('button', { name: 'Sign in to review account' }).click();
-  await expect(page.locator('#status')).toContainText('Reviewer sign-in failed');
+  await page.getByRole('button', { name: 'Sign in with test account' }).click();
+  await expect(page.locator('#status')).toContainText('Test account sign-in failed');
   await expect(page.getByRole('button', { name: 'Allow access' })).toBeDisabled();
 });
 
 test('ordinary Firebase password accounts cannot authorize health access without the reviewer claim', async ({ page }) => {
   await begin(page);
-  await page.getByText('Directory reviewer access').click();
   await page.getByLabel('Email', { exact: true }).fill('ordinary@example.test');
   await page.getByLabel('Password', { exact: true }).fill(password);
-  await page.getByRole('button', { name: 'Sign in to review account' }).click();
+  await page.getByRole('button', { name: 'Sign in with test account' }).click();
   await expect(page.getByRole('button', { name: 'Allow access' })).toBeEnabled();
   await page.getByRole('button', { name: 'Allow access' }).click();
   await expect(page.locator('#status')).toContainText('Use Sign in with Apple');

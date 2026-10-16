@@ -8,7 +8,7 @@ The production account is created and its credentials are stored in [KROK Secret
 
 The approved change set `signIn.email.enabled=true` and `signIn.email.passwordRequired=true` in project `krok-1d60a`. Apple login remains supported; health OAuth still requires Apple or an administrator-marked password reviewer. Unit and real Auth-emulator browser tests confirm ordinary password users are refused. Normal production verification never changes provider settings.
 
-Both walkthroughs were recorded and visually sampled on October 2, 2026; see the platform demo review files. Run any remaining acceptance cases using `RECORDING_GUIDE.md`. Use the email/password from the secret in “Directory reviewer access” on the OAuth page after starting connection in each host. The real host cases and recording URLs remain required; synthetic protocol checks cannot replace them.
+Both walkthroughs were recorded and visually sampled on October 2, 2026; see the platform demo review files. Run any remaining acceptance cases using `RECORDING_GUIDE.md`. Use the email/password from the secret under “Reviewing KROK? Use the test account” on the OAuth page after starting connection in each host. The real host cases and recording URLs remain required; synthetic protocol checks cannot replace them.
 
 ## Terms and eligibility
 
