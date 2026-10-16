@@ -7,7 +7,7 @@ import { InvalidClientMetadataError, InvalidGrantError, InvalidRequestError, Inv
 import { generateToken, hashToken, TOKEN_RE } from './tokens.js';
 import type { OAuthStore, OAuthTransaction } from './oauth-store.js';
 import type { UserDoc } from '../store/types.js';
-import type { Provider } from '../config.js';
+import { LIMITS, isReviewerUid, type Provider } from '../config.js';
 
 export const OAUTH_SCOPES = ['health:workouts:read', 'health:daily:read', 'health:events:read', 'health:profile:read', 'health:routes:read', 'health:routes:full', 'offline_access'];
 export const DEFAULT_SCOPES = ['health:workouts:read', 'health:daily:read', 'health:routes:read', 'offline_access'];
@@ -132,7 +132,7 @@ export class KrokOAuth implements OAuthServerProvider {
       const scopes = [...new Set([...p.scopes.filter((s) => s !== 'health:routes:full' || fullRoutes), 'offline_access'])];
       const grantId = randomUUID(), code = generateToken(), connectedAt = this.now();
       const grant: Grant = { uid, clientId: p.clientId, provider: p.provider, scopes, generation: user.generation,
-        epoch: user.oauthEpochs?.[p.provider] ?? 0, expires: connectedAt + GRANT_MS, revoked: false };
+        epoch: user.oauthEpochs?.[p.provider] ?? 0, expires: connectedAt + (isReviewerUid(uid) ? LIMITS.reviewerGrantMs : GRANT_MS), revoked: false };
       tx.set(`users/${uid}/oauthGrants/${grantId}`, grant);
       tx.set(`oauthCredentials/${hashToken(code)}`, { kind: 'code', uid, grantId, clientId: p.clientId,
         resource: p.resource, scopes, expires: this.now() + 60_000, challenge: p.challenge, redirectUri: p.redirectUri } satisfies Credential);

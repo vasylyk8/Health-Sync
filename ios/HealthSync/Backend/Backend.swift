@@ -39,6 +39,8 @@ protocol Backend: Uploader {
     /// existing account is restored; any other anonymous account is never replaced.
     func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool, replacingFreshAccount freshUid: String?) async throws
     func revokeAppleAuthorization(_ authorizationCode: String) async throws
+    /// App Review only: signs in with the dedicated reviewer account. Fails unless the server marks it as a reviewer account.
+    func signInReviewer(email: String, password: String) async throws
     /// Product telemetry only. The server accepts a strict event/property allowlist and no Health values.
     func recordProductEvent(name: String, appVersion: String, outcome: String?, durationMs: Int?) async throws
 }
@@ -48,17 +50,19 @@ extension Backend {
     func hasAppleAccount() async -> Bool { false }
     func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool, replacingFreshAccount freshUid: String?) async throws { throw BackendError.notConfigured }
     func revokeAppleAuthorization(_ authorizationCode: String) async throws { throw BackendError.notConfigured }
+    func signInReviewer(email: String, password: String) async throws { throw BackendError.notConfigured }
     func recordProductEvent(name: String, appVersion: String, outcome: String? = nil, durationMs: Int? = nil) async throws {}
 }
 
 enum BackendError: LocalizedError {
-    case notConfigured, notSignedIn, badResponse
+    case notConfigured, notSignedIn, badResponse, notReviewer
 
     var errorDescription: String? {
         switch self {
         case .notConfigured: return "The app is not configured yet."
         case .notSignedIn: return "Could not sign in. Check your internet connection."
         case .badResponse: return "Unexpected response from the server."
+        case .notReviewer: return "That is not a review account."
         }
     }
 }

@@ -47,6 +47,12 @@ final class StubBackend: Backend, @unchecked Sendable {
     var categoryCalls: [[String]] = []
     func setCategories(_ ids: [String]) async throws { categoryCalls.append(ids) }
     /// What the server reports (a restored account that already holds data).
+    var reviewerPassword: String?
+    var reviewerCalls = 0
+    func signInReviewer(email: String, password: String) async throws {
+        reviewerCalls += 1
+        guard password == reviewerPassword else { throw BackendError.notReviewer }
+    }
     var serverStatus = ServerStatus.empty
     func status() async throws -> ServerStatus { serverStatus }
     func batchExists(batchId: String) async throws -> Bool { true }
@@ -80,6 +86,28 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(backend.goalCalls.count, 1, "sent once")
         model.saveGoal(seconds: 5)  // outside the accepted range
         XCTAssertEqual(model.goalSeconds, 16_200)
+    }
+
+    func testReviewSignInOpensHomeWithoutSyncingAppleHealth() async {
+        let backend = StubBackend()
+        backend.reviewerPassword = "right"
+        let model = makeModel(backend)
+        XCTAssertEqual(model.phase, .welcome)
+        let wrong = await model.signInAsReviewer(email: "r@example.test", password: "wrong")
+        XCTAssertFalse(wrong)
+        XCTAssertEqual(model.phase, .welcome, "a failed sign-in stays on the welcome page")
+        XCTAssertNotNil(model.errorMessage)
+        model.errorMessage = nil
+        let ok = await model.signInAsReviewer(email: " r@example.test ", password: "right")
+        XCTAssertTrue(ok)
+        XCTAssertEqual(model.phase, .home)
+        XCTAssertTrue(model.isReviewDemo)
+        XCTAssertTrue(model.appleAccountLinked, "review mode uses the public connector flow")
+        await model.syncNow()
+        XCTAssertEqual(backend.registerCalls, 0, "review mode never registers a device or reads Apple Health")
+        await model.exitReviewDemo()
+        XCTAssertEqual(model.phase, .welcome)
+        XCTAssertFalse(model.isReviewDemo)
     }
 
     func testAnAccountSwitchStartsTheFirstSyncOverOnTheNewAccount() async throws {

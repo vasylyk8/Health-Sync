@@ -50,12 +50,13 @@ if (existingAuth) {
 }
 await auth.setCustomUserClaims(uid, { ...(existingAuth?.customClaims ?? {}), krokReviewer: true });
 if (!existingDoc.exists) {
-  await ref.set({ generation: 1, deleting: false, createdAt: Date.now(), lastVisibleAt: null, tz: TZ,
+  await ref.set({ generation: 1, deleting: false, createdAt: Date.now(), lastVisibleAt: Date.now(), tz: TZ,
     connections: {}, links: {}, categories: CATEGORIES, synthetic: true });
 } else if (!reuse) {
   // Password rotation must invalidate opaque MCP grants too, not only Firebase sessions.
   await ref.update({ 'oauthEpochs.claude': FieldValue.increment(1), 'oauthEpochs.chatgpt': FieldValue.increment(1), connections: {} });
 }
+if (existingDoc.exists) await ref.update({ lastVisibleAt: Date.now() });
 if (reseed) await ref.update({ categories: CATEGORIES });
 const bucket = getStorage().bucket(`${project}-incoming`);
 for (const lines of fixtures) {

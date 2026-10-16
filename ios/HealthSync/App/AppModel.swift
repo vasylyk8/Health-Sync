@@ -66,6 +66,9 @@ final class AppModel: ObservableObject {
     private var started = false
     private var observing = false
     static let healthConnectedKey = "healthConnected"
+    /// App Review mode: signed in as the dedicated reviewer account; Apple Health is never read and nothing is uploaded.
+    static let reviewDemoKey = "reviewDemo"
+    @Published private(set) var isReviewDemo = false
     /// Set once Health is connected until Sign in with Apple is done (the app reopens on the account page).
     static let pendingAccountKey = "pendingAccount"
     /// The anonymous account created during onboarding; the only one Sign in with Apple may replace on a restore.
@@ -112,6 +115,11 @@ final class AppModel: ObservableObject {
             phase = .welcome
         } else {
             phase = defaults.bool(forKey: Self.pendingAccountKey) ? .account : .home
+        }
+        if defaults.bool(forKey: Self.reviewDemoKey) {
+            isReviewDemo = true
+            appleAccountLinked = true
+            phase = .home
         }
     }
 
@@ -252,6 +260,7 @@ final class AppModel: ObservableObject {
     func start() {
         reportProductEvent("app_opened")
         guard phase != .welcome, !benchmarkRunning else { return }
+        if isReviewDemo { Task { await refreshReviewDemo() }; return }
         Task { await engine.onProgress { p in Task { @MainActor in self.progress = p } } }
         startObservers()
         syncTask = Task {
@@ -371,7 +380,7 @@ final class AppModel: ObservableObject {
     /// iOS relaunches the app in the background (before any screen appears), so the app calls it
     /// at launch, not only when a scene becomes active.
     func startObservers() {
-        guard phase != .welcome, !observing else { return }
+        guard phase != .welcome, !isReviewDemo, !observing else { return }
         observing = true
         let engine = self.engine
         source.observeWorkouts { done in
@@ -444,6 +453,7 @@ final class AppModel: ObservableObject {
 
     func syncNow() async {
         guard !benchmarkRunning else { return }
+        if isReviewDemo { await refreshReviewDemo(); return }
         guard captureNextSync else { await performSyncNow(); return }
         captureNextSync = false
         let passive = SyncProbeRecorder(), sampling = Task { @MainActor in
@@ -513,7 +523,7 @@ final class AppModel: ObservableObject {
     /// Asks iOS for an occasional background refresh even when everything is in (it decides when; roughly every few hours at best).
     func scheduleBackgroundRefresh() {
         // Submitting a request for a task nobody registered a handler for crashes (UI tests, previews).
-        guard phase != .welcome, BackgroundTaskRegistry.shared.refreshRegistered else { return }
+        guard phase != .welcome, !isReviewDemo, BackgroundTaskRegistry.shared.refreshRegistered else { return }
         let request = BGAppRefreshTaskRequest(identifier: AppModel.refreshTaskId)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60)
         try? BGTaskScheduler.shared.submit(request)
@@ -523,14 +533,14 @@ final class AppModel: ObservableObject {
 
     /// What a background refresh does: the same quick catch-up as a wake for new data.
     func runBackgroundRefresh() async {
-        guard !benchmarkRunning else { return }
+        guard !benchmarkRunning, !isReviewDemo else { return }
         scheduleBackgroundRefresh()
         try? await engine.runWorkoutChanges(deadline: Date().addingTimeInterval(25))
     }
 
     func scheduleBackgroundSyncIfNeeded() {
         scheduleBackgroundRefresh()
-        guard phase != .welcome, !progress.historyComplete else { return }
+        guard phase != .welcome, !isReviewDemo, !progress.historyComplete else { return }
         let request = BGProcessingTaskRequest(identifier: AppModel.backgroundTaskId)
         request.requiresNetworkConnectivity = true
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
@@ -699,6 +709,52 @@ final class AppModel: ObservableObject {
         appleAccountLinked = false
         started = false
         busy = false
+        withAnimation { phase = .welcome }
+    }
+
+    // MARK: App Review mode
+
+    /// Signs in with the reviewer account and opens Home. The account's sample data already lives on the server, so there is
+    /// no Apple Health permission, no Apple Account and no upload.
+    func signInAsReviewer(email: String, password: String) async -> Bool {
+        guard !busy else { return false }
+        busy = true
+        defer { busy = false }
+        do {
+            try await backend.signInReviewer(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password)
+            defaults.set(true, forKey: Self.reviewDemoKey)
+            defaults.set(true, forKey: Self.healthConnectedKey)
+            defaults.set(false, forKey: Self.pendingAccountKey)
+            isReviewDemo = true
+            appleAccountLinked = true
+            await refreshStatus()
+            withAnimation { phase = .home }
+            return true
+        } catch {
+            errorMessage = (error as? BackendError)?.errorDescription ?? "Review sign-in failed. Check the email and password."
+            return false
+        }
+    }
+
+    /// Keeps the review session alive and shows the server's view of the sample data.
+    private func refreshReviewDemo() async {
+        _ = try? await backend.signIn()
+        await refreshStatus()
+    }
+
+    func exitReviewDemo() async {
+        guard isReviewDemo, !busy else { return }
+        busy = true
+        defer { busy = false }
+        await backend.signOut()
+        Keychain.removeAll()
+        defaults.removeObject(forKey: Self.reviewDemoKey)
+        defaults.removeObject(forKey: Self.healthConnectedKey)
+        defaults.removeObject(forKey: Self.pendingAccountKey)
+        status = .empty
+        isReviewDemo = false
+        appleAccountLinked = false
+        started = false
         withAnimation { phase = .welcome }
     }
 

@@ -1,6 +1,6 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
-import { CATEGORY_IDS, COVERAGE, DEFAULT_CATEGORIES, PROVIDERS, RETIRED_CATEGORIES, type Provider } from './config.js';
+import { CATEGORY_IDS, COVERAGE, DEFAULT_CATEGORIES, PROVIDERS, RETIRED_CATEGORIES, isReviewerUid, type Provider } from './config.js';
 import { generateToken, hashToken } from './auth/tokens.js';
 import { MAX_RACE_GOALS, type BlobStore, type MetaStore, type RaceGoal, type UserDoc } from './store/types.js';
 import { log } from './log.js';
@@ -64,6 +64,8 @@ export async function createConnectorLink(db: Firestore, uid: string, provider: 
 }
 
 export async function disconnect(db: Firestore, uid: string, provider: Provider): Promise<void> {
+  // The shared review account must stay connected for every reviewer; password rotation revokes grants instead.
+  if (isReviewerUid(uid)) { log.info('disconnect ignored for review account', { uid, provider }); return; }
   const userRef = db.collection('users').doc(uid);
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(userRef);
@@ -81,6 +83,7 @@ export async function disconnect(db: Firestore, uid: string, provider: Provider)
  * `purgeUserData`, which runs as a retried background task.
  */
 export async function beginDeletion(db: Firestore, uid: string): Promise<void> {
+  if (isReviewerUid(uid)) { log.info('deletion ignored for review account', { uid }); return; }
   const userRef = db.collection('users').doc(uid);
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(userRef);

@@ -212,7 +212,7 @@ struct SetupSheet: View {
                     OAuthStep(number: 3, title: Copy.Sheet.oauthFormTitle, detail: Copy.Sheet.oauthFormDetail(chatGPT: chatGPT), isLast: false) {
                         formCard(chatGPT: chatGPT)
                     }
-                    OAuthStep(number: 4, title: Copy.Sheet.oauthSignInTitle, detail: Copy.Sheet.oauthSignInDetail, isLast: true) {
+                    OAuthStep(number: 4, title: Copy.Sheet.oauthSignInTitle, detail: model.isReviewDemo ? Copy.Review.oauthDetail : Copy.Sheet.oauthSignInDetail, isLast: true) {
                         EmptyView()
                     }
                 }

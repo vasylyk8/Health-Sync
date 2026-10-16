@@ -11,11 +11,14 @@
 <p class="small">Read-only. Your assistant uses what it reads under its own terms. Disconnect or delete your data in KROK anytime.</p>
 <div class="actions"><button id="approve" type="button" disabled>Allow access</button><button id="deny" type="button">Cancel</button></div>
 <p class="center"><button id="switch-account" class="link" type="button" hidden>Use a different account</button></p>
-<details class="reviewer"><summary>Directory reviewer access</summary><form id="reviewer-form"><p><label>Email <input id="reviewer-email" type="email" autocomplete="username" required></label></p>
-<p><label>Password <input id="reviewer-password" type="password" autocomplete="current-password" required></label></p><button type="submit">Sign in to review account</button></form></details>
+<section id="reviewer" class="reviewer" aria-labelledby="reviewer-title"><h3 id="reviewer-title">Reviewing KROK? Use the test account</h3>
+<p class="small">For App Review and directory reviewers: no iPhone, Apple Account or verification code needed. Enter the test credentials from the review notes.</p>
+<form id="reviewer-form"><p><label>Email <input id="reviewer-email" type="email" autocomplete="username" required></label></p>
+<p><label>Password <input id="reviewer-password" type="password" autocomplete="current-password" required></label></p><button type="submit">Sign in with test account</button></form></section>
 </section><section id="iphone-setup" class="card" aria-labelledby="iphone-setup-title"><h2 id="iphone-setup-title">New to KROK? Start on your iPhone.</h2>
 <p>KROK requires its iPhone app to sync the Apple Health data you choose.</p>
 <ol class="steps"><li><strong>Install KROK</strong> on your iPhone.</li><li><strong>Connect Apple Health</strong> and sign in with Apple, then let your data sync.</li><li><strong>Come back to your assistant</strong> and connect KROK using the same Apple Account.</li></ol>
+<p class="small">Reviewer? You don't need the iPhone app: start the connection in your assistant and use the test account on this page.</p>
 <p><button class="action" type="button" disabled data-krok-download="pending">App Store link coming soon</button></p>
 <p class="small">Already set up? Sign in above. If this connection expires while you set up the app, start a new one in your assistant.</p></section>
 <p class="small"><a href="/privacy">Privacy policy</a> · <a href="/mcp-docs">Connection instructions</a></p></main>

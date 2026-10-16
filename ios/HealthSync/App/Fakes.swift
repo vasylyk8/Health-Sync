@@ -21,6 +21,11 @@ final class FakeBackend: Backend, @unchecked Sendable {
     /// setup (consent) path; the linked/OAuth path is covered by launching with `-appleLinked`.
     func linkAppleAccount(_ result: AppleSignInResult, allowExistingAccount: Bool, replacingFreshAccount freshUid: String?) async throws {}
 
+    /// UI tests only: the reviewer sign-in accepts one fixed pair.
+    func signInReviewer(email: String, password: String) async throws {
+        guard email == "reviewer@example.test", password == "ui-test-password" else { throw BackendError.notReviewer }
+    }
+
     func signIn() async throws -> String { "fake-user" }
     func registerDevice(timeZone: String) async throws {}
 

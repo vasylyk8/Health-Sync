@@ -14,6 +14,7 @@ struct OnboardingView: View {
     @State private var badgeShown = true
     private var change: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.55) }
     private static let uiTesting = ProcessInfo.processInfo.arguments.contains("-uiTesting")
+    @State private var showReviewSignIn = false
 
     init(startOnAccount: Bool = false) {
         _slid = State(initialValue: startOnAccount)
@@ -30,8 +31,18 @@ struct OnboardingView: View {
             }
             button
                 .padding(.horizontal, Theme.margin)
-                .padding(.bottom, 16)
+                .padding(.bottom, onAccount ? 16 : 4)
+            if !onAccount {
+                // Visible and plainly labeled: App Review signs in here with the test account (no Apple Account or Health data).
+                Button(Copy.Review.link) { showReviewSignIn = true }
+                    .smallText()
+                    .foregroundStyle(Theme.muted)
+                    .frame(minHeight: 44)
+                    .padding(.bottom, 8)
+                    .accessibilityIdentifier("reviewLink")
+            }
         }
+        .sheet(isPresented: $showReviewSignIn) { ReviewSignInView() }
         .background(Theme.background.ignoresSafeArea())
         .onChange(of: model.phase) { _, phase in
             guard phase == .account else { return }
