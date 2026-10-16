@@ -34,12 +34,16 @@ struct OnboardingView: View {
                 .padding(.bottom, onAccount ? 16 : 4)
             if !onAccount {
                 // Visible and plainly labeled: App Review signs in here with the test account (no Apple Account or Health data).
-                Button(Copy.Review.link) { showReviewSignIn = true }
-                    .smallText()
-                    .foregroundStyle(Theme.muted)
-                    .frame(minHeight: 44)
-                    .padding(.bottom, 8)
-                    .accessibilityIdentifier("reviewLink")
+                Button { showReviewSignIn = true } label: {
+                    Text(Copy.Review.link)
+                        .smallText()
+                        .foregroundStyle(Theme.muted)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .padding(.horizontal, Theme.margin)
+                .padding(.bottom, 8)
+                .accessibilityIdentifier("reviewLink")
             }
         }
         .sheet(isPresented: $showReviewSignIn) { ReviewSignInView() }
