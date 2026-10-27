@@ -14,6 +14,10 @@ on:
         description: Submit for App Review (false = dry run)
         type: boolean
         default: false
+      reject_if_possible:
+        description: First pull the pending submission out of review (needed to swap the build on a version that is Waiting for Review)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
