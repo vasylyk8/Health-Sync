@@ -32,6 +32,7 @@ jobs:
       ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
       BUILD_NUMBER: ${{ inputs.build_number }}
       SUBMIT: ${{ inputs.submit }}
+      REJECT: ${{ inputs.reject_if_possible }}
       COPYRIGHT: ${{ inputs.copyright }}
     steps:
       - if: env.HAS_SECRETS != 'true'
@@ -72,5 +73,5 @@ jobs:
           bundle exec fastlane run deliver \
             api_key_path:asc_key.json app_identifier:"$BUNDLE_ID" build_number:"$BUILD_NUMBER" \
             skip_binary_upload:true skip_metadata:true skip_screenshots:true force:true \
-            submit_for_review:"$SUBMIT" automatic_release:false precheck_include_in_app_purchases:false
+            submit_for_review:"$SUBMIT" reject_if_possible:"$REJECT" automatic_release:false precheck_include_in_app_purchases:false
           rm -f asc_key.json
