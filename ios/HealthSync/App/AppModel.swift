@@ -197,7 +197,7 @@ final class AppModel: ObservableObject {
             telemetry.event("health_connected")
             reportProductEvent("health_connected")
             busy = false
-            withAnimation { phase = .account }
+            withMotion(Motion.smooth) { phase = .account }
             // The upload starts now, while the person is on the account page.
             start()
         } catch {
@@ -674,7 +674,7 @@ final class AppModel: ObservableObject {
             // Clear `busy` before the screen changes: the new welcome screen must never render (or
             // miss an update to) a stale spinner with a disabled button.
             busy = false
-            withAnimation { phase = .welcome }
+            withMotion(Motion.smooth) { phase = .welcome }
         } catch {
             errorMessage = friendly(error)
         }
@@ -709,7 +709,7 @@ final class AppModel: ObservableObject {
         appleAccountLinked = false
         started = false
         busy = false
-        withAnimation { phase = .welcome }
+        withMotion(Motion.smooth) { phase = .welcome }
     }
 
     // MARK: App Review mode
@@ -728,7 +728,7 @@ final class AppModel: ObservableObject {
             isReviewDemo = true
             appleAccountLinked = true
             await refreshStatus()
-            withAnimation { phase = .home }
+            withMotion(Motion.smooth) { phase = .home }
             return true
         } catch {
             errorMessage = (error as? BackendError)?.errorDescription ?? "Review sign-in failed. Check the email and password."
@@ -755,7 +755,7 @@ final class AppModel: ObservableObject {
         isReviewDemo = false
         appleAccountLinked = false
         started = false
-        withAnimation { phase = .welcome }
+        withMotion(Motion.smooth) { phase = .welcome }
     }
 
     /// Sign in with Apple from the ••• menu (for accounts that were created before the account page existed).
@@ -795,7 +795,7 @@ final class AppModel: ObservableObject {
             if onboarding {
                 defaults.set(false, forKey: Self.pendingAccountKey)
                 defaults.removeObject(forKey: Self.onboardingUidKey)
-                withAnimation { phase = .home }
+                withMotion(Motion.smooth) { phase = .home }
             }
             Task { await refreshStatus() }
             if stopped { start() }
