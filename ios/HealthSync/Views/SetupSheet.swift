@@ -13,7 +13,12 @@ struct SetupSheet: View {
     @State private var confirmDisconnect = false
     @State private var linkError: String?
 
-    private enum Screen { case consent, steps, connected, oauth }
+    private enum Screen: Equatable { case consent, steps, connected, oauth }
+
+    /// Pages fade in with a short rise and fade out in place.
+    private static let pageTransition = AnyTransition.asymmetric(
+        insertion: .opacity.combined(with: .offset(y: 14)),
+        removal: .opacity)
 
     private var screen: Screen {
         if model.isSetUp(provider) && link == nil { return .connected }
@@ -35,12 +40,13 @@ struct SetupSheet: View {
         VStack(spacing: 0) {
             header
             switch screen {
-            case .consent: consentView
-            case .steps: stepsView
-            case .connected: connectedView
-            case .oauth: oauthView
+            case .consent: consentView.transition(Self.pageTransition)
+            case .steps: stepsView.transition(Self.pageTransition)
+            case .connected: connectedView.transition(Self.pageTransition)
+            case .oauth: oauthView.transition(Self.pageTransition)
             }
         }
+        .motion(Motion.smooth, value: screen)
         .padding(.horizontal, Theme.margin)
         .background(Theme.background.ignoresSafeArea())
         .presentationDragIndicator(.visible)
@@ -122,6 +128,7 @@ struct SetupSheet: View {
                         } icon: {
                             Image(systemName: "info.circle").foregroundStyle(Theme.ink)
                         }
+                        .staggeredReveal(index: 0)
                     }
                     ForEach(Array(provider.steps.enumerated()), id: \.offset) { index, step in
                         StepRow(number: index + 1, step: step) {
@@ -129,6 +136,8 @@ struct SetupSheet: View {
                             case 0:
                                 Button(action: copyLink) {
                                     Label(copied ? Copy.Sheet.copied : Copy.Sheet.copyLink, systemImage: copied ? "checkmark" : "doc.on.doc")
+                                    .contentTransition(.symbolEffect(.replace))
+                                    .motion(Motion.snappy, value: copied)
                                 }
                                 .buttonStyle(StepActionStyle(filled: true))
                                 .accessibilityIdentifier("copyLink")
@@ -144,6 +153,7 @@ struct SetupSheet: View {
                                 EmptyView()
                             }
                         }
+                        .staggeredReveal(index: index + 1)
                     }
                 }
                 .padding(.top, 16)
@@ -170,6 +180,7 @@ struct SetupSheet: View {
         HStack(spacing: 12) {
             if model.isSetUp(provider) {
                 CheckBadge()
+                    .transition(.scale(scale: 0.4).combined(with: .opacity))
                 Text(Copy.Sheet.isSetUp(provider.name))
                     .bodyText(.semibold)
                     .foregroundStyle(Theme.ink)
@@ -182,6 +193,7 @@ struct SetupSheet: View {
         }
         .frame(maxWidth: .infinity, minHeight: Theme.pillHeight)
         .background(Theme.surface, in: Capsule())
+        .motion(Motion.bouncy, value: model.isSetUp(provider))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("waitingRow")
     }
@@ -300,6 +312,8 @@ struct SetupSheet: View {
                     copied = true
                 } label: {
                     Label(copied ? Copy.Sheet.copied : Copy.Sheet.copy, systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .contentTransition(.symbolEffect(.replace))
+                        .motion(Motion.snappy, value: copied)
                 }
                 .buttonStyle(StepActionStyle(filled: true))
                 .accessibilityIdentifier("copyOAuthURL")
@@ -313,8 +327,10 @@ struct SetupSheet: View {
                     .smallText()
                     .foregroundStyle(Theme.muted)
                     .accessibilityIdentifier("oauthCopied")
+                    .transition(.opacity.combined(with: .offset(y: -6)))
             }
         }
+        .motion(Motion.snappy, value: copied)
     }
 
     // MARK: Connected
@@ -422,6 +438,7 @@ private struct OAuthStep<Content: View>: View {
                     .padding(.bottom, 6)
             }
         }
+        .staggeredReveal(index: number - 1)
     }
 }
 
