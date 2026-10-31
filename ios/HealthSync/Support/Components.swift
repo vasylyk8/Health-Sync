@@ -19,8 +19,12 @@ struct PillButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity, minHeight: height)
             .background(kind == .primary ? Theme.buttonFill : Theme.surface, in: RoundedRectangle(cornerRadius: Theme.buttonRadius, style: .continuous))
             .opacity(isEnabled ? 1 : 0.5)
+            .brightness(configuration.isPressed ? -0.06 : 0)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .animation(.easeOut(duration: 0.14), value: configuration.isPressed)
+            .motion(Motion.press, value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed { Haptics.soft() }
+            }
     }
 }
 
@@ -37,8 +41,12 @@ struct StepActionStyle: ButtonStyle {
             .frame(minHeight: 44)
             .background(filled ? Theme.buttonFill : Theme.surface, in: Capsule())
             .opacity(isEnabled ? 1 : 0.5)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .animation(.easeOut(duration: 0.14), value: configuration.isPressed)
+            .brightness(configuration.isPressed ? -0.06 : 0)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .motion(Motion.press, value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed { Haptics.soft() }
+            }
     }
 }
 
@@ -80,7 +88,7 @@ struct StepBar: View {
                 .accessibilityValue("\(line.detail), \(Self.word(line.state))")
             }
         }
-        .animation(.easeInOut(duration: 0.4), value: lines.map(\.state))
+        .motion(Motion.smooth, value: lines.map(\.state))
     }
 
     private static func word(_ state: SyncLine.State) -> String {
@@ -96,31 +104,36 @@ private struct LoadingLine: View {
     let state: SyncLine.State
 
     var body: some View {
-        Capsule()
-            .fill(state == .done ? Theme.ink : Theme.track)
-            .frame(height: 4)
-            .overlay(alignment: .leading) {
-                if state == .running { BouncingBand() }
-            }
-            .clipShape(Capsule())
+        ZStack(alignment: .leading) {
+            Capsule().fill(Theme.track)
+            // A finished line fills in from the left instead of switching colour.
+            Capsule()
+                .fill(Theme.ink)
+                .scaleEffect(x: state == .done ? 1 : 0, anchor: .leading)
+            if state == .running { Shimmer() }
+        }
+        .frame(height: 4)
+        .clipShape(Capsule())
     }
 }
 
-/// A band that goes back and forth over its line. It stays in place for people who turned off motion.
-private struct BouncingBand: View {
-    @State private var atEnd = false
+/// A soft band of light that keeps sweeping over a running line (it says "working", not "this much is done").
+/// It rests in the middle for people who turned off motion, and during UI tests.
+private struct Shimmer: View {
+    @State private var swept = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var moves: Bool { !reduceMotion && !Motion.isUITesting }
 
     var body: some View {
         GeometryReader { geo in
-            Capsule()
-                .fill(Theme.ink)
-                .frame(width: geo.size.width * 0.38)
-                .offset(x: reduceMotion ? geo.size.width * 0.31 : (atEnd ? geo.size.width * 0.62 : 0))
+            let width = geo.size.width * 0.45
+            LinearGradient(colors: [Theme.ink.opacity(0), Theme.ink, Theme.ink.opacity(0)], startPoint: .leading, endPoint: .trailing)
+                .frame(width: width)
+                .offset(x: moves ? (swept ? geo.size.width : -width) : (geo.size.width - width) / 2)
         }
         .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { atEnd = true }
+            guard moves else { return }
+            withAnimation(.easeInOut(duration: 1.3).repeatForever(autoreverses: false)) { swept = true }
         }
     }
 }
@@ -146,21 +159,28 @@ private struct RiseIn: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .opacity(shown || reduceMotion ? 1 : 0)
-            .offset(y: shown || reduceMotion ? 0 : 12)
+            .opacity(shown || !allowed ? 1 : 0)
+            .offset(y: shown || !allowed ? 0 : 12)
+            .blur(radius: shown || !allowed ? 0 : 4)
             .onAppear {
                 guard !shown else { return }
-                if reduceMotion {
-                    shown = true
+                if let animation = Motion.resolved(Motion.reveal, reduceMotion: reduceMotion) {
+                    withAnimation(animation.delay(delay)) { shown = true }
                 } else {
-                    withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.6).delay(delay)) { shown = true }
+                    shown = true
                 }
             }
     }
+
+    private var allowed: Bool { Motion.resolved(Motion.reveal, reduceMotion: reduceMotion) != nil }
 }
 
 extension View {
     func riseIn(delay: Double = 0) -> some View { modifier(RiseIn(delay: delay)) }
+    /// Entrance for the n-th item of a list or column: each one lands `Motion.stagger` after the one before.
+    func staggeredReveal(index: Int, base: Double = 0) -> some View {
+        riseIn(delay: Motion.staggerDelay(index: index, base: base))
+    }
 }
 
 /// Lays children out left to right and wraps to the next line when the row is full.
@@ -235,7 +255,9 @@ struct SheetHeader: View {
 
 /// Light haptics, used sparingly.
 enum Haptics {
-    static func tap() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
-    static func success() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+    static func tap() { guard !Motion.isUITesting else { return }; UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+    /// The barely-there tick under a finger landing on a button.
+    static func soft() { guard !Motion.isUITesting else { return }; UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.6) }
+    static func success() { guard !Motion.isUITesting else { return }; UINotificationFeedbackGenerator().notificationOccurred(.success) }
 }
 

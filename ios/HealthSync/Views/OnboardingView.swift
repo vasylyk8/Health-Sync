@@ -12,7 +12,7 @@ struct OnboardingView: View {
     @State private var slid: Bool
     /// "Apple Health connected" shows on page 2 for a few seconds, then fades (its space stays).
     @State private var badgeShown = true
-    private var change: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.55) }
+    private var change: Animation? { Motion.resolved(.smooth(duration: 0.55), reduceMotion: reduceMotion) }
     private static let uiTesting = ProcessInfo.processInfo.arguments.contains("-uiTesting")
     @State private var showReviewSignIn = false
 
@@ -30,6 +30,7 @@ struct OnboardingView: View {
                 .scrollBounceBehavior(.basedOnSize)
             }
             button
+                .staggeredReveal(index: 3, base: 0.1)
                 .padding(.horizontal, Theme.margin)
                 .padding(.bottom, onAccount ? 16 : 4)
             if !onAccount {
@@ -56,7 +57,7 @@ struct OnboardingView: View {
                 Haptics.success()
                 Task {
                     try? await Task.sleep(for: .milliseconds(800))
-                    withAnimation(.easeInOut(duration: 0.6)) { slid = true }
+                    withAnimation(.smooth(duration: 0.7)) { slid = true }
                 }
             }
         }
@@ -64,7 +65,7 @@ struct OnboardingView: View {
             guard slid, !Self.uiTesting else { return }
             badgeShown = true
             try? await Task.sleep(for: .seconds(3))
-            withAnimation(.easeOut(duration: 0.7)) { badgeShown = false }
+            withAnimation(Motion.smooth) { badgeShown = false }
         }
     }
 
@@ -74,15 +75,20 @@ struct OnboardingView: View {
                 .frame(height: 44)
             Spacer(minLength: 16)
             QuestionFeed(questions: Copy.Welcome.questions)
+                .staggeredReveal(index: 1)
                 .padding(.bottom, 40)
             // Both texts sit in the same place: the first slides out to the left, the second in from the right.
             ZStack(alignment: .topLeading) {
                 text(Copy.Welcome.tagline, Copy.Welcome.subtitle)
-                    .riseIn(delay: 0.05)
+                    .staggeredReveal(index: 2, base: 0.05)
                     .offset(x: slid ? -width : 0)
+                    .opacity(slid ? 0 : 1)
+                    .blur(radius: slid ? 6 : 0)
                     .accessibilityHidden(slid)
                 text(Copy.Account.headline, Copy.Account.body, badge: Copy.Account.connected)
                     .offset(x: slid ? 0 : width)
+                    .opacity(slid ? 1 : 0)
+                    .blur(radius: slid ? 0 : 6)
                     .accessibilityHidden(!slid)
             }
             .padding(.bottom, 24)
@@ -133,11 +139,11 @@ struct OnboardingView: View {
             // accessibility or UI tests.
             if !onAccount {
                 connectButton
-                    .transition(.opacity)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
             }
             if onAccount && !slid {
-                connectedPill
-                    .transition(.opacity)
+                ConnectedPill()
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
             }
             // Apple's button is never altered: while the sign-in runs it is swapped for a plain pill (no Apple logo or wording).
             if slid && !model.busy {
@@ -166,15 +172,6 @@ struct OnboardingView: View {
         .accessibilityIdentifier("signingIn")
     }
 
-    private var connectedPill: some View {
-        Label(Copy.Welcome.connectedButton, systemImage: "checkmark")
-            .bodyText(.semibold)
-            .foregroundStyle(Theme.buttonText)
-            .frame(maxWidth: .infinity, minHeight: Theme.pillHeight)
-            .background(Theme.buttonFill, in: RoundedRectangle(cornerRadius: Theme.buttonRadius, style: .continuous))
-            .accessibilityElement(children: .combine)
-    }
-
     private var connectButton: some View {
         VStack(spacing: 8) {
             Button {
@@ -196,6 +193,30 @@ struct OnboardingView: View {
                     .multilineTextAlignment(.center)
                     .accessibilityIdentifier("connectStage")
             }
+        }
+    }
+}
+
+/// The black "Connected" pill. Its check bounces once as the pill lands (not with Reduce Motion), with a success tick.
+private struct ConnectedPill: View {
+    @State private var landed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Label {
+            Text(Copy.Welcome.connectedButton)
+        } icon: {
+            Image(systemName: "checkmark")
+                .symbolEffect(.bounce, options: .nonRepeating, value: landed)
+        }
+        .bodyText(.semibold)
+        .foregroundStyle(Theme.buttonText)
+        .frame(maxWidth: .infinity, minHeight: Theme.pillHeight)
+        .background(Theme.buttonFill, in: RoundedRectangle(cornerRadius: Theme.buttonRadius, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .onAppear {
+            guard Motion.resolved(Motion.bouncy, reduceMotion: reduceMotion) != nil else { return }
+            landed = true
         }
     }
 }

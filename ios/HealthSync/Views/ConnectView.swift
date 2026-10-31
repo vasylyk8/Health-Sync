@@ -134,7 +134,7 @@ struct ConnectView: View {
             .padding(.bottom, 24)
         }
         .padding(.horizontal, Theme.margin)
-        .animation(.easeInOut(duration: 0.6), value: activeEdition != nil)
+        .motion(Motion.smooth, value: activeEdition != nil)
     }
 
     /// While the first sync runs and recent workouts are already readable: the nudge above the connect buttons.
@@ -199,6 +199,9 @@ struct ConnectView: View {
                     .accessibilityIdentifier("syncIssue")
             }
         }
+        .motion(Motion.smooth, value: model.uploadFinished)
+        .motion(Motion.smooth, value: p.historyComplete)
+        .motion(Motion.snappy, value: model.syncIssue)
     }
 
     private var speedTest: some View {
@@ -240,6 +243,7 @@ struct ProviderPill: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                     CheckBadge(size: 22)
+                        .transition(.scale(scale: 0.4).combined(with: .opacity))
                 }
             } else {
                 Text(Copy.Home.connect(provider.name))
@@ -248,6 +252,7 @@ struct ProviderPill: View {
             }
         }
         .buttonStyle(PillButtonStyle(kind: setUp ? .secondary : .primary, horizontalPadding: 12))
+        .motion(Motion.bouncy, value: setUp)
         .accessibilityLabel(setUp ? "\(provider.name), \(Copy.Home.connected)" : Copy.Home.connect(provider.name))
         .accessibilityHint(setUp ? "Shows connection details" : "Opens setup steps")
         .accessibilityValue(setUp ? "Set up" : "Not set up")

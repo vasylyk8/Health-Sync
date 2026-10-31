@@ -156,6 +156,6 @@ struct EditionMedalView: View {
             hours = min(max(s / 3600, edition.hours.lowerBound), edition.hours.upperBound)
             minutes = s / 60 % 60
         }
-        withAnimation(.easeInOut(duration: 0.6)) { editing.toggle() }
+        withMotion(.smooth(duration: 0.6)) { editing.toggle() }
     }
 }

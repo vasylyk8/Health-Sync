@@ -98,8 +98,10 @@ struct RootView: View {
             // One onboarding view for both pages, so the questions keep scrolling when the page changes.
             if model.phase == .home {
                 ConnectView()
+                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
             } else {
                 OnboardingView(startOnAccount: model.phase == .account)
+                    .transition(.opacity)
             }
         }
         .background(Theme.background.ignoresSafeArea())
