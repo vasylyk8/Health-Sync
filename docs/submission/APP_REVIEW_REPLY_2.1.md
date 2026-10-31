@@ -2,7 +2,7 @@
 
 Apple did not find a bug. It asked for six pieces of information plus a screen recording. Paste the reply below in App Store Connect (App Review → the submission → Reply), attach the recording or include its link, and paste the same text into **App Review Information → Notes**. The Notes field takes at most 4,000 characters, and this text fits.
 
-Replace `<VIDEO LINK>` before sending. Test credentials stay in the Sign-in fields, not in this text.
+The video link is filled in. Test credentials stay in the Sign-in fields, not in this text.
 
 ---
 
@@ -12,7 +12,7 @@ Replace `<VIDEO LINK>` before sending. Test credentials stay in the Sign-in fiel
 Hello, here is the requested information.
 
 1. SCREEN RECORDING
-<VIDEO LINK>
+https://photos.icloud.com/shared/album/069Nq-gjRW6a-dS-3XksADROw
 The video was recorded on a physical iPhone running the latest iOS. It starts with launching KROK and shows: connecting Apple Health (the Health permission sheet), Sign in with Apple (account creation and login), the first upload, connecting Claude and asking a question about a workout, and account deletion (••• menu → Delete All My Data → confirm). Deletion removes the account and its server data and revokes Sign in with Apple. KROK has no user-generated content, no paid content and no in-app purchases.
 
 2. PURPOSE AND AUDIENCE
