@@ -91,9 +91,11 @@ struct HeroMetricView: View {
                 .lineLimit(2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.9), value: compact)
+        .motion(Motion.smooth, value: compact)
         .opacity(visible ? 1 : 0)
         .offset(y: visible ? 0 : 10)
+        .blur(radius: visible ? 0 : 8)
+        .scaleEffect(visible ? 1 : 0.98, anchor: .bottomLeading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(finalText)\(spec.unit) \(metric.label). \(metric.caption)")
         .accessibilityIdentifier("heroMetric")
@@ -111,7 +113,10 @@ struct HeroMetricView: View {
         if let target, target.kind == metric.kind, target.value == metric.value { return }
         target = (metric.kind, metric.value)
         let from = counter.start(metric.kind, to: metric.value)
-        guard !reduceMotion, from != metric.value else {
+        let countUp = from == 0
+            ? Animation.timingCurve(0.16, 1, 0.3, 1, duration: 1.2)
+            : Animation.timingCurve(0.16, 1, 0.3, 1, duration: 0.8)
+        guard let animation = Motion.resolved(countUp, reduceMotion: reduceMotion), from != metric.value else {
             number = metric.value
             return
         }
@@ -120,7 +125,7 @@ struct HeroMetricView: View {
         withTransaction(instant) { number = from }
         let value = metric.value
         DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: from == 0 ? 0.9 : 0.65)) { number = value }
+            withAnimation(animation) { number = value }
         }
     }
 
@@ -129,16 +134,17 @@ struct HeroMetricView: View {
         guard metrics.count > 1 else { return }
         let index = metrics.firstIndex { $0.kind == currentKind } ?? 0
         let next = metrics[(index + 1) % metrics.count]
-        guard !reduceMotion else {
+        let fade = Animation.easeInOut(duration: Self.fade)
+        guard let animation = Motion.resolved(fade, reduceMotion: reduceMotion) else {
             currentKind = next.kind
             present(next)
             return
         }
-        withAnimation(.easeInOut(duration: Self.fade)) { visible = false }
+        withAnimation(animation) { visible = false }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.fade) {
             currentKind = next.kind
             present(next)
-            withAnimation(.easeInOut(duration: Self.fade)) { visible = true }
+            withAnimation(Motion.smooth) { visible = true }
         }
     }
 }

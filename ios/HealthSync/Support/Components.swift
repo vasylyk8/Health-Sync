@@ -104,31 +104,36 @@ private struct LoadingLine: View {
     let state: SyncLine.State
 
     var body: some View {
-        Capsule()
-            .fill(state == .done ? Theme.ink : Theme.track)
-            .frame(height: 4)
-            .overlay(alignment: .leading) {
-                if state == .running { BouncingBand() }
-            }
-            .clipShape(Capsule())
+        ZStack(alignment: .leading) {
+            Capsule().fill(Theme.track)
+            // A finished line fills in from the left instead of switching colour.
+            Capsule()
+                .fill(Theme.ink)
+                .scaleEffect(x: state == .done ? 1 : 0, anchor: .leading)
+            if state == .running { Shimmer() }
+        }
+        .frame(height: 4)
+        .clipShape(Capsule())
     }
 }
 
-/// A band that goes back and forth over its line. It stays in place for people who turned off motion.
-private struct BouncingBand: View {
-    @State private var atEnd = false
+/// A soft band of light that keeps sweeping over a running line (it says "working", not "this much is done").
+/// It rests in the middle for people who turned off motion, and during UI tests.
+private struct Shimmer: View {
+    @State private var swept = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var moves: Bool { !reduceMotion && !Motion.isUITesting }
 
     var body: some View {
         GeometryReader { geo in
-            Capsule()
-                .fill(Theme.ink)
-                .frame(width: geo.size.width * 0.38)
-                .offset(x: reduceMotion ? geo.size.width * 0.31 : (atEnd ? geo.size.width * 0.62 : 0))
+            let width = geo.size.width * 0.45
+            LinearGradient(colors: [Theme.ink.opacity(0), Theme.ink, Theme.ink.opacity(0)], startPoint: .leading, endPoint: .trailing)
+                .frame(width: width)
+                .offset(x: moves ? (swept ? geo.size.width : -width) : (geo.size.width - width) / 2)
         }
         .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { atEnd = true }
+            guard moves else { return }
+            withAnimation(.easeInOut(duration: 1.3).repeatForever(autoreverses: false)) { swept = true }
         }
     }
 }

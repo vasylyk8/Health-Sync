@@ -134,7 +134,7 @@ struct ConnectView: View {
             .padding(.bottom, 24)
         }
         .padding(.horizontal, Theme.margin)
-        .animation(.easeInOut(duration: 0.6), value: activeEdition != nil)
+        .motion(Motion.smooth, value: activeEdition != nil)
     }
 
     /// While the first sync runs and recent workouts are already readable: the nudge above the connect buttons.
@@ -199,6 +199,9 @@ struct ConnectView: View {
                     .accessibilityIdentifier("syncIssue")
             }
         }
+        .motion(Motion.smooth, value: model.uploadFinished)
+        .motion(Motion.smooth, value: p.historyComplete)
+        .motion(Motion.snappy, value: model.syncIssue)
     }
 
     private var speedTest: some View {
