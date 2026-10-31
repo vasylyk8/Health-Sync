@@ -19,8 +19,12 @@ struct PillButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity, minHeight: height)
             .background(kind == .primary ? Theme.buttonFill : Theme.surface, in: RoundedRectangle(cornerRadius: Theme.buttonRadius, style: .continuous))
             .opacity(isEnabled ? 1 : 0.5)
+            .brightness(configuration.isPressed ? -0.06 : 0)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .animation(.easeOut(duration: 0.14), value: configuration.isPressed)
+            .motion(Motion.press, value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed { Haptics.soft() }
+            }
     }
 }
 
@@ -37,8 +41,12 @@ struct StepActionStyle: ButtonStyle {
             .frame(minHeight: 44)
             .background(filled ? Theme.buttonFill : Theme.surface, in: Capsule())
             .opacity(isEnabled ? 1 : 0.5)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .animation(.easeOut(duration: 0.14), value: configuration.isPressed)
+            .brightness(configuration.isPressed ? -0.06 : 0)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .motion(Motion.press, value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed { Haptics.soft() }
+            }
     }
 }
 
@@ -80,7 +88,7 @@ struct StepBar: View {
                 .accessibilityValue("\(line.detail), \(Self.word(line.state))")
             }
         }
-        .animation(.easeInOut(duration: 0.4), value: lines.map(\.state))
+        .motion(Motion.smooth, value: lines.map(\.state))
     }
 
     private static func word(_ state: SyncLine.State) -> String {
@@ -146,21 +154,28 @@ private struct RiseIn: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .opacity(shown || reduceMotion ? 1 : 0)
-            .offset(y: shown || reduceMotion ? 0 : 12)
+            .opacity(shown || !allowed ? 1 : 0)
+            .offset(y: shown || !allowed ? 0 : 12)
+            .blur(radius: shown || !allowed ? 0 : 4)
             .onAppear {
                 guard !shown else { return }
-                if reduceMotion {
-                    shown = true
+                if let animation = Motion.resolved(Motion.reveal, reduceMotion: reduceMotion) {
+                    withAnimation(animation.delay(delay)) { shown = true }
                 } else {
-                    withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.6).delay(delay)) { shown = true }
+                    shown = true
                 }
             }
     }
+
+    private var allowed: Bool { Motion.resolved(Motion.reveal, reduceMotion: reduceMotion) != nil }
 }
 
 extension View {
     func riseIn(delay: Double = 0) -> some View { modifier(RiseIn(delay: delay)) }
+    /// Entrance for the n-th item of a list or column: each one lands `Motion.stagger` after the one before.
+    func staggeredReveal(index: Int, base: Double = 0) -> some View {
+        riseIn(delay: Motion.staggerDelay(index: index, base: base))
+    }
 }
 
 /// Lays children out left to right and wraps to the next line when the row is full.
@@ -235,7 +250,9 @@ struct SheetHeader: View {
 
 /// Light haptics, used sparingly.
 enum Haptics {
-    static func tap() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
-    static func success() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+    static func tap() { guard !Motion.isUITesting else { return }; UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+    /// The barely-there tick under a finger landing on a button.
+    static func soft() { guard !Motion.isUITesting else { return }; UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.6) }
+    static func success() { guard !Motion.isUITesting else { return }; UINotificationFeedbackGenerator().notificationOccurred(.success) }
 }
 
