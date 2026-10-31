@@ -43,7 +43,7 @@ Screens at Apple/Google change occasionally. If a button has moved, look for the
 3. **Budget alert:** https://console.cloud.google.com/billing → your billing account → *Budgets & alerts* → *Create budget*. Scope: the `health-sync` project. Amount: **$100** per month. Alert thresholds: **50%, 90%, 100%**. Email alerts to billing admins (you). Save.
 4. **Run the setup script.** Open https://shell.cloud.google.com (a browser terminal, where you may need to click "Authorize"). Paste these two lines, replacing `PROJECT_ID`:
    ```
-   curl -fsSLO https://raw.githubusercontent.com/vasylyk8/Health-Sync/claude/youthful-planck-k7ff0m/scripts/gcp-bootstrap.sh
+   curl -fsSLO https://raw.githubusercontent.com/vasylyk8/Health-Sync/main/scripts/gcp-bootstrap.sh
    bash gcp-bootstrap.sh PROJECT_ID
    ```
    It takes about 5 minutes and ends with a box of 4 values. Copy them. If it prints **ERROR** or **WARNING**, send me the whole output.
