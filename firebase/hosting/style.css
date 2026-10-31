@@ -74,3 +74,36 @@ details>p{margin:0 0 12px}
 #deny{background:transparent;min-height:44px;color:var(--muted)}
 button.link{background:transparent;min-height:44px;padding:8px 12px;color:var(--muted);text-decoration:underline}
 .center{text-align:center;margin:0}
+
+/* Motion: a quiet entrance, scroll reveals and tactile presses. All of it is off for people who asked for less motion. */
+@media (prefers-reduced-motion:no-preference){
+@keyframes rise{from{opacity:0;transform:translateY(14px);filter:blur(4px)}to{opacity:1;transform:none;filter:blur(0)}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.top,main>h1,main>.lead,main>.paths .card{animation:rise .7s cubic-bezier(.22,1,.36,1) both}
+.top{animation-name:fade;animation-duration:.5s}
+main>h1{animation-delay:.06s}
+main>.lead{animation-delay:.12s}
+main>.paths .card:nth-child(1){animation-delay:.2s}
+main>.paths .card:nth-child(2){animation-delay:.26s}
+#consent:not([hidden]){animation:rise .6s cubic-bezier(.22,1,.36,1) both}
+details[open]>p{animation:rise .35s cubic-bezier(.22,1,.36,1) both}
+a,button,.action{transition:opacity .2s ease,transform .3s cubic-bezier(.22,1,.36,1),background-color .2s ease}
+button:not(:disabled):active,.action:active{transform:scale(.97)}
+#approve:not(:disabled){transition:box-shadow .3s ease,transform .3s cubic-bezier(.22,1,.36,1)}
+@media (hover:hover){
+.paths .card{transition:transform .4s cubic-bezier(.22,1,.36,1)}
+.paths .card:hover{transform:translateY(-3px)}
+.chips li{transition:transform .3s cubic-bezier(.22,1,.36,1),border-color .2s ease}
+.chips li:hover{transform:translateY(-2px);border-color:var(--muted)}
+}
+/* Scroll reveal: motion.js adds .js, then marks blocks that start below the fold. Without JS nothing is hidden. */
+.js .reveal{opacity:0;transform:translateY(16px);filter:blur(3px)}
+.js .reveal.in{opacity:1;transform:none;filter:blur(0);transition:opacity .7s cubic-bezier(.22,1,.36,1),transform .7s cubic-bezier(.22,1,.36,1),filter .7s cubic-bezier(.22,1,.36,1)}
+.js .reveal.chips,.js .reveal.steps{opacity:1;transform:none;filter:none}
+.js .reveal.chips li,.js .reveal.steps li{opacity:0;transform:translateY(10px)}
+.js .reveal.chips.in li,.js .reveal.steps.in li{opacity:1;transform:none;transition:opacity .6s cubic-bezier(.22,1,.36,1),transform .6s cubic-bezier(.22,1,.36,1)}
+.js .reveal.in li:nth-child(2){transition-delay:.06s}
+.js .reveal.in li:nth-child(3){transition-delay:.12s}
+.js .reveal.in li:nth-child(4){transition-delay:.18s}
+.js .reveal.in li:nth-child(5){transition-delay:.24s}
+}
