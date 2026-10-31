@@ -20,4 +20,11 @@ final class MotionTests: XCTestCase {
         XCTAssertEqual(Motion.staggerDelay(index: 2, base: 0.2), 0.2 + 2 * Motion.stagger, accuracy: 0.0001)
         XCTAssertEqual(Motion.staggerDelay(index: -4), 0, accuracy: 0.0001)
     }
+
+    func testTiltIsClampedToOneInEitherDirection() {
+        XCTAssertEqual(TiltSource.normalized(0), 0, accuracy: 0.0001)
+        XCTAssertEqual(TiltSource.normalized(TiltSource.fullDeflection / 2), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(TiltSource.normalized(3), 1, accuracy: 0.0001)
+        XCTAssertEqual(TiltSource.normalized(-3), -1, accuracy: 0.0001)
+    }
 }

@@ -91,6 +91,7 @@ struct HeroMetricView: View {
                 .lineLimit(2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .depthTilt(enabled: !compact)
         .motion(Motion.smooth, value: compact)
         .opacity(visible ? 1 : 0)
         .offset(y: visible ? 0 : 10)
