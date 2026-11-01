@@ -12,17 +12,19 @@ private struct CountingNumber: View, Animatable {
     }
 
     var body: some View {
-        // A hair space after the number: with negative tracking the last digit ends inside the text's own bounds,
-        // and a round 5 or 6 gets its right edge cut off (padding outside the Text does not help, the clip is the
-        // Text's). The hair space is the last character, so the digit keeps its full width.
-        Text(spec.text(value) + "\u{200A}")
+        // A thin space after the number: with negative tracking the last digit ends inside the text's own bounds,
+        // and a round 3, 5 or 6 gets its right edge cut off (padding outside the Text does not help, the clip is the
+        // Text's). The tracking is applied after every character, the space included, so it eats most of a hair
+        // space (which is why that was not enough); a thin space is wide enough to leave room after the digit.
+        // The negative padding takes the extra room back, so the layout (and the unit next to the number) stays put.
+        Text(spec.text(value) + "\u{2009}")
             .tracking(-size * 0.055)
             .font(.system(size: size, weight: .semibold))
             .monospacedDigit()
             .lineLimit(1)
             .minimumScaleFactor(0.4)
             .foregroundStyle(Theme.ink)
-            .padding(.trailing, size * 0.02)
+            .padding(.trailing, size * 0.02 - size * 0.12)
     }
 }
 
