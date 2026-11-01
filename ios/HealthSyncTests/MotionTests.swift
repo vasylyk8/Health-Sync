@@ -27,4 +27,17 @@ final class MotionTests: XCTestCase {
         XCTAssertEqual(TiltSource.normalized(3), 1, accuracy: 0.0001)
         XCTAssertEqual(TiltSource.normalized(-3), -1, accuracy: 0.0001)
     }
+
+    func testQuestionFeedScrollsUpOneListHeightPerLoopAndRestarts() {
+        let loop = QuestionFeed.loopSeconds
+        XCTAssertEqual(QuestionFeed.offset(elapsed: 0, loopHeight: 800), 0, accuracy: 0.001)
+        XCTAssertEqual(QuestionFeed.offset(elapsed: loop / 2, loopHeight: 800), -400, accuracy: 0.001)
+        XCTAssertEqual(QuestionFeed.offset(elapsed: loop, loopHeight: 800), 0, accuracy: 0.001)
+        XCTAssertEqual(QuestionFeed.offset(elapsed: loop * 3 + loop / 4, loopHeight: 800), -200, accuracy: 0.001)
+    }
+
+    func testQuestionFeedStaysPutUntilItsHeightIsKnown() {
+        XCTAssertEqual(QuestionFeed.offset(elapsed: 12, loopHeight: 0), 0)
+        XCTAssertEqual(QuestionFeed.offset(elapsed: -5, loopHeight: 800), 0, accuracy: 0.001)
+    }
 }
