@@ -75,7 +75,6 @@ struct OnboardingView: View {
                 .frame(height: 44)
             Spacer(minLength: 16)
             QuestionFeed(questions: Copy.Welcome.questions)
-                .staggeredReveal(index: 1)
                 .padding(.bottom, 40)
             // Both texts sit in the same place: the first slides out to the left, the second in from the right.
             ZStack(alignment: .topLeading) {
