@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// A number that counts from one value to another (the text is redrawn for every step of the animation).
-private struct CountingNumber: View, Animatable {
+struct CountingNumber: View, Animatable {
     var value: Double
     let spec: NumberSpec
     let size: CGFloat
@@ -11,20 +11,36 @@ private struct CountingNumber: View, Animatable {
         set { value = newValue }
     }
 
+    /// Tighter than the font's own spacing, as a share of the font size.
+    static let trackingShare: CGFloat = 0.055
+    /// Room to the right of the number's text, as a share of the font size.
+    static let trailingShare: CGFloat = 0.02
+    /// A thin space: wide enough to leave room after a round last digit, narrow enough to look like nothing.
+    static let guardSpace = "\u{2009}"
+
+    /// How wide the guard space is in the number's font, measured (not guessed).
+    static func guardSpaceWidth(size: CGFloat) -> CGFloat {
+        (guardSpace as NSString).size(withAttributes: [.font: UIFont.systemFont(ofSize: size, weight: .semibold)]).width
+    }
+
+    /// Padding that takes back exactly the room the guard space adds, so the unit next to the number sits where it
+    /// would without it.
+    static func trailingPadding(size: CGFloat) -> CGFloat {
+        size * trailingShare - guardSpaceWidth(size: size)
+    }
+
     var body: some View {
-        // A thin space after the number: with negative tracking the last digit ends inside the text's own bounds,
-        // and a round 3, 5 or 6 gets its right edge cut off (padding outside the Text does not help, the clip is the
-        // Text's). The tracking is applied after every character, the space included, so it eats most of a hair
-        // space (which is why that was not enough); a thin space is wide enough to leave room after the digit.
-        // The negative padding takes the extra room back, so the layout (and the unit next to the number) stays put.
-        Text(spec.text(value) + "\u{2009}")
-            .tracking(-size * 0.055)
+        // With negative tracking the last digit ends inside the text's own bounds, and a round 3, 5 or 6 gets its right
+        // edge cut off (padding outside the Text does not help, the clip is the Text's). So the number is followed by a
+        // space that is not tightened, which gives the digit room inside the bounds. The padding then takes that room
+        // back by exactly the space's measured width, so the layout (and the unit beside the number) does not move.
+        (Text(spec.text(value)).tracking(-size * Self.trackingShare) + Text(Self.guardSpace))
             .font(.system(size: size, weight: .semibold))
             .monospacedDigit()
             .lineLimit(1)
             .minimumScaleFactor(0.4)
             .foregroundStyle(Theme.ink)
-            .padding(.trailing, size * 0.02 - size * 0.12)
+            .padding(.trailing, Self.trailingPadding(size: size))
     }
 }
 
