@@ -232,7 +232,8 @@ export const compactFragmented = onSchedule({ schedule: 'every 6 hours', timeZon
   log.info('compaction run', { job: 'compactFragmented', count: n });
 });
 
-export const rollupProductAnalytics = onSchedule({ schedule: 'every 60 minutes', timeZone: 'UTC', memory: '512MiB', timeoutSeconds: 540 }, async () => {
+/** Once a day: the stats are for the operator only and each run re-reads recent logs, so an hourly run cost ~24x more for no benefit. */
+export const rollupProductAnalytics = onSchedule({ schedule: 'every day 03:07', timeZone: 'UTC', memory: '512MiB', timeoutSeconds: 540 }, async () => {
   const result = await rebuildAnalyticsRollups(deps().db);
   log.info('analytics rollup', { job: 'rollupProductAnalytics', count: result.days, records: result.access + result.events });
 });
