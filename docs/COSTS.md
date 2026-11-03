@@ -47,3 +47,9 @@ Fixed costs: ~$0–20/month (no always-on instance unless cold starts prove a pr
 1. Done: the daily context is sent only when its content changed and at most every 15 minutes; hourly series about once an hour.
 2. Keep raw route/series data only for the last N years (a retention setting), if storage ever matters.
 3. Analytics recomputes a 40-day window once a day (it was hourly over 90 days until Nov 2026). If daily reads ever become material, replace the scan with incremental counters; the MCP contract and rollup documents do not need to change.
+
+## What drove the October 2026 bill ($18.33 for one user)
+- 25.3 M Firestore reads ($14.25): the hourly analytics rescan of a 90-day log. Now a daily 40-day scan.
+- A Google uptime check asked the connector a real question every 5 minutes from about 6 regions (107,070 checks in the month, two checks), which created most of the database writes, storage operations and server time with no user present. It now runs hourly from GitHub (`connector-check`); only the cheap `/health` ping stays as a Google uptime check.
+- Background cleanup jobs: deletion sweep every hour (was 15 min), retired-type purge daily (was hourly). Scheduler cost is per job, not per run, so these save little; they mainly cut idle reads.
+Per-user cost can only be judged on real users: the fixed part (scheduler jobs, a little server time) is divided among them.

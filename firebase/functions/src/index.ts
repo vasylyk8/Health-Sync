@@ -185,7 +185,7 @@ export const purgeUserTask = onTaskDispatched(
 
 // ---- Scheduled maintenance ------------------------------------------------------------------
 
-export const sweepStuckDeletions = onSchedule({ schedule: 'every 15 minutes', timeZone: 'UTC', memory: '512MiB', timeoutSeconds: 540 }, async () => {
+export const sweepStuckDeletions = onSchedule({ schedule: 'every 60 minutes', timeZone: 'UTC', memory: '512MiB', timeoutSeconds: 540 }, async () => {
   const d = deps();
   const res = await sweepDeletions({ db: d.db, incoming: d.incoming, data: d.data, deleteAuthUser: (u) => getAuth().deleteUser(u) });
   if (res.purged || res.failed) log.info('deletion sweep', { job: 'sweepStuckDeletions', count: res.purged, failed: res.failed });
@@ -206,7 +206,7 @@ export const purgeInactive = onSchedule({ schedule: 'every day 02:17', timeZone:
 });
 
 /** Deletes data of batch types that were removed from the product (glucose, medications, heart alerts, symptoms, mood). Drains itself; a no-op once nothing is left. */
-export const purgeRetiredTypes = onSchedule({ schedule: 'every 60 minutes', timeZone: 'UTC', memory: '512MiB', timeoutSeconds: 540 }, async () => {
+export const purgeRetiredTypes = onSchedule({ schedule: 'every day 04:11', timeZone: 'UTC', memory: '512MiB', timeoutSeconds: 540 }, async () => {
   const d = deps();
   const snap = await d.db.collectionGroup('types').where('type', 'in', [...RETIRED_TYPES]).limit(200).get();
   let n = 0;
