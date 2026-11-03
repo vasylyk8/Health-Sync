@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseProductEvent } from '../../src/analytics/events.js';
-import { computeDailyRollups, type AccessRow, type AnalyticsUser } from '../../src/analytics/rollup.js';
+import { computeDailyRollups, ROLLUP_WINDOW_DAYS, type AccessRow, type AnalyticsUser } from '../../src/analytics/rollup.js';
 import type { ProductEvent } from '../../src/analytics/contract.js';
 
 const DAY = 86_400_000;
@@ -62,3 +62,9 @@ describe('analytics cohort rollups', () => {
   });
 });
 
+
+describe('analytics rollup window', () => {
+  it('is long enough for W4 retention to settle (35 days after activation) before a day is left untouched', () => {
+    expect(ROLLUP_WINDOW_DAYS).toBeGreaterThan(35);
+  });
+});

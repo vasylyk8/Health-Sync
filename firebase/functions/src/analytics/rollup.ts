@@ -119,7 +119,14 @@ export function computeDailyRollups(users: AnalyticsUser[], access: AccessRow[],
   return [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
-export async function rebuildAnalyticsRollups(db: Firestore, now = Date.now(), days = 90): Promise<{ days: number; users: number; access: number; events: number }> {
+/**
+ * Days re-read and rewritten on each run. Older rollups are final and left untouched: a day's usage and sync numbers stop changing
+ * when the day ends, and W4 retention (the longest window) is settled 35 days after activation, so 40 days covers it with margin.
+ * Reading 40 days instead of the full 90-day log cuts the Firestore reads of each run by more than half.
+ */
+export const ROLLUP_WINDOW_DAYS = 40;
+
+export async function rebuildAnalyticsRollups(db: Firestore, now = Date.now(), days = ROLLUP_WINDOW_DAYS): Promise<{ days: number; users: number; access: number; events: number }> {
   const start = dayStart(now) - (days - 1) * DAY;
   const [userSnap, accessSnap, eventSnap] = await Promise.all([
     db.collection('users').select('analytics', 'deleting').get(),

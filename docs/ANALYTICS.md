@@ -1,6 +1,6 @@
 # KROK product analytics
 
-KROK's launch analytics is a private, aggregate-only MCP connector for the operator. There is no analytics dashboard and no additional product-analytics vendor. Claude calls five read-only tools over hourly Firestore rollups in the existing Firebase project.
+KROK's launch analytics is a private, aggregate-only MCP connector for the operator. There is no analytics dashboard and no additional product-analytics vendor. Claude calls five read-only tools over daily Firestore rollups in the existing Firebase project.
 
 ## Metric contract
 
@@ -24,7 +24,7 @@ The app endpoint accepts only the event name, app version, sync outcome and coar
 
 Never collected by product analytics: Health values, workout counts or metadata, GPS, Health dates, source names, tool arguments, free text, connector URLs/tokens, email, Apple identifiers, or individual analytics profiles.
 
-One-time milestones live on `users/{uid}.analytics` and are deleted with the account. App events and MCP access logs expire after 90 days. `analyticsRollups/{UTC-date}` contains counts and duration sums only—no UID or event rows. The hourly job recomputes the last 90 days so W1/W4 cohorts mature correctly.
+One-time milestones live on `users/{uid}.analytics` and are deleted with the account. App events and MCP access logs expire after 90 days. `analyticsRollups/{UTC-date}` contains counts and duration sums only—no UID or event rows. The job runs once a day (03:07 UTC) and recomputes the last 40 days, so W1/W4 cohorts mature correctly (W4 settles 35 days after activation). Older days are final and are not rewritten. Today's numbers are therefore as of the last daily run; every answer states its freshness.
 
 ## Claude tools
 
