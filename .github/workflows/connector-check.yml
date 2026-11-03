@@ -1,0 +1,47 @@
+# Hourly: asks the live AI connector one real question as the synthetic user, the same path Claude and ChatGPT use.
+# A failure emails the repository owner (GitHub's default for failed scheduled runs).
+# This replaced a Google uptime check that ran every 5 minutes from several regions and was the main cost driver.
+name: connector-check
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: connector-check
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      HAS_GCP: ${{ secrets.GCP_WIF_PROVIDER != '' }}
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+    steps:
+      - if: env.HAS_GCP != 'true'
+        run: echo "::notice::Not deployed yet. Skipping."
+      - if: env.HAS_GCP == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - if: env.HAS_GCP == 'true'
+        uses: google-github-actions/setup-gcloud@v2
+      - if: env.HAS_GCP == 'true'
+        name: Ask the connector for one synthetic day
+        run: |
+          TOKEN=$(gcloud secrets versions access latest --secret=synthetic-mcp-token --project "$GCP_PROJECT_ID")
+          echo "::add-mask::$TOKEN"
+          BODY='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_daily_context","arguments":{"start_date":"2024-03-01","end_date":"2024-03-01"}}}'
+          for attempt in 1 2 3; do
+            if curl -sS -m 30 -X POST "https://$GCP_PROJECT_ID.web.app/mcp/$TOKEN" \
+                 -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+                 -d "$BODY" | grep -q sleepAsleepMin; then
+              echo "AI connector answered (attempt $attempt)"; exit 0
+            fi
+            echo "attempt $attempt: no valid answer"; sleep 30
+          done
+          echo "::error::The AI connector did not return the expected synthetic data three times in a row"
+          exit 1
