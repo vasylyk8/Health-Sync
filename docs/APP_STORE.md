@@ -1,41 +1,9 @@
 # App Store materials (drafts to review)
 
 ## Listing
-**Name:** KROK
-**Subtitle (30 chars):** Workout data for AI coaching
-**Category:** Health & Fitness (secondary: Productivity)
-**Age rating:** 17+ is not needed. Answer "None" to all content questions. Health data doesn't raise the rating.
-**Price:** Free
+The live listing text (name, subtitle, keywords, promotional text, description) lives in `submission/app-store/listing-en-US.json`. The `update-listing` task (run through `bootstrap`) writes it to App Store Connect. Never use "Apple Health" in the name, subtitle or keywords (guideline 5.2.5); the description may say the app works with Apple Health.
 
-**Promotional text:**
-Ask Claude or ChatGPT about your runs, rides and workouts, down to every heart rate reading and route, using your real Apple Health data.
-
-**Description:**
-KROK connects your Apple Health workouts to the AI assistant you already use, so you can ask questions like:
-• "How much time did I spend in heart rate zone 4 on my run yesterday?"
-• "Did my heart rate drift up in the second half of my long ride?"
-• "What was my fastest 5K this year, and how did I sleep the night before?"
-
-You get Apple's own workout summary, plus the full detail on request: every heart rate reading, speed, power and cadence, and your GPS route (start and end are hidden by default). The assistant can do exact calculations on it.
-
-How it works
-1. Allow KROK to read your workouts (and daily and hourly summaries of sleep, heart rate and recovery) in Apple Health. Choose which extra types (nutrition, cycle and profile) to allow on Apple's sheet.
-2. Choose Claude or ChatGPT and follow three short steps to connect.
-3. Ask away. The assistant reads your data only when you ask.
-
-Private by design
-• Read-only: KROK never changes your Apple Health data.
-• Your data is stored encrypted in the EU and used only to answer your own questions.
-• Nothing is shared until you connect an assistant, and you can disconnect at any time.
-• You choose which Apple Health data to share (nutrition, cycle, profile) in Apple Health’s permission settings.
-• Delete all your data from our servers with one tap.
-• No ads, and your health data is never sold or used for advertising.
-
-Requirements: ChatGPT connections need ChatGPT Plus or higher with Developer Mode. Claude works on all plans (the free plan allows one custom connector).
-
-KROK is not a medical device and doesn't provide medical advice.
-
-**Keywords (100 chars):** apple health,claude,chatgpt,ai,workouts,running,heart rate,gps,fitness,coach,export,mcp,zones
+**Category:** Health & Fitness (secondary: Productivity) · **Age rating:** "None" to all content questions · **Price:** Free
 
 **Support URL:** `https://krok-1d60a.web.app/support` · **Marketing URL:** optional · **Privacy Policy URL:** `https://krok-1d60a.web.app/privacy`
 
@@ -56,16 +24,20 @@ KROK lets users analyze their own Apple Health data with the AI assistant of the
 - HealthKit data is not stored in iCloud.
 
 ## App Privacy ("nutrition label") answers
-| Data type | Collected | Linked to user | Tracking | Purpose |
-|---|---|---|---|---|
-| Health & Fitness → Health | Yes | Yes (anonymous account ID) | No | App Functionality |
-| Health & Fitness → Fitness | Yes | Yes | No | App Functionality |
-| Sensitive Info (cycle data) | Yes, only if the user enables the group | Yes | No | App Functionality |
-| Location → Precise Location (GPS routes of workouts) | Yes | Yes | No | App Functionality |
-| Identifiers → User ID | Yes (Firebase ID and linked Apple account identifier) | Yes | No | App Functionality |
-| Usage Data → Product Interaction | Yes (onboarding, sync and assistant/tool usage; no Health values or arguments) | Yes (pseudonymous KROK account) | No | Analytics |
-| Diagnostics → Crash Data | Yes | No | No | App Functionality |
-| Contact info, contacts, browsing, purchases | Not requested from Apple by KROK; review Firebase identity-token handling before attesting | | | |
+"Used to track you" is **No** for every type: KROK does not track (guideline 5.1.2(i)). Not collected: Contact Info (name, email, phone), Contacts, User Content, Browsing/Search History, Purchases, Financial Info, Sensitive Info (cycle data counts as Health), Other Data. Sign in with Apple requests no name or email.
+
+| Data type | Linked to user | Purposes |
+|---|---|---|
+| Health & Fitness → Health | Yes | App Functionality |
+| Health & Fitness → Fitness | Yes | App Functionality |
+| Location → Precise Location (workout GPS routes) | Yes | App Functionality |
+| Location → Coarse Location (Firebase Analytics, derived from IP) | No | Analytics |
+| Identifiers → User ID (KROK account ID) | Yes | App Functionality, Analytics |
+| Identifiers → Device ID (Firebase installation ID) | No | App Functionality, Analytics |
+| Usage Data → Product Interaction | Yes | Analytics |
+| Diagnostics → Crash Data | No | App Functionality, Analytics |
+| Diagnostics → Performance Data (sync and tool-call duration) | Yes | App Functionality, Analytics |
+| Diagnostics → Other Diagnostic Data | No | App Functionality, Analytics |
 
 ## Export compliance
 The app uses only standard HTTPS encryption (exempt). `ITSAppUsesNonExemptEncryption` = NO is already set.

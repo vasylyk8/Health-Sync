@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// Consent, then three steps. Closes itself once the assistant uses the link.
+/// Consent (always first, naming the company and the data), then the setup steps. Closes itself once the assistant connects.
 struct SetupSheet: View {
     let provider: AIProvider
     @EnvironmentObject var model: AppModel
@@ -22,8 +22,11 @@ struct SetupSheet: View {
 
     private var screen: Screen {
         if model.isSetUp(provider) && link == nil { return .connected }
+        // App Review 5.1.2(i): nothing is shared with an AI company before the person allows it here.
+        if !consented { return .consent }
         if model.appleAccountLinked { return .oauth }
-        if link == nil && !consented { return .consent }
+        // Private-link setup needs a link, which the consent button creates.
+        if link == nil { return .consent }
         return .steps
     }
 
@@ -58,6 +61,7 @@ struct SetupSheet: View {
         .onAppear {
             link = model.existingLink(for: provider)
             if model.isSetUp(provider) { link = nil }
+            consented = model.hasAIConsent(provider)
         }
     }
 
@@ -71,12 +75,37 @@ struct SetupSheet: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text(Copy.Sheet.consentBody(provider.name))
+                    Text(Copy.Sheet.consentLead(provider.name, provider.company))
                         .bodyText()
                         .foregroundStyle(Theme.ink)
-                    Text(Copy.Sheet.consentTerms(provider.company))
+                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(Copy.Sheet.consentItems, id: \.self) { item in
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Text("•").bodyText().foregroundStyle(Theme.muted).accessibilityHidden(true)
+                                Text(item)
+                                    .bodyText()
+                                    .foregroundStyle(Theme.ink)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("consentItems")
+                    Text(Copy.Sheet.consentRecipient(provider.name, provider.company))
+                        .bodyText()
+                        .foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("consentRecipient")
+                    Text(Copy.Sheet.consentControl)
                         .bodyText()
                         .foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Link(Copy.Sheet.companyPrivacy(provider.company), destination: provider.privacyURL)
+                        Link(Copy.Sheet.krokPrivacy, destination: Theme.privacyURL)
+                    }
+                    .smallText()
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 24)
@@ -90,29 +119,42 @@ struct SetupSheet: View {
                         .multilineTextAlignment(.center)
                         .accessibilityIdentifier("linkError")
                 }
-                Button {
-                    Task {
-                        linkError = nil
-                        if let url = await model.link(for: provider) {
-                            link = url
-                            consented = true
-                        } else {
-                            // The app-level alert sits underneath this sheet, so show the reason here.
-                            linkError = model.errorMessage ?? Copy.Sheet.genericError
-                            model.errorMessage = nil
-                        }
-                    }
-                } label: {
+                Button(action: allow) {
                     HStack(spacing: 10) {
                         if model.busy { ProgressView().tint(Theme.buttonText) }
-                        Text(Copy.Sheet.continueButton)
+                        Text(Copy.Sheet.allow)
                     }
                 }
                 .buttonStyle(PillButtonStyle())
                 .disabled(model.busy)
                 .accessibilityIdentifier("consentContinue")
+                Button(Copy.Sheet.dontAllow) { dismiss() }
+                    .buttonStyle(PillButtonStyle(kind: .secondary))
+                    .disabled(model.busy)
+                    .accessibilityIdentifier("consentDecline")
             }
             .padding(.vertical, 16)
+        }
+    }
+
+    /// Records the consent, then continues: Apple-linked accounts go to the OAuth steps; others get a private link.
+    private func allow() {
+        if model.appleAccountLinked {
+            model.recordAIConsent(provider)
+            consented = true
+            return
+        }
+        Task {
+            linkError = nil
+            if let url = await model.link(for: provider) {
+                model.recordAIConsent(provider)
+                link = url
+                consented = true
+            } else {
+                // The app-level alert sits underneath this sheet, so show the reason here.
+                linkError = model.errorMessage ?? Copy.Sheet.genericError
+                model.errorMessage = nil
+            }
         }
     }
 

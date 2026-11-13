@@ -1,6 +1,6 @@
 # KROK Privacy Policy (DRAFT – needs legal review before launch)
 
-_Last updated: 5 October 2026. Controller: 2ndOp Inc · support@2ndopinions.ai._
+_Last updated: 13 November 2026. Controller: 2ndOp Inc · support@2ndopinions.ai._
 
 ## What KROK does
 KROK copies your **workouts** from Apple Health, with their detailed measurements and GPS routes, plus **daily and hourly summaries** (sleep, heart rate, steps and similar), to our servers, so that the AI assistants **you** connect (Anthropic's Claude and/or OpenAI's ChatGPT) can answer questions about your training and recovery. If you choose, KROK can also share further groups of Apple Health data (see "Additional data groups").
@@ -30,7 +30,7 @@ If you enter an optional **expected finish time for a race**, it is stored with 
 
 ## Who receives it
 - **Google Cloud / Firebase** (our processor) stores your health data **in the EU (Belgium)**. Your account identifiers are processed by Firebase Authentication, which may process them in the United States (EU Standard Contractual Clauses).
-- **The AI assistant you connect** (Anthropic or OpenAI) receives the parts of your data it requests when you ask it a question. Once received, that data is handled under **their** terms and privacy policies, which you accepted with them. We don't control their processing, storage location or retention.
+- **The AI assistant you connect: Anthropic (Claude) or OpenAI (ChatGPT).** Nothing is shared with either company until you tap **Allow** on the consent screen in the KROK app, which names the company and lists the data. After that, the assistant can read your workouts (with their measurements), GPS routes (first and last 300 m hidden unless you ask for the exact route), daily and hourly summaries, race goals, and the additional data groups you allowed in Apple Health. It reads only the parts it needs to answer a question you ask, and only while connected. Both companies commit in their privacy policies to protections equal to KROK's: they keep personal data secure, do not sell it, and let you access and delete it. Depending on your settings with them, they may use your conversations to improve their models; you can turn this off in their settings. See [Anthropic's privacy policy](https://www.anthropic.com/legal/privacy) and [OpenAI's privacy policy](https://openai.com/policies/privacy-policy/). Disconnect in the KROK app at any time to stop access immediately; copies the assistant already received stay with that company and can be deleted there.
 - We never sell your data, use it for advertising, or share it with anyone else.
 
 ## How long we keep it

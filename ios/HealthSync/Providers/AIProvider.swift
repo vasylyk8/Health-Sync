@@ -13,6 +13,8 @@ struct AIProvider: Identifiable, Hashable {
     let id: String
     let name: String
     let company: String
+    /// The company's privacy policy, linked from the consent screen.
+    let privacyURL: URL
     let setupURL: URL
     let websiteLabel: String
     /// Where the Sign in with Apple setup sends people (the page that adds a custom connector).
@@ -24,6 +26,7 @@ struct AIProvider: Identifiable, Hashable {
 
     static let claude = AIProvider(
         id: "claude", name: "Claude", company: "Anthropic",
+        privacyURL: URL(string: "https://www.anthropic.com/legal/privacy")!,
         setupURL: URL(string: "https://claude.ai/settings/connectors")!, websiteLabel: "claude.ai",
         oauthURL: URL(string: "https://claude.ai/new#customize/connectors")!, oauthLabel: "claude.ai",
         notice: "On Claude’s free plan you can have one custom connector. If you already have one, remove it first.",
@@ -35,6 +38,7 @@ struct AIProvider: Identifiable, Hashable {
 
     static let chatgpt = AIProvider(
         id: "chatgpt", name: "ChatGPT", company: "OpenAI",
+        privacyURL: URL(string: "https://openai.com/policies/privacy-policy/")!,
         setupURL: URL(string: "https://chatgpt.com/#settings/Connectors")!, websiteLabel: "chatgpt.com",
         oauthURL: URL(string: "https://chatgpt.com/plugins")!, oauthLabel: "chatgpt.com/plugins",
         notice: "Requires ChatGPT Plus, Pro or Business.",

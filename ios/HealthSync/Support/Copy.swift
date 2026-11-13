@@ -121,13 +121,25 @@ enum Copy {
     enum Sheet {
         static let close = "Close"
         static func connectTitle(_ name: String) -> String { "Connect \(name)" }
-        static func consentTitle(_ name: String) -> String { "Share your workouts with \(name)?" }
-        static func consentBody(_ name: String) -> String {
-            "You’ll get a private link. With it, \(name) can read your workouts, heart rate, GPS routes, and daily and hourly summaries, plus any extra data groups you switch on, when you ask a question."
+        static func consentTitle(_ name: String) -> String { "Share your data with \(name)?" }
+        static func consentLead(_ name: String, _ company: String) -> String {
+            "If you allow it, \(company)’s \(name) can read this data from KROK whenever you ask it a question:"
         }
-        static func consentTerms(_ company: String) -> String {
-            "\(company) processes that data under its own terms. You can disconnect at any time."
+        static let consentItems = [
+            "Workouts: type, time, distance, energy, heart rate and other measurements",
+            "GPS routes of outdoor workouts (the first and last 300 m are hidden)",
+            "Daily and hourly summaries: sleep, heart rate, heart rate variability, steps and activity",
+            "Nutrition, cycle tracking and profile (age, sex), if you allowed them in Apple Health",
+            "Race goals you entered in KROK",
+        ]
+        static func consentRecipient(_ name: String, _ company: String) -> String {
+            "Who receives it: \(company), the company that runs \(name). \(company) handles it under its own privacy policy."
         }
+        static let consentControl = "Nothing is shared until you tap Allow. You can disconnect at any time to stop access."
+        static func companyPrivacy(_ company: String) -> String { "\(company) privacy policy" }
+        static let krokPrivacy = "KROK privacy policy"
+        static let allow = "Allow"
+        static let dontAllow = "Don’t Allow"
         static let continueButton = "Continue"
         static let copyLink = "Copy link"
         static let copied = "Copied"

@@ -57,8 +57,14 @@ final class OnboardingUITests: XCTestCase {
         // until it shows the OAuth view (an unlinked account would show the consent view instead).
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 10))
         var oauth = false
+        var sawConsent = false
         for _ in 0..<10 where !oauth {
             app.buttons["provider.claude"].tap()
+            // The consent screen always comes first (App Review 5.1.2(i)) and names the company receiving the data.
+            if app.buttons["consentContinue"].waitForExistence(timeout: 3) {
+                sawConsent = sawConsent || app.staticTexts["consentRecipient"].exists
+                app.buttons["consentContinue"].tap()
+            }
             oauth = app.buttons["copyOAuthURL"].waitForExistence(timeout: 3)
             if !oauth {
                 if app.buttons["Close"].waitForExistence(timeout: 2) { app.buttons["Close"].tap() }
@@ -66,7 +72,7 @@ final class OnboardingUITests: XCTestCase {
             }
         }
         XCTAssertTrue(oauth, "a linked account sets up through OAuth")
-        XCTAssertFalse(app.buttons["consentContinue"].exists)
+        XCTAssertTrue(sawConsent, "the in-app consent naming the company is shown before the OAuth steps")
         app.buttons["copyOAuthURL"].tap()
         XCTAssertTrue(app.staticTexts["oauthCopied"].waitForExistence(timeout: 5))
         snapshot("05-Apple-OAuth-Setup")
@@ -128,6 +134,20 @@ final class OnboardingUITests: XCTestCase {
     func testReopeningBeforeSigningInReturnsToTheAccountPage() {
         let app = launch(["-accountPending"])
         XCTAssertTrue(app.buttons["appleSignIn"].waitForExistence(timeout: 10))
+    }
+
+    func testAIConsentNamesTheCompanyAndCanBeDeclined() {
+        let app = launch(["-onboarded"])
+        XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5))
+        app.buttons["provider.claude"].tap()
+        XCTAssertTrue(app.buttons["consentContinue"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["consentRecipient"].label.contains("Anthropic"), "the consent names the company")
+        XCTAssertTrue(app.buttons["consentDecline"].exists, "the person can decline")
+        snapshot("06-AI-Consent")
+        app.buttons["consentDecline"].tap()
+        XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 5), "declining closes the sheet")
+        app.buttons["provider.claude"].tap()
+        XCTAssertTrue(app.buttons["consentDecline"].waitForExistence(timeout: 10), "nothing was allowed, so consent is asked again")
     }
 
     func testConnectClaudeShowsSetUpCheckmark() {
@@ -201,8 +221,14 @@ final class OnboardingUITests: XCTestCase {
         let app = launch(["-onboarded", "-appleLinked"])
         XCTAssertTrue(app.buttons["provider.claude"].waitForExistence(timeout: 10))
         var oauth = false
+        var sawConsent = false
         for _ in 0..<10 where !oauth {
             app.buttons["provider.claude"].tap()
+            // The consent screen always comes first (App Review 5.1.2(i)) and names the company receiving the data.
+            if app.buttons["consentContinue"].waitForExistence(timeout: 3) {
+                sawConsent = sawConsent || app.staticTexts["consentRecipient"].exists
+                app.buttons["consentContinue"].tap()
+            }
             oauth = app.buttons["copyOAuthURL"].waitForExistence(timeout: 3)
             if !oauth {
                 if app.buttons["Close"].waitForExistence(timeout: 2) { app.buttons["Close"].tap() }
@@ -210,6 +236,7 @@ final class OnboardingUITests: XCTestCase {
             }
         }
         XCTAssertTrue(oauth, "a linked account sets up through OAuth")
+        XCTAssertTrue(sawConsent, "the in-app consent is shown first")
         assertOpensInAppBrowser(app)
     }
 

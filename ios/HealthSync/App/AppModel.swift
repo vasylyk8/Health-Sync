@@ -77,6 +77,25 @@ final class AppModel: ObservableObject {
     static let syncedUidKey = "syncedUid"
     /// Set once the first upload has finished, so Home opens straight into its finished look.
     static let uploadFinishedKey = "uploadFinished"
+    /// Assistants the person allowed, on this phone, to read their data (the in-app consent before connecting).
+    static let aiConsentKey = "aiConsentProviders"
+
+    /// True once the person tapped Allow on the consent screen for this assistant. Cleared by Disconnect, Log out,
+    /// Delete All My Data and leaving review mode, so the consent is asked again before any new connection.
+    func hasAIConsent(_ p: AIProvider) -> Bool {
+        (defaults.stringArray(forKey: Self.aiConsentKey) ?? []).contains(p.id)
+    }
+
+    func recordAIConsent(_ p: AIProvider) {
+        let ids = Set(defaults.stringArray(forKey: Self.aiConsentKey) ?? []).union([p.id])
+        defaults.set(ids.sorted(), forKey: Self.aiConsentKey)
+    }
+
+    private func clearAIConsent(_ p: AIProvider? = nil) {
+        guard let p else { defaults.removeObject(forKey: Self.aiConsentKey); return }
+        let ids = (defaults.stringArray(forKey: Self.aiConsentKey) ?? []).filter { $0 != p.id }
+        defaults.set(ids, forKey: Self.aiConsentKey)
+    }
 
     /// The special edition (race medal) showing on Home, if any.
     var edition: SpecialEdition?
@@ -634,6 +653,7 @@ final class AppModel: ObservableObject {
         do {
             try await backend.disconnect(provider: p.id)
             Keychain.set(nil, for: "link.\(p.id)")
+            clearAIConsent(p)
             telemetry.event("provider_disconnected", ["provider": p.id])
             await refreshStatus()
         } catch {
@@ -665,6 +685,7 @@ final class AppModel: ObservableObject {
             defaults.removeObject(forKey: Self.onboardingUidKey)
             defaults.removeObject(forKey: Self.syncedUidKey)
             defaults.removeObject(forKey: Self.uploadFinishedKey)
+            defaults.removeObject(forKey: Self.aiConsentKey)
             goals.clear(editions: SpecialEdition.all)
             goalSeconds = nil
             uploadFinished = false
@@ -702,6 +723,7 @@ final class AppModel: ObservableObject {
         defaults.removeObject(forKey: Self.onboardingUidKey)
         defaults.removeObject(forKey: Self.syncedUidKey)
         defaults.removeObject(forKey: Self.uploadFinishedKey)
+        defaults.removeObject(forKey: Self.aiConsentKey)
         goals.clear(editions: SpecialEdition.all)
         goalSeconds = nil
         uploadFinished = false
@@ -750,6 +772,7 @@ final class AppModel: ObservableObject {
         Keychain.removeAll()
         defaults.removeObject(forKey: Self.reviewDemoKey)
         defaults.removeObject(forKey: Self.healthConnectedKey)
+        defaults.removeObject(forKey: Self.aiConsentKey)
         defaults.removeObject(forKey: Self.pendingAccountKey)
         status = .empty
         isReviewDemo = false
