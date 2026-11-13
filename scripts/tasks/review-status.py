@@ -38,3 +38,16 @@ print("\n== Recent builds ==")
 for b in get(f"/v1/builds?filter[app]={app_id}&sort=-uploadedDate&limit=5")["data"]:
     a = b["attributes"]
     print(f"build {a.get('version')}: processing={a.get('processingState')} uploaded={a.get('uploadedDate')} expired={a.get('expired')}")
+
+print("\n== Listing text (name, subtitle, keywords) ==")
+for info in get(f"/v1/apps/{app_id}/appInfos")["data"]:
+    print(f"appInfo {info['id']}: state={info['attributes'].get('appStoreState') or info['attributes'].get('state')}")
+    for loc in get(f"/v1/appInfos/{info['id']}/appInfoLocalizations")["data"]:
+        a = loc["attributes"]
+        print(f"  [{a.get('locale')}] name={a.get('name')!r} subtitle={a.get('subtitle')!r}")
+for v in get(f"/v1/apps/{app_id}/appStoreVersions?limit=1")["data"]:
+    for loc in get(f"/v1/appStoreVersions/{v['id']}/appStoreVersionLocalizations")["data"]:
+        a = loc["attributes"]
+        print(f"  [{a.get('locale')}] keywords={a.get('keywords')!r}")
+        print(f"  promo={a.get('promotionalText')!r}")
+        print(f"  description={a.get('description')!r}")
